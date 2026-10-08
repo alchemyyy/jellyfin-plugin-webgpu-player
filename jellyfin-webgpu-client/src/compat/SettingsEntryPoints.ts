@@ -19,7 +19,7 @@ type SettingsMenuItem = Readonly<{
     onSelect: () => unknown
 }>;
 
-/** The player whose settings panel the OSD button opens */
+/** The player whose settings panel the OSD button opens and closes */
 export type SettingsEntryPlayer = {
     getSettingsMenuItems: () => readonly SettingsMenuItem[]
 };
@@ -68,7 +68,7 @@ function createOsdSettingsButton(player: SettingsEntryPlayer, menuItem: Settings
     const button = container.firstElementChild as HTMLElement;
     button.addEventListener('click', (): void => {
         Promise.resolve(getSettingsMenuItem(player)?.onSelect()).catch((error: unknown): void => {
-            console.error('[WebGPUPlayer] unable to open the WebGPU settings panel', error);
+            console.error('[WebGPUPlayer] unable to toggle the WebGPU settings panel', error);
         });
     });
     return button;

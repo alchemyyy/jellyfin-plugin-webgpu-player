@@ -80,6 +80,7 @@ type NumericControlConfiguration = Readonly<{
 }>;
 
 type ActivePanel = {
+    close: () => void
     element: HTMLElement
     promise: Promise<void>
 };
@@ -1245,6 +1246,16 @@ function createPanelController(
         panel.removeEventListener('keydown', onPanelKeyDown);
     });
 
+    // The video OSD changes the volume on wheel events that reach the document.
+    // Stopping them at the panel keeps its native scrolling and leaves the volume alone.
+    const onPanelWheel = (event: WheelEvent): void => {
+        event.stopPropagation();
+    };
+    panel.addEventListener('wheel', onPanelWheel, { passive: true });
+    cleanupCallbacks.push((): void => {
+        panel.removeEventListener('wheel', onPanelWheel);
+    });
+
     const updatePanelPosition = (): void => {
         positionPanelBelowPlaybackInfo(panel);
     };
@@ -1281,7 +1292,7 @@ function createPanelController(
     updatePanelPosition();
     closeButton.focus();
 
-    return { element: panel, promise };
+    return { close: closePanel, element: panel, promise };
 }
 
 /** Opens or focuses the one active plugin-owned playback settings panel. */
@@ -1303,8 +1314,22 @@ export function showWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<v
         }
     });
     activePanel = {
+        close: createdPanel.close,
         element: createdPanel.element,
         promise
     };
     return promise;
+}
+
+/** Closes the active playback settings panel, or opens one when none is active. */
+export function toggleWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<void> {
+    if (!activePanel) {
+        return showWebGPUPlaybackSettingsPanel(player);
+    }
+
+    // Cleared now rather than when the promise settles, so an immediate toggle reopens
+    const closingPanel = activePanel;
+    activePanel = null;
+    closingPanel.close();
+    return closingPanel.promise;
 }

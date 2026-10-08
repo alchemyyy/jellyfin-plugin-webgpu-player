@@ -179,7 +179,10 @@ vi.mock('webgpu-player/audio/output/WebGPUAudioOutputManager', () => ({
     })
 }));
 
-import { showWebGPUPlaybackSettingsPanel } from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
+import {
+    showWebGPUPlaybackSettingsPanel,
+    toggleWebGPUPlaybackSettingsPanel
+} from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
 
 type AnimationFrameHarness = {
     callbacks: Map<number, FrameRequestCallback>
@@ -526,6 +529,68 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
         expect(document.activeElement).toBe(invokingButton);
         expect(audioOutputManagerMockState.cancelCount).toBe(1);
+    });
+
+    it('toggles the panel closed and open again from the invoking button', async () => {
+        const invokingButton = document.createElement('button');
+        invokingButton.type = 'button';
+        document.body.appendChild(invokingButton);
+        invokingButton.focus();
+        const player = {
+            applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),
+            getDetectedInputPeakNits: vi.fn(() => 1_000),
+            getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
+            updateAudioDownmixSettings: vi.fn(() => true),
+            updateRenderSettings: vi.fn(() => true)
+        } as unknown as WebGPUPlayer;
+
+        const openPromise = toggleWebGPUPlaybackSettingsPanel(player);
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+
+        const closePromise = toggleWebGPUPlaybackSettingsPanel(player);
+        expect(closePromise).toBe(openPromise);
+        expect(panel.isConnected).toBe(false);
+        await closePromise;
+        expect(document.activeElement).toBe(invokingButton);
+
+        // A toggle right after closing opens a new panel instead of closing the old one again
+        const reopenPromise = toggleWebGPUPlaybackSettingsPanel(player);
+        const reopenedPanel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        expect(reopenedPanel).not.toBe(panel);
+        expect(document.querySelectorAll('.webgpuSettingsPanel')).toHaveLength(1);
+        await expect(toggleWebGPUPlaybackSettingsPanel(player)).resolves.toBeUndefined();
+        await reopenPromise;
+        expect(reopenedPanel.isConnected).toBe(false);
+    });
+
+    it('keeps wheel input over the panel from reaching the OSD volume handler', async () => {
+        const player = {
+            applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),
+            getDetectedInputPeakNits: vi.fn(() => 1_000),
+            getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
+            updateAudioDownmixSettings: vi.fn(() => true),
+            updateRenderSettings: vi.fn(() => true)
+        } as unknown as WebGPUPlayer;
+        // The host's video OSD listens for wheel events on the document in the bubble phase
+        const documentWheelListener = vi.fn();
+        document.addEventListener('wheel', documentWheelListener);
+        try {
+            const panelPromise = showWebGPUPlaybackSettingsPanel(player);
+            const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+            const panelWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+            requirePanelElement<HTMLElement>(panel, '[data-setting-slider="brightness"]').dispatchEvent(panelWheel);
+
+            expect(documentWheelListener).not.toHaveBeenCalled();
+            // The panel itself still scrolls
+            expect(panelWheel.defaultPrevented).toBe(false);
+
+            requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+            await panelPromise;
+            document.body.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 120 }));
+            expect(documentWheelListener).toHaveBeenCalledOnce();
+        } finally {
+            document.removeEventListener('wheel', documentWheelListener);
+        }
     });
 
     it('applies gains, force stereo, and the downmix algorithm live', async () => {

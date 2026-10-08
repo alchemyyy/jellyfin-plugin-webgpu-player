@@ -85,7 +85,7 @@ describe('SettingsEntryPoints', () => {
     });
 
     describe('ensureOsdSettingsButton', () => {
-        it('adds one button before the OSD settings button and opens the WebGPU settings panel', () => {
+        it('adds one button before the OSD settings button that toggles the WebGPU settings panel', () => {
             const onSelect = vi.fn(() => Promise.resolve());
             const player = createPlayer(onSelect);
             const page = createOsdPage();
@@ -100,8 +100,10 @@ describe('SettingsEntryPoints', () => {
             expect(buttons[0].title).toBe('WebGPU Settings');
             expect(buttons[0].classList.contains('hide')).toBe(false);
 
+            // The menu item toggles, so every click reaches it, including the one that closes the panel
             buttons[0].click();
-            expect(onSelect).toHaveBeenCalledTimes(1);
+            buttons[0].click();
+            expect(onSelect).toHaveBeenCalledTimes(2);
         });
 
         it('hides the button while another player is current', () => {

@@ -1,1 +1,20 @@
-[]
+[
+    {
+        "guid": "8f79872d-a0a6-4b96-b5e4-2042079007ac",
+        "name": "WebGPU Player",
+        "description": "Adds the WebGPU Player to an unmodified Jellyfin Web client. The player decodes qualified direct-play sources with WebCodecs or bundled WASM decoders, presents them through WebGPU, and falls back to the HTML video player in the same session.",
+        "overview": "WebGPU and WebCodecs video player for Jellyfin Web",
+        "owner": "alchemyyy",
+        "category": "General",
+        "versions": [
+            {
+                "version": "1.0.0.0",
+                "changelog": "Release 1.0.0.0",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases/download/v1.0.0.0/webgpu-player_1.0.0.0.zip",
+                "checksum": "51306e304403b01db07553a9662b575a",
+                "timestamp": "2026-10-08T18:06:04Z"
+            }
+        ]
+    }
+]

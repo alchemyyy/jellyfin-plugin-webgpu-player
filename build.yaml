@@ -15,4 +15,4 @@ owner: "alchemyyy"
 artifacts:
 - "Jellyfin.Plugin.WebGPUPlayer.dll"
 changelog: >
-  Initial commit
+  Release 1.0.0.0

@@ -969,7 +969,7 @@ export default class WebGPUPlayer {
             onSelect: (): Promise<void> => import(
                 /* webpackChunkName: "webgpu-playback-settings" */
                 './ui/WebGPUPlaybackSettingsDialog'
-            ).then(module => module.showWebGPUPlaybackSettingsPanel(this))
+            ).then(module => module.toggleWebGPUPlaybackSettingsPanel(this))
         } ];
     }
 
