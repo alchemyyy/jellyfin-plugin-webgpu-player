@@ -1,12 +1,21 @@
 import type { DeviceProfile } from '@jellyfin/sdk/lib/generated-client/models/device-profile';
+import escapeHtml from 'escape-html';
 
 import { PlayerEvent } from 'apps/legacy/features/playback/constants/playerEvent';
 import { PluginType } from 'constants/pluginType';
+import globalize from 'lib/globalize';
 import Events from 'utils/events';
 import { MediaError } from 'types/mediaError';
 
 import { PLAYBACK_SUPERSEDED } from './constants/playbackResult';
 import { WebGPUPlayerEvent } from './constants/playerEvent';
+import { loadAddonStrings } from './host/globalize';
+import {
+    translateAudioPath,
+    translatePlaybackState,
+    translateVideoDecoderBackend,
+    translateVideoOutputMode
+} from './ui/CustomPlaybackStatsText';
 import {
     getWebGPUCustomDecodeEnabled,
     getWebGPUHDRToneMappingEnabled,
@@ -965,11 +974,14 @@ export default class WebGPUPlayer {
     getSettingsMenuItems(): readonly PlayerSettingsMenuItem[] {
         return [ {
             id: 'webgpu-playback-settings',
-            name: 'WebGPU Settings',
-            onSelect: (): Promise<void> => import(
-                /* webpackChunkName: "webgpu-playback-settings" */
-                './ui/WebGPUPlaybackSettingsDialog'
-            ).then(module => module.toggleWebGPUPlaybackSettingsPanel(this))
+            name: globalize.translate('WebGPUSettings'),
+            onSelect: (): Promise<void> => Promise.all([
+                import(
+                    /* webpackChunkName: "webgpu-playback-settings" */
+                    './ui/WebGPUPlaybackSettingsDialog'
+                ),
+                loadAddonStrings()
+            ]).then(([ module ]) => module.toggleWebGPUPlaybackSettingsPanel(this))
         } ];
     }
 
@@ -1696,18 +1708,22 @@ export default class WebGPUPlayer {
             const customTelemetry = customPlaybackController.getTelemetry();
             const presentationTelemetry = this.presenter.getTelemetry();
             const eligibility = this.lastCustomPlaybackEligibility;
-            const videoPath = eligibility?.eligible === true ?
-                `${eligibility.videoDecoderBackend} / ${eligibility.videoOutputMode}` :
-                'unknown';
-            return Promise.resolve({
-                categories: [
+            return loadAddonStrings().then(() => {
+                const videoPath = eligibility?.eligible === true ?
+                    `${translateVideoDecoderBackend(eligibility.videoDecoderBackend)} / ${translateVideoOutputMode(eligibility.videoOutputMode)}` :
+                    globalize.translate('Unknown');
+                // Counts stay out of translate, whose arguments are formatted for the locale; the playback testers parse them
+                const categories = [
                     {
                         stats: [
-                            { label: 'Playback pipeline', value: 'WebCodecs / WebGPU' },
-                            { label: 'State', value: customTelemetry.state },
+                            { label: globalize.translate('WebGPUStatsPlaybackPipeline'), value: 'WebCodecs / WebGPU' },
                             {
-                                label: 'Clock',
-                                value: `${customTelemetry.currentTimeMicroseconds} us`
+                                label: globalize.translate('WebGPUStatsState'),
+                                value: translatePlaybackState(customTelemetry.state)
+                            },
+                            {
+                                label: globalize.translate('WebGPUStatsClock'),
+                                value: `${customTelemetry.currentTimeMicroseconds} ${globalize.translate('WebGPUMicrosecondsUnit')}`
                             }
                         ],
                         type: 'media'
@@ -1715,19 +1731,19 @@ export default class WebGPUPlayer {
                     {
                         stats: [
                             {
-                                label: 'Video path',
+                                label: globalize.translate('WebGPUStatsVideoPath'),
                                 value: videoPath
                             },
                             {
-                                label: 'Decoded / presented frames',
+                                label: globalize.translate('WebGPUStatsDecodedPresentedFrames'),
                                 value: `${customTelemetry.videoDecode.receivedFrameCount} / ${presentationTelemetry.presentedFrameCount}`
                             },
                             {
-                                label: 'Dropped / queued frames',
+                                label: globalize.translate('WebGPUStatsDroppedQueuedFrames'),
                                 value: `${customTelemetry.videoDecode.droppedFrameCount} / ${customTelemetry.videoDecode.queuedFrameCount}`
                             },
                             {
-                                label: 'Video resyncs / suspensions',
+                                label: globalize.translate('WebGPUStatsVideoResyncsSuspensions'),
                                 value: `${customTelemetry.videoDecode.videoResyncCount} / ${customTelemetry.videoDecode.videoSuspensionCount}`
                             }
                         ],
@@ -1736,17 +1752,24 @@ export default class WebGPUPlayer {
                     {
                         stats: [
                             {
-                                label: 'Audio path',
-                                value: customTelemetry.audioPath
+                                label: globalize.translate('WebGPUStatsAudioPath'),
+                                value: translateAudioPath(customTelemetry.audioPath)
                             },
                             {
-                                label: 'Queued / underflow frames',
+                                label: globalize.translate('WebGPUStatsQueuedUnderflowFrames'),
                                 value: `${customTelemetry.audioOutput?.queuedFrames ?? 0} / ${customTelemetry.audioOutput?.underflowFrames ?? 0}`
                             }
                         ],
                         type: 'audio'
                     }
-                ]
+                ];
+                // The host inserts labels and values as HTML
+                return {
+                    categories: categories.map(category => ({
+                        ...category,
+                        stats: category.stats.map(stat => ({ label: escapeHtml(stat.label), value: escapeHtml(stat.value) }))
+                    }))
+                };
             });
         }
         return this.htmlDelegate.player.getStats();

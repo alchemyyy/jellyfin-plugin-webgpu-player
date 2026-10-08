@@ -1,6 +1,9 @@
+import escapeHtml from 'escape-html';
+
 import layoutManager from 'components/layoutManager';
 import globalize from 'lib/globalize';
 
+import type { AddonStringKey } from '../host/globalize';
 import { webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
 import { scheduleSelectLabelFallback } from './SelectLabelFallback';
 
@@ -71,12 +74,12 @@ type NumericSettingRange = Readonly<{
 }>;
 
 type NumericControlConfiguration = Readonly<{
-    description: string
+    descriptionKey: AddonStringKey
     key: NumericSettingKey
-    label: string
+    labelKey: AddonStringKey
     range: NumericSettingRange
     section: 'audio' | 'render'
-    unit?: string
+    unitKey?: AddonStringKey
 }>;
 
 type ActivePanel = {
@@ -88,101 +91,87 @@ type ActivePanel = {
 const PLAYBACK_INFO_GAP_PX = 8;
 const PLAYBACK_INFO_SELECTOR = '.playerStats';
 const PANEL_TOP_PROPERTY = '--webgpu-settings-top';
-const AUDIO_DOWNMIX_LIVE_STATUS =
-    'Downmix gains applied live and saved for the active WebGPU stereo downmix.';
-const AUDIO_DOWNMIX_PENDING_STATUS =
-    'Saved. No active compatible WebGPU stereo downmix accepted the live gain change; '
-    + 'the gains will apply to the next compatible client-decoded downmix.';
-const AUDIO_OUTPUT_LAYOUT_APPLYING_STATUS =
-    'Switching the active WebGPU client-decoded audio...';
-const AUDIO_OUTPUT_LAYOUT_LIVE_STATUS =
-    'Applied to the active WebGPU client-decoded audio; audio pauses briefly while it switches.';
-const AUDIO_OUTPUT_LAYOUT_PENDING_STATUS =
-    'No active WebGPU client-decoded audio; it applies to the next client-decoded playback.';
-const PLAYBACK_PREFERENCES_RESTART_STATUS =
-    'Playback changes are restart-required and apply after restarting playback or '
-    + 'starting the next item.';
 
 const NUMERIC_CONTROL_CONFIGURATIONS: NumericControlConfiguration[] = [];
 NUMERIC_CONTROL_CONFIGURATIONS.push(
     {
-        description: 'Manual HDR source peak used when metadata tracking is off.',
+        descriptionKey: 'WebGPUManualInputPeakHelp',
         key: 'inputPeakNits',
-        label: 'Manual input peak',
+        labelKey: 'WebGPUManualInputPeak',
         range: HDR_RENDER_SETTING_RANGES.inputPeakNits,
         section: 'render',
-        unit: 'nits'
+        unitKey: 'WebGPUUnitNits'
     },
     {
-        description: 'Peak luminance of the SDR output transform.',
+        descriptionKey: 'WebGPUOutputPeakHelp',
         key: 'outputPeakNits',
-        label: 'Output peak',
+        labelKey: 'WebGPUOutputPeak',
         range: HDR_RENDER_SETTING_RANGES.outputPeakNits,
         section: 'render',
-        unit: 'nits'
+        unitKey: 'WebGPUUnitNits'
     },
     {
-        description: 'Reference white used by the HDR-to-SDR transform.',
+        descriptionKey: 'WebGPUPaperWhiteHelp',
         key: 'paperWhiteNits',
-        label: 'Paper white',
+        labelKey: 'WebGPUPaperWhite',
         range: HDR_RENDER_SETTING_RANGES.paperWhiteNits,
         section: 'render',
-        unit: 'nits'
+        unitKey: 'WebGPUUnitNits'
     },
     {
-        description: 'Exposure adjustment before tone mapping.',
+        descriptionKey: 'WebGPUExposureHelp',
         key: 'exposure',
-        label: 'Exposure',
+        labelKey: 'WebGPUExposure',
         range: HDR_RENDER_SETTING_RANGES.exposure,
         section: 'render',
-        unit: 'stops'
+        unitKey: 'WebGPUUnitStops'
     },
     {
-        description: 'Reduces saturation near the brightest mapped values.',
+        descriptionKey: 'WebGPUHighlightDesaturationHelp',
         key: 'desaturationStrength',
-        label: 'Highlight desaturation',
+        labelKey: 'WebGPUHighlightDesaturation',
         range: HDR_RENDER_SETTING_RANGES.desaturationStrength,
         section: 'render'
     },
     {
-        description: 'Adds or removes display brightness after tone mapping.',
+        descriptionKey: 'WebGPUBrightnessHelp',
         key: 'brightness',
-        label: 'Brightness',
+        labelKey: 'WebGPUBrightness',
         range: HDR_RENDER_SETTING_RANGES.brightness,
         section: 'render'
     },
     {
-        description: 'Scales display contrast after tone mapping.',
+        descriptionKey: 'WebGPUContrastHelp',
         key: 'contrast',
-        label: 'Contrast',
+        labelKey: 'WebGPUContrast',
         range: HDR_RENDER_SETTING_RANGES.contrast,
         section: 'render'
     },
     {
-        description: 'Scales display saturation after tone mapping.',
+        descriptionKey: 'WebGPUSaturationHelp',
         key: 'saturation',
-        label: 'Saturation',
+        labelKey: 'WebGPUSaturation',
         range: HDR_RENDER_SETTING_RANGES.saturation,
         section: 'render'
     },
     {
-        description: 'Scales the center channel contribution; values above 1 boost it.',
+        descriptionKey: 'WebGPUCenterLevelHelp',
         key: 'centerLevel',
-        label: 'Center level',
+        labelKey: 'WebGPUCenterLevel',
         range: AUDIO_DOWNMIX_SETTING_RANGES.centerLevel,
         section: 'audio'
     },
     {
-        description: 'Scales back and side channel contributions; values above 1 boost them.',
+        descriptionKey: 'WebGPUSurroundLevelHelp',
         key: 'surroundLevel',
-        label: 'Surround level',
+        labelKey: 'WebGPUSurroundLevel',
         range: AUDIO_DOWNMIX_SETTING_RANGES.surroundLevel,
         section: 'audio'
     },
     {
-        description: 'Boosts the completed stereo downmix before peak limiting.',
+        descriptionKey: 'WebGPUDownmixOutputGainHelp',
         key: 'outputGain',
-        label: 'Downmix output gain',
+        labelKey: 'WebGPUDownmixOutputGain',
         range: AUDIO_DOWNMIX_SETTING_RANGES.outputGain,
         section: 'audio'
     }
@@ -277,33 +266,42 @@ function updateNumericSetting(
     }
 }
 
+/** Translates a key for the panel's HTML, escaped because translations may contain markup characters. */
+function translateToHTML(key: string, ...replacements: unknown[]): string {
+    return escapeHtml(globalize.translate(key, ...replacements));
+}
+
 function createDefaultButtonHTML(
     settingKey: DefaultSettingKey,
-    label: string
+    settingName: string
 ): string {
     return `
         <button
-            aria-label="Restore ${label} default"
+            aria-label="${translateToHTML('WebGPURestoreSettingDefault', settingName)}"
             class="raised webgpuSettingsDefaultButton"
             data-default-setting="${settingKey}"
             is="emby-button"
             type="button"
-        >Default</button>`;
+        >${translateToHTML('Default')}</button>`;
 }
 
 function createNumericControlHTML(configuration: NumericControlConfiguration): string {
     const settingKey = configuration.key;
     const range = configuration.range;
-    const unitText = configuration.unit ? ` (${configuration.unit})` : '';
+    const label = globalize.translate(configuration.labelKey);
+    const description = translateToHTML(configuration.descriptionKey);
+    const labelText = configuration.unitKey ?
+        translateToHTML('WebGPUSettingWithUnit', label, globalize.translate(configuration.unitKey)) :
+        escapeHtml(label);
     return `
         <div
             class="webgpuSettingsNumericControl"
             data-setting="${settingKey}"
-            title="${configuration.description}"
+            title="${description}"
         >
             <div class="webgpuSettingsNumericRow">
                 <label class="webgpuSettingsControlLabel" for="webgpu-${settingKey}-slider">
-                    ${configuration.label}${unitText}
+                    ${labelText}
                 </label>
                 <div class="webgpuSettingsSliderContainer">
                     <input
@@ -321,7 +319,7 @@ function createNumericControlHTML(configuration: NumericControlConfiguration): s
                 <div class="webgpuSettingsNumberContainer">
                     <input
                         aria-describedby="webgpu-${settingKey}-description"
-                        aria-label="${configuration.label} numeric value"
+                        aria-label="${translateToHTML('WebGPUSettingNumericValue', label)}"
                         class="webgpuSettingsNumber"
                         data-setting-number="${settingKey}"
                         is="emby-input"
@@ -331,12 +329,12 @@ function createNumericControlHTML(configuration: NumericControlConfiguration): s
                         type="number"
                     />
                 </div>
-                ${createDefaultButtonHTML(settingKey, configuration.label)}
+                ${createDefaultButtonHTML(settingKey, label)}
             </div>
             <div
                 class="webgpuSettingsControlDescription"
                 id="webgpu-${settingKey}-description"
-            >${configuration.description}</div>
+            >${description}</div>
         </div>`;
 }
 
@@ -353,17 +351,17 @@ function createSectionControlsHTML(section: 'audio' | 'render'): string {
 function createPanelHTML(): string {
     return `
         <button
-            aria-label="Close WebGPU Settings"
+            aria-label="${translateToHTML('WebGPUCloseSettings')}"
             class="webgpuSettingsClose"
             is="paper-icon-button-light"
-            title="Close"
+            title="${translateToHTML('ButtonClose')}"
             type="button"
         ><span class="material-icons close" aria-hidden="true"></span></button>
         <div class="webgpuSettingsContent">
-                <h2 class="webgpuSettingsTitle" id="webgpu-settings-title">WebGPU Settings</h2>
+                <h2 class="webgpuSettingsTitle" id="webgpu-settings-title">${translateToHTML('WebGPUSettings')}</h2>
                 <section class="webgpuSettingsSection" aria-labelledby="webgpu-playback-title">
                     <h3 class="webgpuSettingsSectionTitle" id="webgpu-playback-title">
-                        Playback
+                        ${translateToHTML('WebGPUPlayback')}
                     </h3>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
@@ -372,15 +370,15 @@ function createPanelHTML(): string {
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
-                            <span>Enable custom decode</span>
+                            <span>${translateToHTML('WebGPUEnableCustomDecode')}</span>
                         </label>
-                        ${createDefaultButtonHTML('enableCustomDecode', 'custom decode')}
+                        ${createDefaultButtonHTML(
+                            'enableCustomDecode',
+                            globalize.translate('WebGPUSettingNameCustomDecode')
+                        )}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        The player demuxes and decodes direct-play sources itself, with WebCodecs first
-                        and the bundled WASM decoders only where WebCodecs cannot decode. When off, it
-                        plays only what the browser plays natively, the server transcodes everything
-                        else, and HDR tone mapping is unavailable.
+                        ${translateToHTML('WebGPUEnableCustomDecodeHelp')}
                     </div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
@@ -389,24 +387,24 @@ function createPanelHTML(): string {
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
-                            <span>Enable HDR tone mapping</span>
+                            <span>${translateToHTML('WebGPUEnableHDRToneMapping')}</span>
                         </label>
-                        ${createDefaultButtonHTML('enableHDRToneMapping', 'HDR tone mapping')}
+                        ${createDefaultButtonHTML(
+                            'enableHDRToneMapping',
+                            globalize.translate('WebGPUSettingNameHDRToneMapping')
+                        )}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        The player requests HDR and Dolby Vision video from the server and tone maps it
-                        with WebGPU, using the settings below. When off, HDR plays natively where the
-                        browser supports it, and the server transcodes it to SDR otherwise. Requires
-                        custom decode.
+                        ${translateToHTML('WebGPUEnableHDRToneMappingHelp')}
                     </div>
                     <div class="webgpuSettingsStatus" data-playback-status role="status">
-                        ${PLAYBACK_PREFERENCES_RESTART_STATUS}
+                        ${translateToHTML('WebGPUPlaybackChangesRestartRequired')}
                     </div>
                 </section>
 
                 <section class="webgpuSettingsSection" aria-labelledby="webgpu-tone-mapping-title">
                     <h3 class="webgpuSettingsSectionTitle" id="webgpu-tone-mapping-title">
-                        Tone mapping and display
+                        ${translateToHTML('WebGPUToneMappingAndDisplay')}
                     </h3>
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
@@ -414,14 +412,17 @@ function createPanelHTML(): string {
                                 data-setting-select="operator"
                                 id="webgpu-tone-map-operator"
                                 is="emby-select"
-                                label="Tone map operator"
+                                label="${translateToHTML('WebGPUToneMapOperator')}"
                             >
-                                <option value="spline">Spline</option>
+                                <option value="spline">${translateToHTML('WebGPUToneMapOperatorSpline')}</option>
                                 <option value="aces">ACES</option>
                                 <option value="reinhard">Reinhard</option>
                             </select>
                         </div>
-                        ${createDefaultButtonHTML('operator', 'tone map operator')}
+                        ${createDefaultButtonHTML(
+                            'operator',
+                            globalize.translate('WebGPUSettingNameToneMapOperator')
+                        )}
                     </div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
@@ -430,15 +431,15 @@ function createPanelHTML(): string {
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
-                            <span>Track source peak metadata</span>
+                            <span>${translateToHTML('WebGPUTrackSourcePeakMetadata')}</span>
                         </label>
                         ${createDefaultButtonHTML(
                             'automaticInputPeakNits',
-                            'source peak metadata tracking'
+                            globalize.translate('WebGPUSettingNameSourcePeakTracking')
                         )}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        When enabled, valid stream metadata replaces the manual input peak.
+                        ${translateToHTML('WebGPUTrackSourcePeakMetadataHelp')}
                     </div>
                     ${createSectionControlsHTML('render')}
                     <div class="webgpuSettingsStatus" data-render-status role="status"></div>
@@ -446,12 +447,12 @@ function createPanelHTML(): string {
                         class="raised webgpuSettingsResetRender"
                         is="emby-button"
                         type="button"
-                    >Reset tone mapping and display</button>
+                    >${translateToHTML('WebGPUResetToneMappingAndDisplay')}</button>
                 </section>
 
                 <section class="webgpuSettingsSection" aria-labelledby="webgpu-audio-title">
                     <h3 class="webgpuSettingsSectionTitle" id="webgpu-audio-title">
-                        ${globalize.translate('WebGPUAudioOutputAndDownmix')}
+                        ${translateToHTML('WebGPUAudioOutputAndDownmix')}
                     </h3>
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
@@ -460,7 +461,7 @@ function createPanelHTML(): string {
                                 data-audio-output-select
                                 id="webgpu-audio-output"
                                 is="emby-select"
-                                label="${globalize.translate('LabelAudioOutput')}"
+                                label="${translateToHTML('WebGPUAudioOutput')}"
                             ></select>
                         </div>
                         <button
@@ -468,19 +469,19 @@ function createPanelHTML(): string {
                             data-audio-output-picker
                             is="emby-button"
                             type="button"
-                        >${globalize.translate('ButtonChooseAudioOutput')}</button>
+                        >${translateToHTML('WebGPUChooseAudioOutput')}</button>
                         <button
                             class="raised webgpuSettingsRedetectAudioOutput"
                             data-audio-output-redetect
                             is="emby-button"
-                            title="${globalize.translate('WebGPURedetectAudioOutput')}"
+                            title="${translateToHTML('WebGPURedetectAudioOutputHelp')}"
                             type="button"
-                        >${globalize.translate('ButtonRedetectAudioOutput')}</button>
+                        >${translateToHTML('WebGPURedetectAudioOutput')}</button>
                     </div>
                     <div
                         class="fieldDescription"
                         id="webgpu-audio-output-description"
-                    >${globalize.translate('WebGPUAudioOutputDescription')}</div>
+                    >${translateToHTML('WebGPUAudioOutputDescription')}</div>
                     <div
                         aria-live="polite"
                         class="webgpuSettingsStatus"
@@ -490,16 +491,17 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
                             <select
+                                aria-describedby="webgpu-audio-downmix-algorithm-description"
                                 data-setting-select="audioDownmixAlgorithm"
                                 id="webgpu-audio-downmix-algorithm"
                                 is="emby-select"
-                                label="Downmix algorithm"
+                                label="${translateToHTML('WebGPUDownmixAlgorithm')}"
                             >
                                 <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.StandardLORO}">
-                                    Standard Lo/Ro with lookahead limiter
+                                    ${translateToHTML('WebGPUDownmixAlgorithmStandardLORO')}
                                 </option>
                                 <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.PeakNormalizedLORO}">
-                                    Peak-normalized Lo/Ro without lookahead
+                                    ${translateToHTML('WebGPUDownmixAlgorithmPeakNormalizedLORO')}
                                 </option>
                                 <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4}">AC-4</option>
                                 <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845}">
@@ -509,15 +511,19 @@ function createPanelHTML(): string {
                                     Dave750
                                 </option>
                                 <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.NightModeDialogue}">
-                                    Night mode dialogue
+                                    ${translateToHTML('WebGPUDownmixAlgorithmNightModeDialogue')}
                                 </option>
                             </select>
                         </div>
                         ${createDefaultButtonHTML(
                             'audioDownmixAlgorithm',
-                            'downmix algorithm'
+                            globalize.translate('WebGPUSettingNameDownmixAlgorithm')
                         )}
                     </div>
+                    <div
+                        class="fieldDescription"
+                        id="webgpu-audio-downmix-algorithm-description"
+                    >${translateToHTML('WebGPUAudioDownmixAlgorithmHelp')}</div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
@@ -525,31 +531,28 @@ function createPanelHTML(): string {
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
-                            <span>Force stereo for WebGPU client-decoded audio</span>
+                            <span>${translateToHTML('WebGPUForceStereo')}</span>
                         </label>
-                        ${createDefaultButtonHTML('forceStereoDownmix', 'force stereo')}
+                        ${createDefaultButtonHTML(
+                            'forceStereoDownmix',
+                            globalize.translate('WebGPUSettingNameForceStereo')
+                        )}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        Otherwise complete client-decoded 5.1 or 7.1 audio can use a matching
-                        native speaker output.
+                        ${translateToHTML('WebGPUForceStereoHelp')}
                     </div>
                     ${createSectionControlsHTML('audio')}
                     <div class="fieldDescription webgpuSettingsSafetyDescription">
-                        Values above 1 amplify the selected contribution. Boosted multichannel
-                        stereo downmixes are peak-limited; the selected WebGPU downmix algorithm
-                        still controls the base matrix. Native-media audio and HTML fallback
-                        playback do not consume these settings.
+                        ${translateToHTML('WebGPUDownmixGainsHelp')}
                     </div>
                     <div class="webgpuSettingsStatus" data-audio-status role="status">
-                        Downmix gain changes apply live to an active compatible WebGPU stereo
-                        downmix. Force stereo and downmix algorithm changes switch active
-                        client-decoded audio in place, with a brief pause in sound.
+                        ${translateToHTML('WebGPUAudioSettingsApplyHelp')}
                     </div>
                     <button
                         class="raised webgpuSettingsResetAudio"
                         is="emby-button"
                         type="button"
-                    >Reset audio</button>
+                    >${translateToHTML('WebGPUResetAudio')}</button>
                 </section>
 
                 <div class="webgpuSettingsFooter">
@@ -557,7 +560,7 @@ function createPanelHTML(): string {
                         class="raised webgpuSettingsResetAll"
                         is="emby-button"
                         type="button"
-                    >Reset all</button>
+                    >${translateToHTML('WebGPUResetAll')}</button>
                 </div>
         </div>`;
 }
@@ -579,7 +582,7 @@ function setStatus(element: HTMLElement, message: string): void {
 
 function getAudioOutputMessageTranslationKey(
     messageCode: WebGPUAudioOutputMessageCode
-): string {
+): AddonStringKey {
     switch (messageCode) {
         case 'applying':
             return 'WebGPUAudioOutputStatusApplying';
@@ -775,12 +778,16 @@ function createPanelController(
         audioOutputPicker.title = snapshot.pickerAvailable ?
             globalize.translate('WebGPUAuthorizeAudioOutput') :
             globalize.translate('WebGPUAudioOutputPickerUnavailable');
-        const pickerMessage = snapshot.pickerAvailable ? '' :
-            ` ${globalize.translate('WebGPUAudioOutputPickerUnavailableHelp')}`;
         const statusMessage = globalize.translate(
             getAudioOutputMessageTranslationKey(snapshot.messageCode)
         );
-        setStatus(audioOutputStatus, `${statusMessage}${pickerMessage}`);
+        setStatus(audioOutputStatus, snapshot.pickerAvailable ?
+            statusMessage :
+            globalize.translate(
+                'WebGPUJoinedSentences',
+                statusMessage,
+                globalize.translate('WebGPUAudioOutputPickerUnavailableHelp')
+            ));
     };
 
     const synchronizeControls = (): void => {
@@ -821,19 +828,12 @@ function createPanelController(
         renderFrameRequest = null;
         const currentRenderSettings: RenderSettings = player.getRenderSettings();
         if (currentRenderSettings.mode !== 'hdr-to-sdr') {
-            setStatus(
-                renderStatus,
-                'Saved. Controls apply when an HDR-to-SDR WebGPU presentation is active.'
-            );
+            setStatus(renderStatus, globalize.translate('WebGPURenderStatusInactive'));
             return;
         }
         const detectedInputPeakNits = player.getDetectedInputPeakNits();
         if (settings.render.automaticInputPeakNits && detectedInputPeakNits === null) {
-            setStatus(
-                renderStatus,
-                'Saved. The detected source peak is unavailable; '
-                    + 'automatic tracking will apply to the next HDR presentation.'
-            );
+            setStatus(renderStatus, globalize.translate('WebGPURenderStatusPeakUnavailable'));
             return;
         }
         const configuredRenderSettings = createConfiguredHDRRenderSettings(
@@ -844,14 +844,10 @@ function createPanelController(
             configuredRenderSettings,
             settings.render.automaticInputPeakNits
         )) {
-            setStatus(renderStatus, 'Applied live and saved.');
+            setStatus(renderStatus, globalize.translate('WebGPURenderStatusApplied'));
             return;
         }
-        setStatus(
-            renderStatus,
-            'Saved. The current presentation could not apply the change; '
-                + 'it will apply to the next HDR presentation.'
-        );
+        setStatus(renderStatus, globalize.translate('WebGPURenderStatusPending'));
     };
 
     const scheduleRenderSettings = (): void => {
@@ -931,10 +927,11 @@ function createPanelController(
         return audioStatusRevision;
     };
 
-    // Force stereo and the algorithm switch active decoded audio in place when they change it
-    const applyAudioOutputLayout = (prefix: string, suffix: string): void => {
+    // Force stereo and the algorithm switch active decoded audio in place when they change it.
+    // formatStatus places the layout sentence in the full status, which translations may order freely.
+    const applyAudioOutputLayout = (formatStatus: (layoutStatus: string) => string): void => {
         const statusRevision = setAudioStatus(
-            `${prefix}${AUDIO_OUTPUT_LAYOUT_APPLYING_STATUS}${suffix}`
+            formatStatus(globalize.translate('WebGPUAudioLayoutStatusApplying'))
         );
         void player.applyAudioOutputSettings(
             settings.audio.forceStereoDownmix,
@@ -944,19 +941,25 @@ function createPanelController(
                 return;
             }
             const layoutStatus = appliedLive ?
-                AUDIO_OUTPUT_LAYOUT_LIVE_STATUS :
-                AUDIO_OUTPUT_LAYOUT_PENDING_STATUS;
-            setStatus(audioStatus, `${prefix}${layoutStatus}${suffix}`);
+                globalize.translate('WebGPUAudioLayoutStatusLive') :
+                globalize.translate('WebGPUAudioLayoutStatusPending');
+            setStatus(audioStatus, formatStatus(layoutStatus));
         });
     };
+
+    const formatLayoutChangeStatus = (layoutStatus: string): string => (
+        globalize.translate('WebGPUAudioLayoutChangeStatus', layoutStatus)
+    );
 
     const applyAudioDownmixSettings = (includeLayoutStatus: boolean): void => {
         const appliedLive = player.updateAudioDownmixSettings(settings.audio.downmix);
         const downmixStatus = appliedLive ?
-            AUDIO_DOWNMIX_LIVE_STATUS :
-            AUDIO_DOWNMIX_PENDING_STATUS;
+            globalize.translate('WebGPUAudioDownmixStatusLive') :
+            globalize.translate('WebGPUAudioDownmixStatusPending');
         if (includeLayoutStatus) {
-            applyAudioOutputLayout(`${downmixStatus} `, '');
+            applyAudioOutputLayout((layoutStatus: string): string => (
+                globalize.translate('WebGPUJoinedSentences', downmixStatus, layoutStatus)
+            ));
             return;
         }
         setAudioStatus(downmixStatus);
@@ -1035,7 +1038,7 @@ function createPanelController(
             }
         });
         persistSettings();
-        setStatus(playbackStatus, `Saved. ${PLAYBACK_PREFERENCES_RESTART_STATUS}`);
+        setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
     };
     customDecodeCheckbox.addEventListener('change', onPlaybackPreferenceChange);
     HDRToneMappingCheckbox.addEventListener('change', onPlaybackPreferenceChange);
@@ -1083,7 +1086,7 @@ function createPanelController(
             }
         });
         persistSettings();
-        applyAudioOutputLayout('Saved. ', ' Downmix gains are unchanged.');
+        applyAudioOutputLayout(formatLayoutChangeStatus);
     };
     forceStereoCheckbox.addEventListener('change', onForceStereoChange);
     cleanupCallbacks.push((): void => {
@@ -1099,7 +1102,7 @@ function createPanelController(
         audioDownmixAlgorithm = normalizeCustomAudioDownmixAlgorithm(value);
         webGPUAudioDownmixAlgorithm(audioDownmixAlgorithm);
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
-        applyAudioOutputLayout('Saved. ', ' Downmix gains are unchanged.');
+        applyAudioOutputLayout(formatLayoutChangeStatus);
     };
     const onAudioDownmixAlgorithmChange = (): void => {
         persistAudioDownmixAlgorithm(audioDownmixAlgorithmSelect.value);
@@ -1187,7 +1190,7 @@ function createPanelController(
         synchronizeAudioOutputControls(audioOutputManager.getSnapshot());
         scheduleRenderSettings();
         applyAudioDownmixSettings(true);
-        setStatus(playbackStatus, `Saved. ${PLAYBACK_PREFERENCES_RESTART_STATUS}`);
+        setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
     };
     resetAllButton.addEventListener('click', onResetAll);
     cleanupCallbacks.push((): void => {

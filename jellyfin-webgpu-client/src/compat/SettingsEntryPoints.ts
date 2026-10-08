@@ -7,6 +7,7 @@ import appSettings from 'scripts/settings/appSettings';
 import { pageIdOn } from 'utils/dashboard';
 import Events from 'utils/events';
 
+import { loadAddonStrings } from '../host/globalize';
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
 import { PREFERRED_VIDEO_PLAYER_KEY } from '../shims/userSettings';
 
@@ -100,13 +101,14 @@ function getSettingsPageUserId(): string | undefined {
 function createPreferenceField(): HTMLElement {
     const field = document.createElement('div');
     field.className = `selectContainer ${PREFERENCE_FIELD_CLASS}`;
+    // WebGPU and HTML name the two players, like the technology names Jellyfin leaves untranslated
     field.innerHTML = `<select is="emby-select" class="${PREFERENCE_SELECT_CLASS}"`
-        + ` label="${escapeHtml(globalize.translate('LabelPreferredVideoPlayer'))}">`
+        + ` label="${escapeHtml(globalize.translate('WebGPUPreferredVideoPlayer'))}">`
         + `<option value="${VideoPlayerPreference.Auto}">${escapeHtml(globalize.translate('Auto'))}</option>`
         + `<option value="${VideoPlayerPreference.WEBGPU}">WebGPU</option>`
         + `<option value="${VideoPlayerPreference.HTML}">HTML</option>`
         + '</select>'
-        + `<div class="fieldDescription">${escapeHtml(globalize.translate('PreferredVideoPlayerHelp'))}</div>`;
+        + `<div class="fieldDescription">${escapeHtml(globalize.translate('WebGPUPreferredVideoPlayerHelp'))}</div>`;
     return field;
 }
 
@@ -150,11 +152,18 @@ export function installSettingsEntryPoints(player: SettingsEntryPlayer): boolean
     }
     installed = true;
 
+    // Both entry points render add-on strings, so they wait for the current locale's translation
     pageIdOn(VIEW_SHOW_EVENT, VIDEO_OSD_PAGE_ID, (event: Event): void => {
-        ensureOsdSettingsButton(event.target as HTMLElement, player);
+        const page = event.target as HTMLElement;
+        void loadAddonStrings().then((): void => {
+            ensureOsdSettingsButton(page, player);
+        });
     });
     pageIdOn(VIEW_SHOW_EVENT, PLAYBACK_SETTINGS_PAGE_ID, (event: Event): void => {
-        ensurePreferredPlayerControl(event.target as HTMLElement);
+        const page = event.target as HTMLElement;
+        void loadAddonStrings().then((): void => {
+            ensurePreferredPlayerControl(page);
+        });
     });
     // The OSD can show before play() resolves and PlaybackManager makes this player current
     for (const eventName of PLAYER_STATE_EVENTS) {

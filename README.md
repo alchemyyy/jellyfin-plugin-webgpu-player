@@ -83,6 +83,7 @@ These apply only while File Transformation does the rewriting.
 | `Jellyfin.Plugin.WebGPUPlayer/Addon/` | Embedded add-on catalog and the asset route |
 | `bin/` | Build output, one folder per project (generated, gitignored): the two .NET projects, and the client add-on in `bin/jellyfin-webgpu-client/` |
 | `jellyfin-webgpu-client/` | Client add-on: a private npm package with the add-on sources in `src/` and their webpack, Vitest, ESLint and stylelint configuration |
+| `jellyfin-webgpu-client/src/strings/` | The add-on's text: `en-us.json` is the source, and each translation is a `<locale>.json` beside it, written by Weblate |
 | `jellyfin-webgpu-client.tests/` | The add-on's Vitest suites, mirroring `jellyfin-webgpu-client/src/`. They import the add-on through `addons/webGPUPlayer/...` and have their own ESLint config, built on the client's |
 | `jellyfin-webgpu-client/vendor/webgpu-player/` | Submodule: the engine ([alchemyyy/WebGPU-Player](https://github.com/alchemyyy/WebGPU-Player)), an npm workspace of `jellyfin-webgpu-client/` |
 | `jellyfin-webgpu-client/vendor/webgpu-player-hls/` | Submodule: the hls.js fork (`alchemyyy/hls.js`, branch `fix/cals2`) |
@@ -216,6 +217,46 @@ asset route test runs only when an add-on is embedded.
 
 The plugin targets net10.0 against `Jellyfin.Controller` 12.1.0, with
 `targetAbi` 12.1.0.0.
+
+## Localization
+
+The add-on's text is translated the way Jellyfin Web's is: one JSON file per
+language with a key for every string, maintained through Weblate.
+
+- `jellyfin-webgpu-client/src/strings/en-us.json` is the source and the
+  fallback. Each translation is a `<locale>.json` beside it, named by the
+  lowercase BCP 47 tag of a Jellyfin Web display language, such as `de.json` or
+  `pt-br.json`. A new file needs no code change: the build makes every file in
+  the folder its own lazy chunk.
+- The add-on loads the translation for Jellyfin Web's display language, else
+  the one for its base language (`pt` for `pt-br`). A string that is missing or
+  empty there shows its `en-us.json` text.
+- Keys start with `WebGPU`. Words Jellyfin Web already translates, such as
+  `Default`, `Auto`, `Unknown` and `ButtonClose`, use Jellyfin Web's own keys
+  and translations.
+- `{0}`, `{1}` are placeholders, as in Jellyfin Web. A translation keeps them
+  and may reorder them. `WebGPUJoinedSentences` (`{0} {1}`) joins two complete
+  sentences, so a language can change the separator.
+- Names of technologies, standards and algorithms are not translated: WebGPU,
+  HTML, WebCodecs, ACES, Reinhard, AC-4, RFC 7845 and Dave750.
+- `jellyfin-webgpu-client.tests/strings/strings.test.ts` checks the folder: the
+  file names, that a translation has only source keys and keeps their
+  placeholders, that every key the add-on translates exists, and that no source
+  key is unused.
+
+The Weblate component:
+
+| Setting | Value |
+| --- | --- |
+| File format | JSON file |
+| File mask | `jellyfin-webgpu-client/src/strings/*.json` |
+| Monolingual base language file | `jellyfin-webgpu-client/src/strings/en-us.json` |
+| Language code style | BCP style using hyphen as a separator, lower cased |
+| Source language | English |
+
+Nothing else needs translating. The server plugin shows no text of its own, and
+Jellyfin does not translate plugin names or descriptions. The engine renders no
+text either: the add-on translates the codes it reports.
 
 ## Install
 

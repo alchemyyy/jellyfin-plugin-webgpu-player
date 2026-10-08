@@ -5,13 +5,32 @@ import { appRouter } from 'addons/webGPUPlayer/host/appRouter';
 import appSettings from 'addons/webGPUPlayer/host/appSettings';
 import confirm from 'addons/webGPUPlayer/host/confirm';
 import dashboardDefault, { pageClassOn, pageIdOn } from 'addons/webGPUPlayer/host/dashboard';
-import globalize, { getCurrentLocale, translate, translateHtml } from 'addons/webGPUPlayer/host/globalize';
+import globalize, {
+    getCurrentLocale,
+    loadAddonStrings,
+    translate,
+    translateHtml
+} from 'addons/webGPUPlayer/host/globalize';
 import { bindHostBridge, type HostPluginBag } from 'addons/webGPUPlayer/host/HostBridge';
 import inputManagerDefault, { handleCommand, notify, off, on } from 'addons/webGPUPlayer/host/inputManager';
 import loading, { hide, show } from 'addons/webGPUPlayer/host/loading';
 import { PlaybackManager, playbackManager } from 'addons/webGPUPlayer/host/playbackManager';
 import serverConnections from 'addons/webGPUPlayer/host/serverConnections';
 import toast from 'addons/webGPUPlayer/host/toast';
+
+// Translation files by locale, standing in for src/strings/<locale>.json; the bridge caches each locale, so every
+// test uses its own locales
+const translationFileState = vi.hoisted(() => ({
+    files: new Map<string, Readonly<Record<string, string>>>(),
+    requests: [] as string[]
+}));
+
+vi.mock('addons/webGPUPlayer/host/translationFiles', () => ({
+    importTranslationFile: (locale: string): Promise<Readonly<Record<string, string>> | null> => {
+        translationFileState.requests.push(locale);
+        return Promise.resolve(translationFileState.files.get(locale) ?? null);
+    }
+}));
 
 class FakePlaybackManager {
     play = vi.fn();
@@ -119,9 +138,72 @@ describe('globalize bridge', () => {
         const bag = createBag();
         bind(bag);
 
-        expect(translate('LabelPreferredVideoPlayer')).toBe('Preferred video player');
-        expect(globalize.translate('ButtonChooseAudioOutput')).toBe('Choose output');
+        expect(translate('WebGPUPreferredVideoPlayer')).toBe('Preferred video player');
+        expect(globalize.translate('WebGPUChooseAudioOutput')).toBe('Choose output');
         expect((bag.globalize as { translate: ReturnType<typeof vi.fn> }).translate).not.toHaveBeenCalled();
+    });
+
+    it('loads nothing for the source locale', async () => {
+        translationFileState.requests.length = 0;
+        bind(createBag());
+
+        await loadAddonStrings();
+
+        expect(translate('WebGPUResetAll')).toBe('Reset all');
+        expect(translationFileState.requests).toEqual([]);
+    });
+
+    it('serves the current locale translation and falls back to the source per key', async () => {
+        translationFileState.files.set('de', {
+            WebGPUAudioOutput: '',
+            WebGPUChooseAudioOutput: 'Ausgabe wählen',
+            WebGPUUnnamedAudioOutput: 'Audioausgabe {0}'
+        });
+        translationFileState.requests.length = 0;
+        const bag = createBag();
+        (bag.globalize as { getCurrentLocale: () => string }).getCurrentLocale = (): string => 'de';
+        bind(bag);
+
+        await loadAddonStrings();
+
+        expect(translate('WebGPUChooseAudioOutput')).toBe('Ausgabe wählen');
+        expect(translate('WebGPUUnnamedAudioOutput', 2)).toBe('Audioausgabe 2');
+        // An untranslated string is empty or absent, and both show the source text
+        expect(translate('WebGPUAudioOutput')).toBe('Audio output');
+        expect(translate('WebGPUResetAll')).toBe('Reset all');
+        expect(translate('Auto')).toBe('host:Auto');
+        expect(translationFileState.requests).toEqual([ 'de' ]);
+    });
+
+    it('falls back from a regional locale without a file to its base language', async () => {
+        translationFileState.files.set('pt', { WebGPUResetAll: 'Redefinir tudo' });
+        translationFileState.requests.length = 0;
+        const bag = createBag();
+        // The host normalizes locale names; the bridge does too
+        (bag.globalize as { getCurrentLocale: () => string }).getCurrentLocale = (): string => 'pt_BR';
+        bind(bag);
+
+        await loadAddonStrings();
+
+        expect(translate('WebGPUResetAll')).toBe('Redefinir tudo');
+        expect(translationFileState.requests).toEqual([ 'pt-br', 'pt' ]);
+    });
+
+    it('loads a locale first seen after a language change', async () => {
+        translationFileState.files.set('fr', { WebGPUResetAudio: 'Réinitialiser l’audio' });
+        translationFileState.requests.length = 0;
+        let locale = 'en-us';
+        const bag = createBag();
+        (bag.globalize as { getCurrentLocale: () => string }).getCurrentLocale = (): string => locale;
+        bind(bag);
+
+        locale = 'fr';
+        // The source text serves until the translation arrives
+        expect(translate('WebGPUResetAudio')).toBe('Reset audio');
+        await loadAddonStrings();
+
+        expect(translate('WebGPUResetAudio')).toBe('Réinitialiser l’audio');
+        expect(translationFileState.requests).toEqual([ 'fr' ]);
     });
 
     it('substitutes add-on string arguments in the host locale', () => {
@@ -145,7 +227,7 @@ describe('globalize bridge', () => {
         const bag = createBag();
         bind(bag);
 
-        expect(translateHtml('<label>${LabelAudioOutput}</label><span>${Auto}</span>', 'core'))
+        expect(translateHtml('<label>${WebGPUAudioOutput}</label><span>${Auto}</span>', 'core'))
             .toBe('host:<label>Audio output</label><span>${Auto}</span>');
         expect((bag.globalize as { translateHtml: ReturnType<typeof vi.fn> }).translateHtml)
             .toHaveBeenCalledWith('<label>Audio output</label><span>${Auto}</span>', 'core');

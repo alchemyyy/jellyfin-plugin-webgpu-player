@@ -48,40 +48,22 @@ vi.mock('components/layoutManager', () => ({
     default: { tv: false }
 }));
 
-vi.mock('lib/globalize', () => {
+// Shortened texts for the audio output statuses these tests match; every other key renders its source string
+vi.mock('lib/globalize', async () => {
+    const { translateSourceString } = await import('../host/globalizeMock');
     const translations: Record<string, string> = {
-        ButtonChooseAudioOutput: 'Choose output',
-        ButtonRedetectAudioOutput: 'Re-detect output',
-        Default: 'Default',
-        LabelAudioOutput: 'Audio output',
-        WebGPUAudioOutputAndDownmix: 'Audio output and downmix',
         WebGPUAudioOutputDescription: 'System default follows operating-system output changes.',
-        WebGPUAudioOutputPickerUnavailable: 'This browser does not expose the audio output picker',
-        WebGPUAudioOutputPickerUnavailableHelp: 'The browser output picker is unavailable; already permitted outputs remain usable.',
-        WebGPUAuthorizeAudioOutput: 'Authorize an audio output through the browser',
-        WebGPUAudioOutputStatusDefaultActive: 'Using the system default audio output.',
         WebGPUAudioOutputStatusDefaultSaved: 'The system default audio output is saved.',
         WebGPUAudioOutputStatusPickerNotAllowed: 'Audio output selection is blocked.',
-        WebGPUAudioOutputStatusSelectedActive: 'Using the selected audio output.',
         WebGPUAudioOutputStatusSelectedEnumerationFailed: 'Available outputs could not be refreshed; the selected output remains active.',
         WebGPUAudioOutputStatusSelectedSaved: 'The selected audio output is saved.',
-        WebGPUAudioOutputStatusSelectedUnavailableDefault: 'The saved output is unavailable; using the system default.',
-        WebGPUPreviouslySelectedAudioOutputUnavailable: 'Previously selected output (unavailable)',
-        WebGPURedetectAudioOutput: 'Re-read the current output device and switch active audio to its speaker layout',
-        WebGPUSelectedAudioOutputActive: 'Selected output (active)',
-        WebGPUSelectedAudioOutputAvailabilityUnknown: 'Selected output (availability unknown)',
-        WebGPUSelectedAudioOutputAvailable: 'Selected output (permitted)',
-        WebGPUUnnamedAudioOutput: 'Audio output {0}'
+        WebGPUAudioOutputStatusSelectedUnavailableDefault: 'The saved output is unavailable; using the system default.'
     };
     return {
         default: {
-            translate: (key: string, ...values: Array<string | number>): string => {
-                let translatedValue = translations[key] ?? key;
-                for (const [ index, value ] of values.entries()) {
-                    translatedValue = translatedValue.replace(`{${index}}`, String(value));
-                }
-                return translatedValue;
-            }
+            translate: (key: string, ...values: Array<string | number>): string => (
+                translations[key] ?? translateSourceString(key, ...values)
+            )
         }
     };
 });

@@ -122,6 +122,11 @@ const nativeAudioCapabilityMockState = vi.hoisted(() => ({
     capabilities: null as object | null
 }));
 
+vi.mock('lib/globalize', async () => {
+    const { translateSourceString } = await import('./host/globalizeMock');
+    return { default: { translate: translateSourceString } };
+});
+
 vi.mock('addons/webGPUPlayer/WebGPUPlaybackPreferences', () => ({
     getWebGPUCustomDecodeEnabled: vi.fn(() => (
         playbackPreferencesMockState.customDecodeEnabledPromises.shift()
@@ -4706,10 +4711,12 @@ describe('WebGPUPlayer HTML delegation', () => {
             label: 'Playback pipeline',
             value: 'WebCodecs / WebGPU'
         });
+        // Engine codes reach the overlay as translated text
         expect(stats.categories[1].stats).toContainEqual({
             label: 'Video path',
-            value: 'native / video-frame'
+            value: 'WebCodecs decoder / Video frames'
         });
+        expect(stats.categories[0].stats).toContainEqual({ label: 'State', value: 'Idle' });
         expect(backend.getStats).not.toHaveBeenCalled();
         expect(player.updateRenderSettings(settings)).toBe(true);
         expect(presenter.updateRenderSettings).toHaveBeenCalledWith(settings, 1, true);

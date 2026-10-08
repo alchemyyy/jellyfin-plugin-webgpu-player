@@ -135,9 +135,9 @@ describe('SettingsEntryPoints', () => {
             const selects = page.querySelectorAll<HTMLSelectElement>(PREFERENCE_SELECT_SELECTOR);
             expect(selects).toHaveLength(1);
             expect(selects[0].closest('.selectContainer')?.nextElementSibling?.classList.contains('fldEnableDts')).toBe(true);
-            expect(selects[0].getAttribute('label')).toBe('translated LabelPreferredVideoPlayer');
+            expect(selects[0].getAttribute('label')).toBe('translated WebGPUPreferredVideoPlayer');
             expect(selects[0].value).toBe('html');
-            expect(page.querySelector('.fieldDescription')?.textContent).toBe('translated PreferredVideoPlayerHelp');
+            expect(page.querySelector('.fieldDescription')?.textContent).toBe('translated WebGPUPreferredVideoPlayerHelp');
         });
 
         it('edits the user named by the page parameter and saves on change', () => {
@@ -168,14 +168,16 @@ describe('SettingsEntryPoints', () => {
     });
 
     describe('installSettingsEntryPoints', () => {
-        it('registers the page handlers once and follows player changes', () => {
+        it('registers the page handlers once and follows player changes', async () => {
             const player = createPlayer();
 
             expect(installSettingsEntryPoints(player)).toBe(true);
             expect(installSettingsEntryPoints(player)).toBe(false);
 
+            // Each handler first waits for the add-on strings, which are already loaded here
             const page = createOsdPage();
             testState.pageHandlers.get('viewshow:videoOsdPage')?.({ target: page } as unknown as Event);
+            await Promise.resolve();
             const button = page.querySelector(OSD_BUTTON_SELECTOR) as HTMLElement;
             expect(button.classList.contains('hide')).toBe(true);
 
@@ -189,6 +191,7 @@ describe('SettingsEntryPoints', () => {
 
             const settingsPage = createPlaybackSettingsPage('<div class="fldEnableDts"></div>');
             testState.pageHandlers.get('viewshow:languagePreferencesPage')?.({ target: settingsPage } as unknown as Event);
+            await Promise.resolve();
             expect(settingsPage.querySelector(PREFERENCE_SELECT_SELECTOR)).not.toBeNull();
         });
     });
