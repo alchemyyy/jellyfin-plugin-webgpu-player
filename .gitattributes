@@ -1,0 +1,2 @@
+# Shell scripts must keep LF even where core.autocrlf is true, or bash fails on the carriage returns
+*.sh text eol=lf

@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Jellyfin.Plugin.WebGPUPlayer</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Nullable>enable</Nullable>
+    <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="12.1.0">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="12.1.0">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SerilogAnalyzer" Version="0.15.0" PrivateAssets="All" />
+    <PackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.556" PrivateAssets="All" />
+    <PackageReference Include="SmartAnalyzers.MultithreadingAnalyzer" Version="1.1.31" PrivateAssets="All" />
+  </ItemGroup>
+
+  <!--
+    Client add-on, embedded straight from the client build output (bin/jellyfin-webgpu-client, gitignored). Without it the plugin
+    embeds no add-on and leaves Jellyfin Web unmodified. Explicit logical names keep dashed folder names intact (the
+    default name mangles them), and WithCulture=false stops names such as chunk.fr.js from being split into satellite
+    assemblies. RecursiveDir uses the build host's separator, so the runtime lookup normalizes backslashes.
+  -->
+  <PropertyGroup>
+    <AddonOutputDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\jellyfin-webgpu-client\'))</AddonOutputDirectory>
+    <AddonManifestFile>$(AddonOutputDirectory)addon-manifest.json</AddonManifestFile>
+  </PropertyGroup>
+
+  <!-- A plugin without the add-on does nothing, so the build stops instead of embedding nothing -->
+  <Target Name="RequireClientAddon" BeforeTargets="BeforeBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(AddonManifestFile)')"
+           Code="WGP0001"
+           Text="The client add-on is not built: $(AddonManifestFile) is missing. Run ./build.sh, or run 'npm ci' and 'npm run build' in jellyfin-webgpu-client/ with JELLYFIN_WEB_DIR naming a Jellyfin Web checkout." />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(AddonOutputDirectory)**\*" LogicalName="WebGPUPlayer.Assets/%(RecursiveDir)%(Filename)%(Extension)" WithCulture="false" />
+  </ItemGroup>
+
+  <!--
+    An add-on build that only lost files makes no input newer than the assembly, so the embedded file list is itself a compile input.
+    NOTE: The path is resolved inside the target, because the SDK finalizes IntermediateOutputPath after the project body
+  -->
+  <Target Name="WriteEmbeddedResourceList" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <EmbeddedResourceListFile>$(IntermediateOutputPath)embedded-resources.txt</EmbeddedResourceListFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(EmbeddedResourceListFile)" Lines="@(EmbeddedResource->'%(LogicalName)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <CustomAdditionalCompileInputs Include="$(EmbeddedResourceListFile)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

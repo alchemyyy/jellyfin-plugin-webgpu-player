@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Jellyfin.Plugin.WebGPUPlayer/Jellyfin.Plugin.WebGPUPlayer.csproj" />
+  <Project Path="Jellyfin.Plugin.WebGPUPlayer.Tests/Jellyfin.Plugin.WebGPUPlayer.Tests.csproj" />
+</Solution>
