@@ -7,6 +7,7 @@ Two matrices decide whether Jellyfin direct-plays an HEVC or Dolby Vision source
 
 A source direct-plays through the custom pipeline only when both say yes.
 Each table below lists the engine's variants in the engine's order and links to the engine's table for the route and the evidence.
+The engine's [Supported formats](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/formats.html) chapter lists every container, codec, and HDR format it plays, and [Subtitles](#subtitles) below covers what the add-on renders.
 
 `jellyfin-webgpu-client.tests/custom/HEVCDirectPlaySupportMatrix.test.ts` and `jellyfin-webgpu-client.tests/custom/AV1DirectPlaySupportMatrix.test.ts` assert both matrices, row by row, except the `metadata-unsupported` and `video-track-unavailable` rejections:
 
@@ -112,3 +113,17 @@ Engine rows: [Rejected](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/b
 
 A separate-track P7 (a base track and an EL track) selects the same routes, but these tests do not cover it, because their negotiation model reads a single video stream.
 The engine's eligibility tests cover it.
+
+## Subtitles
+
+The engine renders no subtitles; the add-on draws them in its HTML layers above the WebGPU canvas.
+`augmentDeviceProfileForCustomDecode` replaces the stock profile's External subtitle profiles with the formats those layers render, and keeps every other stock subtitle profile.
+A selected track in any other format is burned in by the server, so the play method becomes Transcode and the custom pipeline is not eligible.
+
+| Format | Custom pipeline | Delivery | Renderer |
+| --- | --- | --- | --- |
+| WebVTT, and the text formats the server converts to it, such as SubRip | Yes | External, as WebVTT | The add-on's subtitle element |
+| ASS, SSA | Yes, with Worker, WebAssembly, and a 2D canvas | External | `@jellyfin/libass-wasm` |
+| PGS | Yes, with Worker, WebAssembly, and a 2D canvas | External | libbitsub's `PgsRenderer` |
+| VobSub (`dvdsub`) | No: not advertised, so it is burned in | Encode | None on the custom path, although the HTML backend holds libbitsub's `VobSubRenderer` |
+| Any other bitmap format, such as DVB subtitles | No: burned in | Encode | None |

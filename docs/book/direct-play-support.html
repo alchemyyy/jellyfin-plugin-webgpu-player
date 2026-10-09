@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-e8a21115.js";
+            window.path_to_searchindex_js = "searchindex-3725b65b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04e99d7c.js"></script>
@@ -184,7 +184,8 @@
 <li>This chapter: whether Jellyfin negotiates DirectPlay for the source (Negotiated), given the label Jellyfin gives it and what the add-on’s device profile can express.</li>
 </ol>
 <p>A source direct-plays through the custom pipeline only when both say yes.
-Each table below lists the engine’s variants in the engine’s order and links to the engine’s table for the route and the evidence.</p>
+Each table below lists the engine’s variants in the engine’s order and links to the engine’s table for the route and the evidence.
+The engine’s <a href="../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/formats.html">Supported formats</a> chapter lists every container, codec, and HDR format it plays, and <a href="#subtitles">Subtitles</a> below covers what the add-on renders.</p>
 <p><code>jellyfin-webgpu-client.tests/custom/HEVCDirectPlaySupportMatrix.test.ts</code> and <code>jellyfin-webgpu-client.tests/custom/AV1DirectPlaySupportMatrix.test.ts</code> assert both matrices, row by row, except the <code>metadata-unsupported</code> and <code>video-track-unavailable</code> rejections:</p>
 <ul>
 <li>negotiation: <code>isSameSessionNativePlaybackCompatible</code>, a conservative model of Jellyfin’s codec profile evaluation, against the profile from <code>augmentDeviceProfileForCustomDecode</code>, scoped to the item as the add-on scopes it;</li>
@@ -304,6 +305,24 @@ Named aliases are exact per variant.</p>
 </div>
 <p>A separate-track P7 (a base track and an EL track) selects the same routes, but these tests do not cover it, because their negotiation model reads a single video stream.
 The engine’s eligibility tests cover it.</p>
+<h2 id="subtitles"><a class="header" href="#subtitles">Subtitles</a></h2>
+<p>The engine renders no subtitles; the add-on draws them in its HTML layers above the WebGPU canvas.
+<code>augmentDeviceProfileForCustomDecode</code> replaces the stock profile’s External subtitle profiles with the formats those layers render, and keeps every other stock subtitle profile.
+A selected track in any other format is burned in by the server, so the play method becomes Transcode and the custom pipeline is not eligible.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Format</th><th>Custom pipeline</th><th>Delivery</th><th>Renderer</th></tr>
+</thead>
+<tbody>
+<tr><td>WebVTT, and the text formats the server converts to it, such as SubRip</td><td>Yes</td><td>External, as WebVTT</td><td>The add-on’s subtitle element</td></tr>
+<tr><td>ASS, SSA</td><td>Yes, with Worker, WebAssembly, and a 2D canvas</td><td>External</td><td><code>@jellyfin/libass-wasm</code></td></tr>
+<tr><td>PGS</td><td>Yes, with Worker, WebAssembly, and a 2D canvas</td><td>External</td><td>libbitsub’s <code>PgsRenderer</code></td></tr>
+<tr><td>VobSub (<code>dvdsub</code>)</td><td>No: not advertised, so it is burned in</td><td>Encode</td><td>None on the custom path, although the HTML backend holds libbitsub’s <code>VobSubRenderer</code></td></tr>
+<tr><td>Any other bitmap format, such as DVB subtitles</td><td>No: burned in</td><td>Encode</td><td>None</td></tr>
+</tbody>
+</table>
+</div>
 
                     </main>
 
