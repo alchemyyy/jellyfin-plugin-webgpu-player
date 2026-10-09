@@ -16,13 +16,13 @@ public sealed class WebClientRewriteStartupFilter(IServerConfigurationManager co
     /// <inheritdoc />
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
     {
-        return app =>
+        return application =>
         {
             Func<string> getBaseUrl = () => configurationManager.GetNetworkConfiguration().BaseUrl;
             Func<bool> isActive = WebClientRewriteState.IsMiddlewareActive;
             Func<WebClientFile, string, string?> rewrite = WebClientRewriteFunctions.Rewrite;
-            app.UseMiddleware<WebClientRewriteMiddleware>(getBaseUrl, isActive, rewrite);
-            next(app);
+            application.UseMiddleware<WebClientRewriteMiddleware>(getBaseUrl, isActive, rewrite);
+            next(application);
         };
     }
 }

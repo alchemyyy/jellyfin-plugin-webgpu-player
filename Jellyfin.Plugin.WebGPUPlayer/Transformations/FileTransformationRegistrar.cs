@@ -11,14 +11,15 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 
 /// <summary>
-/// Decides at server start which component rewrites Jellyfin Web: File Transformation when it is installed and accepts
-/// the callbacks, otherwise the plugin's own <see cref="WebClientRewriteMiddleware"/>. Never both.
+/// Decides at server start which component rewrites Jellyfin Web: File Transformation when it is installed and accepts the callbacks, otherwise the plugin's own <see cref="WebClientRewriteMiddleware"/>.
+/// Never both.
 /// </summary>
 /// <param name="logger">The logger.</param>
 public sealed class FileTransformationRegistrar(ILogger<FileTransformationRegistrar> logger) : IHostedService
 {
     /// <summary>
-    /// The exact key of the web client page. File Transformation runs one rule list per file, and exact keys are shared and win over regex keys.
+    /// The exact key of the web client page.
+    /// File Transformation runs one rule list per file, and exact keys are shared and win over regex keys.
     /// </summary>
     public const string IndexHTMLFileName = "index.html";
 
@@ -40,7 +41,7 @@ public sealed class FileTransformationRegistrar(ILogger<FileTransformationRegist
         }
         catch (Exception exception)
         {
-            // NOTE: An exception here aborts server start, so it only logs; registration failures are caught before this point
+            // NOTE: An exception that escapes StartAsync aborts server start, so this logs and falls back instead of rethrowing; registration failures are caught before this point
             logger.LogWarning(exception, "WebGPU Player could not set up File Transformation; its own middleware rewrites Jellyfin Web");
             mode = WebClientRewriteMode.Middleware;
         }
@@ -83,7 +84,7 @@ public sealed class FileTransformationRegistrar(ILogger<FileTransformationRegist
             return WebClientRewriteMode.FileTransformation;
         }
 
-        // The middleware may only take over once File Transformation no longer rewrites index.html too
+        // The middleware may take over only once File Transformation stops rewriting index.html
         if (TryRemoveCallback(registerMethod, IndexHTMLTransformationId))
         {
             logger.LogWarning("File Transformation rejected the WebGPU Player config.json callback; its own middleware rewrites Jellyfin Web");

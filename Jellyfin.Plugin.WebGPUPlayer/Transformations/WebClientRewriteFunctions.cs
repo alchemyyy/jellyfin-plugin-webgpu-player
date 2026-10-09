@@ -13,7 +13,8 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 public static class WebClientRewriteFunctions
 {
     /// <summary>
-    /// The cache policy of rewritten files. Browsers revalidate on every load, so installing, configuring or removing the plugin shows at once.
+    /// The cache policy of rewritten files.
+    /// Browsers revalidate on every load, so installing, updating or removing the plugin shows at once.
     /// </summary>
     public const string RevalidateCacheControl = "no-cache";
 
@@ -104,7 +105,7 @@ public static class WebClientRewriteFunctions
         }
         catch (DecoderFallbackException)
         {
-            // Recovery: the caller serves the original bytes untouched
+            // The caller serves the original bytes untouched
             return null;
         }
     }

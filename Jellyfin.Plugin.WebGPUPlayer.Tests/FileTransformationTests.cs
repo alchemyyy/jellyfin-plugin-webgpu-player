@@ -142,8 +142,8 @@ public sealed class FileTransformationTests
         await registrar.StartAsync(TestContext.Current.CancellationToken);
         await registrar.StopAsync(TestContext.Current.CancellationToken);
 
-        // NOTE: FindRegisterMethod_FindsPluginInterfaceInAFileTransformationAssembly may already have loaded a fake
-        // File Transformation, which accepts both registrations; without it the plugin's own middleware is chosen
+        // NOTE: FindRegisterMethod_FindsPluginInterfaceInAFileTransformationAssembly may already have loaded a fake File Transformation, which accepts both registrations.
+        // Without it the plugin's own middleware is chosen
         bool fileTransformationLoaded = FileTransformationFunctions.FindRegisterMethod(AssemblyLoadContext.All.SelectMany(context => context.Assemblies)) is not null;
         WebClientRewriteMode expected = (AddonCatalog.Entry is not null, fileTransformationLoaded) switch
         {

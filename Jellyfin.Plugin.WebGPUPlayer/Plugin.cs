@@ -7,7 +7,8 @@ using MediaBrowser.Model.Serialization;
 namespace Jellyfin.Plugin.WebGPUPlayer;
 
 /// <summary>
-/// The WebGPU Player plugin. It has no server settings: the player's preferences are kept per browser by the client add-on.
+/// The WebGPU Player plugin.
+/// It has no server settings: the client add-on keeps the player's preferences per browser.
 /// </summary>
 /// <remarks>
 /// The empty configuration base is still required: only it records the assembly path and version, which the server dereferences when it creates and lists plugins.

@@ -1,7 +1,8 @@
 namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 
 /// <summary>
-/// Which component rewrites the Jellyfin Web files. Exactly one of them runs, so a file is never rewritten twice.
+/// Which component rewrites the Jellyfin Web files.
+/// At most one of them runs, so a file is never rewritten twice.
 /// </summary>
 public enum WebClientRewriteMode
 {

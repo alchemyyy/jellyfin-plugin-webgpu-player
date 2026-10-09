@@ -14,7 +14,8 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Addon;
 public static class AssetFunctions
 {
     /// <summary>
-    /// The asset route below the server base URL. It must never contain <c>/web/</c>, because File Transformation intercepts every such path and handles text only.
+    /// The asset route below the server base URL.
+    /// It must never contain <c>/web/</c>, because File Transformation intercepts every such path and handles text only.
     /// </summary>
     public const string RoutePrefix = "WebGPUPlayer/assets";
 

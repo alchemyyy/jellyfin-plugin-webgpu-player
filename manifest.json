@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.1.0.0",
+                "changelog": "Release 1.1.0.0",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases/download/v1.1.0.0/webgpu-player_1.1.0.0.zip",
+                "checksum": "8611ff2029bdc2a0b26ed81e841f5bcb",
+                "timestamp": "2026-10-08T20:22:36Z"
+            },
+            {
                 "version": "1.0.0.1",
                 "changelog": "Toggle the WebGPU settings panel from its OSD button; scrolling the panel no longer changes the volume",
                 "targetAbi": "12.1.0.0",

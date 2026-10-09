@@ -3,7 +3,8 @@ using Jellyfin.Plugin.WebGPUPlayer.Addon;
 namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 
 /// <summary>
-/// File Transformation callbacks. File Transformation resolves each method by name, so names must stay unique on this type.
+/// File Transformation callbacks.
+/// File Transformation resolves each method by name, so names must stay unique on this type.
 /// </summary>
 public static class TransformationCallbacks
 {
@@ -27,7 +28,7 @@ public static class TransformationCallbacks
     /// Appends the add-on to the <c>plugins</c> list of <c>config.json</c>.
     /// </summary>
     /// <param name="payload">The served file.</param>
-    /// <returns>The complete new text, or the original text whenever <see cref="TransformIndexHTML"/> would not inject, because a listed plugin without its window factory fails to load.</returns>
+    /// <returns>The complete new text, or the original text when no add-on is embedded or the plugin has no instance, since <see cref="TransformIndexHTML"/> then defines no window factory and a listed plugin without one fails to load.</returns>
     public static string? TransformConfigJSON(TransformationPayload? payload)
     {
         string? contents = payload?.Contents;

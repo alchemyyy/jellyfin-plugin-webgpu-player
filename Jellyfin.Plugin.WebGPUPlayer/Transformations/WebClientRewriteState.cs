@@ -33,7 +33,7 @@ public static class WebClientRewriteState
     /// <summary>
     /// Returns whether the plugin's middleware rewrites the current request.
     /// </summary>
-    /// <returns><c>true</c> when File Transformation does not handle this plugin's files.</returns>
+    /// <returns><c>true</c> when the registrar picked the middleware, or has not decided yet and is expected to pick it.</returns>
     public static bool IsMiddlewareActive()
     {
         return WebClientRewriteFunctions.IsMiddlewareActive(currentMode, AddonCatalog.Entry is not null, FileTransformationLoaded.Value);

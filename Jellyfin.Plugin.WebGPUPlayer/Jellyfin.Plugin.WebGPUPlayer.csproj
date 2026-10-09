@@ -25,10 +25,10 @@
   </ItemGroup>
 
   <!--
-    Client add-on, embedded straight from the client build output (bin/jellyfin-webgpu-client, gitignored). Without it the plugin
-    embeds no add-on and leaves Jellyfin Web unmodified. Explicit logical names keep dashed folder names intact (the
-    default name mangles them), and WithCulture=false stops names such as chunk.fr.js from being split into satellite
-    assemblies. RecursiveDir uses the build host's separator, so the runtime lookup normalizes backslashes.
+    The client add-on is embedded straight from the client build output (bin/jellyfin-webgpu-client, gitignored).
+    Explicit logical names keep dashed folder names intact, which the default name mangles.
+    WithCulture=false stops names such as chunk.fr.js from being split into satellite assemblies.
+    RecursiveDir uses the build host's separator, so the runtime lookup normalizes backslashes
   -->
   <PropertyGroup>
     <AddonOutputDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\jellyfin-webgpu-client\'))</AddonOutputDirectory>

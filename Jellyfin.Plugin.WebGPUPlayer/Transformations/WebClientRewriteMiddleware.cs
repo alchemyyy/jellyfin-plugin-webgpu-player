@@ -10,8 +10,7 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 
 /// <summary>
 /// Rewrites <c>index.html</c> and <c>config.json</c> when File Transformation does not.
-/// It composes with other rewriting middleware: it always calls the next layer, asks it for the complete
-/// uncompressed file, and replaces the validators of the response it changes.
+/// It composes with other rewriting middleware: it always calls the next layer, asks it for the complete uncompressed file, and replaces the validators of the response it changes.
 /// </summary>
 /// <param name="next">The next middleware.</param>
 /// <param name="getBaseUrl">Returns the server base URL.</param>
@@ -26,7 +25,7 @@ public sealed class WebClientRewriteMiddleware(
     ILogger<WebClientRewriteMiddleware> logger)
 {
     /// <summary>
-    /// Handles one request.
+    /// Runs the next layer and, while active, rewrites its response to a GET of <c>index.html</c> or <c>config.json</c>.
     /// </summary>
     /// <param name="context">The request context.</param>
     /// <returns>A task that completes when the response is written.</returns>
@@ -94,8 +93,7 @@ public sealed class WebClientRewriteMiddleware(
     private static bool CanRewrite(HttpResponse response)
     {
         // A text rewrite would corrupt an encoded body, so anything but a plain 200 passes through
-        return response.StatusCode == StatusCodes.Status200OK
-            && StringValues.IsNullOrEmpty(response.Headers.ContentEncoding);
+        return response.StatusCode == StatusCodes.Status200OK && StringValues.IsNullOrEmpty(response.Headers.ContentEncoding);
     }
 
     private string? RewriteContent(WebClientFile file, byte[] content)

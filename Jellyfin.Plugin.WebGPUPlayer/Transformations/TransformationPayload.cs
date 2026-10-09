@@ -1,7 +1,8 @@
 namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 
 /// <summary>
-/// The callback argument. File Transformation deserializes <c>{"contents": "..."}</c> into it with Newtonsoft, matching names case-insensitively.
+/// The callback argument.
+/// File Transformation deserializes <c>{"contents": "..."}</c> into it with Newtonsoft, matching names case-insensitively.
 /// </summary>
 public sealed class TransformationPayload
 {

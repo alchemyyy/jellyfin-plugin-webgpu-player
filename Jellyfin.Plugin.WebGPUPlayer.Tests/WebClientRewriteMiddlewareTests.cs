@@ -249,7 +249,7 @@ public sealed class WebClientRewriteMiddlewareTests : IDisposable
 
     private static async Task<HttpResponseMessage> GetAsync(HttpClient client, string requestPath, CancellationToken cancellationToken)
     {
-        // Inner response compression would apply to every one of these responses if the middleware let the header through
+        // Inner response compression would encode these responses if the middleware let the header through
         using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, new Uri(requestPath, UriKind.Relative));
         request.Headers.AcceptEncoding.ParseAdd(AcceptAnyEncoding);
         return await client.SendAsync(request, cancellationToken);

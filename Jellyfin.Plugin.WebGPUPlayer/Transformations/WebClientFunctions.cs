@@ -13,7 +13,8 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 public static class WebClientFunctions
 {
     /// <summary>
-    /// The plugin name added to <c>config.json</c>. Jellyfin Web resolves it to the window factory of the same name.
+    /// The plugin name added to <c>config.json</c>.
+    /// Jellyfin Web resolves it to the window factory of the same name.
     /// </summary>
     public const string ClientPluginName = "WebGPUPlayer";
 
@@ -28,7 +29,8 @@ public static class WebClientFunctions
     public const string BootstrapMarker = "data-webgpu-player-bootstrap";
 
     /// <summary>
-    /// How long the window factory waits for the add-on import. A factory that never settles blocks the first render.
+    /// How long the window factory waits for the add-on import.
+    /// A factory that never settles blocks the first render.
     /// </summary>
     public const int AddonLoadTimeoutMilliseconds = 20000;
 

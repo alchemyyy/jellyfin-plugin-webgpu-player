@@ -7,14 +7,15 @@ using Microsoft.Net.Http.Headers;
 namespace Jellyfin.Plugin.WebGPUPlayer.Addon;
 
 /// <summary>
-/// Serves the embedded client add-on. It is anonymous because module imports, workers and WASM fetches carry no Jellyfin token.
+/// Serves the embedded client add-on.
+/// It is anonymous because module imports, workers and WASM fetches carry no Jellyfin token.
 /// </summary>
 [ApiExplorerSettings(IgnoreApi = true)]
 [Route(AssetFunctions.RouteTemplate)]
 public sealed class AddonAssetController : ControllerBase
 {
     /// <summary>
-    /// Gets an embedded add-on file.
+    /// Gets an embedded add-on file, or its precompressed sibling when the client accepts one.
     /// </summary>
     /// <param name="path">The file path below the asset route.</param>
     /// <returns>The file, or 404 for unknown and non-relative paths.</returns>
