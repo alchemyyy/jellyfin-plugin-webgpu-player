@@ -13,7 +13,7 @@ export function bindDashboard(value: DashboardModule): void {
     dashboardDefault = value.default;
 }
 
-/** Runs a handler for a page event on the page with the given id. */
+/** Runs a handler for a page event on the page with the given ID. */
 export function pageIdOn(...parameters: Parameters<DashboardModule['pageIdOn']>): ReturnType<DashboardModule['pageIdOn']> {
     return dashboard.pageIdOn(...parameters);
 }

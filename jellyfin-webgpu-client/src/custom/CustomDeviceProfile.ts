@@ -77,8 +77,8 @@ export type CustomDeviceProfileOptions = {
     authorizedRawHDRRouteKeys?: readonly RawHDRAuthorizationRouteKey[]
     isRetry?: boolean
     /**
-     * The negotiated item's media source. When its Dolby Vision stream has a runtime route, its exact profile,
-     * bit depth, and range label are advertised even where no generic route covers that label.
+     * The negotiated item's media source.
+     * When its Dolby Vision stream has a runtime route, its exact profile, bit depth, and range label are advertised even where no generic route covers that label.
      */
     itemMediaSource?: unknown
     nativeMediaAudioCapabilities?: NativeMediaAudioCapabilities | null
@@ -121,7 +121,7 @@ type AuthorizedHDRRoutes = {
     dolbyVisionItemVideoRoute: MeasuredVideoRoute | null
     dolbyVisionVideoRangeTypes: readonly string[]
     nativeHDRVideoRangeTypes: readonly string[]
-    /** The stock-profile ceilings of the raw codecs other than HEVC that have a route beyond native SDR decode */
+    /** The stock-profile ceilings of the raw codecs other than HEVC that have a route beyond native SDR decode. */
     rawCodecProfilePlans: ReadonlyMap<CustomVideoCodec, AuthorizedCodecProfilePlan>
     rawHEVCHDRVideoRangeTypes: readonly string[]
     rawHDRVideoRangeTypes: readonly string[]
@@ -193,8 +193,7 @@ const DOLBY_VISION_PROFILE_7_VIDEO_RANGE_TYPES = [
     'DOVIWithEL',
     'DOVIWithELHDR10Plus'
 ] as const;
-// Jellyfin's label for Profile 8 outside compatibility IDs 1, 2, and 4, and on 12.x for Dolby Vision whose
-// base color fields disagree with its compatibility ID
+// Jellyfin's label for Profile 8 outside compatibility IDs 1, 2, and 4, and on 12.x for Dolby Vision whose base color fields disagree with its compatibility ID
 const DOLBY_VISION_INVALID_VIDEO_RANGE_TYPE = 'DOVIInvalid';
 // Profile 10 carries a single-layer RPU, so AV1 never takes an EL label.
 // RPU reconstruction presents every compatibility ID, including the ones Jellyfin labels DOVIInvalid
@@ -229,9 +228,7 @@ const NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES = new Set<string>([
     VIDEO_WIDTH_PROPERTY
 ]);
 const SUPPORTED_DTS_AUDIO_PROFILES: readonly string[] =
-    Object.freeze(DTS_DIRECT_PLAY_PROFILE_TOKENS.map(profileToken => (
-        DTS_PROFILE_VALUE_BY_TOKEN[profileToken]
-    )));
+    Object.freeze(DTS_DIRECT_PLAY_PROFILE_TOKENS.map(profileToken => (DTS_PROFILE_VALUE_BY_TOKEN[profileToken])));
 
 function getDolbyVisionVideoRangeTypes(
     capabilities: CustomDecodeCapabilities,
@@ -241,10 +238,7 @@ function getDolbyVisionVideoRangeTypes(
     allowNativeDolbyVision: boolean
 ): string[] {
     const rangeTypes: string[] = [];
-    if (
-        allowNativeDolbyVision
-        && capabilities.nativeDolbyVisionHEVC?.status === 'supported'
-    ) {
+    if (allowNativeDolbyVision && capabilities.nativeDolbyVisionHEVC?.status === 'supported') {
         rangeTypes.push('DOVI');
     }
     if (capabilities.rawHDRVideo.hevc.status !== 'supported') {
@@ -270,18 +264,11 @@ function getDolbyVisionVideoRangeTypes(
 }
 
 /** Returns the AV1 Dolby Vision ranges, which Profile 10 reconstruction presents only from raw AV1 planes. */
-function getAV1DolbyVisionVideoRangeTypes(
-    capabilities: CustomDecodeCapabilities,
-    allowRawDolbyVision: boolean
-): readonly string[] {
-    return allowRawDolbyVision && capabilities.rawHDRVideo.av1.status === 'supported' ?
-        AV1_DOLBY_VISION_VIDEO_RANGE_TYPES :
-        [];
+function getAV1DolbyVisionVideoRangeTypes(capabilities: CustomDecodeCapabilities, allowRawDolbyVision: boolean): readonly string[] {
+    return allowRawDolbyVision && capabilities.rawHDRVideo.av1.status === 'supported' ? AV1_DOLBY_VISION_VIDEO_RANGE_TYPES : [];
 }
 
-function getAuthorizedRawHDRVideoRangeTypes(
-    routeKeys: readonly RawHDRAuthorizationRouteKey[]
-): string[] {
+function getAuthorizedRawHDRVideoRangeTypes(routeKeys: readonly RawHDRAuthorizationRouteKey[]): string[] {
     const rangeTypes: string[] = [];
     for (const routeKey of routeKeys) {
         switch (routeKey) {
@@ -300,22 +287,15 @@ function getAuthorizedRawHDRVideoRangeTypes(
     return rangeTypes;
 }
 
-function getAuthorizedRawHEVCHDRVideoRangeTypes(
-    rawHDRVideoRangeTypes: readonly string[]
-): string[] {
+function getAuthorizedRawHEVCHDRVideoRangeTypes(rawHDRVideoRangeTypes: readonly string[]): string[] {
     const rangeTypes: string[] = [ ...rawHDRVideoRangeTypes ];
-    if (
-        rangeTypes.includes('HDR10')
-        && !rangeTypes.includes(HDR10_PLUS_VIDEO_RANGE_TYPE)
-    ) {
+    if (rangeTypes.includes('HDR10') && !rangeTypes.includes(HDR10_PLUS_VIDEO_RANGE_TYPE)) {
         rangeTypes.push(HDR10_PLUS_VIDEO_RANGE_TYPE);
     }
     return rangeTypes;
 }
 
-function getAuthorizedExternalHDRVideoRangeTypes(
-    routeKeys: readonly ExternalHDRAuthorizationRouteKey[]
-): string[] {
+function getAuthorizedExternalHDRVideoRangeTypes(routeKeys: readonly ExternalHDRAuthorizationRouteKey[]): string[] {
     const rangeTypes: string[] = [];
     for (const routeKey of routeKeys) {
         switch (routeKey) {

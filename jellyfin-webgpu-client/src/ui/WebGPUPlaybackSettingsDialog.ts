@@ -90,7 +90,9 @@ type ActivePanel = {
 };
 
 // Whether the panel asked the host to show its playback info, which the panel hides again on close:
-// not asked, asked but not showing yet, or showing since
+// - none: not asked;
+// - pending: asked, but not showing yet;
+// - shown: asked, and shown since
 type PlaybackInfoRequest = 'none' | 'pending' | 'shown';
 
 const HIDDEN_CLASS = 'hide';
@@ -912,7 +914,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     };
 
     // Force stereo and the algorithm switch active decoded audio in place when they change it.
-    // formatStatus places the layout sentence in the full status, which translations may order freely.
+    // formatStatus places the layout sentence in the full status, which translations may order freely
     const applyAudioOutputLayout = (formatStatus: (layoutStatus: string) => string): void => {
         const statusRevision = setAudioStatus(formatStatus(globalize.translate('WebGPUAudioLayoutStatusApplying')));
         void player.applyAudioOutputSettings(settings.audio.forceStereoDownmix, audioDownmixAlgorithm).then((appliedLive: boolean): void => {
@@ -1192,7 +1194,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     });
 
     // The video OSD changes the volume on wheel events that reach the document.
-    // Stopping them at the panel keeps its native scrolling and leaves the volume alone.
+    // Stopping them at the panel keeps its native scrolling and leaves the volume alone
     const onPanelWheel = (event: WheelEvent): void => {
         event.stopPropagation();
     };
@@ -1235,10 +1237,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             layoutResizeObserver.observe(OSDControls);
         }
     }
-    const observePlaybackInfo = (
-        observer: MutationObserver,
-        playbackInfoElement: HTMLElement
-    ): void => {
+    const observePlaybackInfo = (observer: MutationObserver, playbackInfoElement: HTMLElement): void => {
         observer.observe(playbackInfoElement, {
             attributeFilter: [ 'class' ],
             attributes: true
@@ -1246,14 +1245,10 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         layoutResizeObserver?.observe(playbackInfoElement);
     };
     // The host adds playback info to the body on its first toggle, then shows and hides it by class
-    const playbackInfoObserver = new MutationObserver((
-        mutations: MutationRecord[],
-        observer: MutationObserver
-    ): void => {
+    const playbackInfoObserver = new MutationObserver((mutations: MutationRecord[], observer: MutationObserver): void => {
         for (const mutation of mutations) {
             for (const addedNode of mutation.addedNodes) {
-                if (addedNode instanceof HTMLElement
-                    && addedNode.classList.contains(PLAYBACK_INFO_CLASS)) {
+                if (addedNode instanceof HTMLElement && addedNode.classList.contains(PLAYBACK_INFO_CLASS)) {
                     observePlaybackInfo(observer, addedNode);
                 }
             }
@@ -1261,9 +1256,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         updatePanelLayout();
     });
     playbackInfoObserver.observe(document.body, { childList: true });
-    const playbackInfoElements = document.querySelectorAll<HTMLElement>(
-        PLAYBACK_INFO_SELECTOR
-    );
+    const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
     for (const playbackInfoElement of playbackInfoElements) {
         observePlaybackInfo(playbackInfoObserver, playbackInfoElement);
     }
@@ -1272,9 +1265,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         playbackInfoObserver.disconnect();
         layoutResizeObserver?.disconnect();
         layoutResizeObserver = null;
-        const currentPlaybackInfoElements = document.querySelectorAll<HTMLElement>(
-            PLAYBACK_INFO_SELECTOR
-        );
+        const currentPlaybackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
         for (const playbackInfoElement of currentPlaybackInfoElements) {
             restorePlaybackInfoPosition(playbackInfoElement);
         }

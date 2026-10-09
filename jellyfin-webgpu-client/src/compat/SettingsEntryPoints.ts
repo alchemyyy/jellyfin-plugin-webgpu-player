@@ -11,7 +11,7 @@ import { loadAddonStrings } from '../host/globalize';
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
 import { PREFERRED_VIDEO_PLAYER_KEY } from '../shims/userSettings';
 
-// The stock host has no player settings menu seam and dropped the fork's preference control, so both entry points are added to the host pages through the DOM when those pages show
+// The stock host has no player settings menu seam and lacks the fork's preference control, so both entry points are added to the host pages through the DOM when those pages show
 
 type SettingsMenuItem = Readonly<{
     id: string
@@ -139,9 +139,7 @@ export function ensurePreferredPlayerControl(page: HTMLElement): void {
 
     const userId = getSettingsPageUserId();
     select.dataset.userId = userId ?? '';
-    select.value = normalizeVideoPlayerPreference(
-        appSettings.get(PREFERRED_VIDEO_PLAYER_KEY, userId) ?? VideoPlayerPreference.Auto
-    );
+    select.value = normalizeVideoPlayerPreference(appSettings.get(PREFERRED_VIDEO_PLAYER_KEY, userId) ?? VideoPlayerPreference.Auto);
 }
 
 /** Registers the OSD button and the preference control once per page lifetime. */

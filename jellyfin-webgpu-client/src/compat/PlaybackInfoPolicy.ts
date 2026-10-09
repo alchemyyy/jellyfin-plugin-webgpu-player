@@ -93,13 +93,9 @@ export function applyPlaybackInfoRequestPolicy(
     switch (context.purpose) {
         case PlaybackInfoNegotiationPurpose.Selection: {
             const selectionBitrate = getPlayerMaxStreamingBitrate(context.player, fallbackBitrate);
-            const transcodingBitrate = getPlayerMaxStreamingBitrate(
-                context.player,
-                fallbackBitrate,
-                TRANSCODE_OUTPUT_BITRATE_PURPOSE
-            );
+            const transcodingBitrate = getPlayerMaxStreamingBitrate(context.player, fallbackBitrate, TRANSCODE_OUTPUT_BITRATE_PURPOSE);
             setRequestedBitrate(nextBody, selectionBitrate);
-            // Only playback (getPlaybackMediaSource) sized a decided transcode with a second request
+            // Only playback (getPlaybackMediaSource) sizes a decided transcode with a second request
             const transcodeSizing = nextBody.IsPlayback === true ?
                 { selectionBitrate, transcodingBitrate } :
                 null;

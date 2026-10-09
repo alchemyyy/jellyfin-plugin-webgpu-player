@@ -234,19 +234,19 @@ const AUDIO_OUTPUT_LAYOUT_LIVE_STATUS =
 const AUDIO_OUTPUT_LAYOUT_PENDING_STATUS =
     'No active WebGPU client-decoded audio; it applies to the next client-decoded playback.';
 
-/** Builds the status a force stereo or downmix algorithm change shows */
+/** Builds the status a force stereo or downmix algorithm change shows. */
 function createLayoutChangeStatus(layoutStatus: string): string {
     return `Saved. ${layoutStatus} Downmix gains are unchanged.`;
 }
 
-/** Resolves once every queued microtask has run, such as a settled layout status update */
+/** Resolves once every queued microtask has run, such as a settled layout status update. */
 function flushMicrotasks(): Promise<void> {
     return new Promise<void>((resolve: () => void): void => {
         setTimeout(resolve, 0);
     });
 }
 
-/** Runs the host's pending playback info toggles in request order, then lets the panel's observers react */
+/** Runs the host's pending playback info toggles in request order, then lets the panel's observers react. */
 async function runHostPlaybackInfoToggles(): Promise<void> {
     const toggles = hostCommandMockState.pendingPlaybackInfoToggles.splice(0);
     for (const toggle of toggles) {
@@ -255,7 +255,6 @@ async function runHostPlaybackInfoToggles(): Promise<void> {
     await flushMicrotasks();
 }
 
-/** Builds element bounds from the top-left corner and the size */
 function createBounds(left: number, top: number, width: number, height: number): DOMRect {
     return {
         bottom: top + height,
@@ -270,7 +269,7 @@ function createBounds(left: number, top: number, width: number, height: number):
 }
 
 /**
- * Adds the video OSD page with its bottom controls, sets the panel's font size, and reports the harness's viewport size and bounds, with the panel's top following its top property.
+ * Adds the video OSD page with its bottom controls, sets the panel's font size, and reports the harness's viewport size and bounds, with the panel's top following its --webgpu-settings-top property.
  */
 function installPlacementHarness(harness: PlacementHarness): void {
     const playbackPage = document.createElement('div');
@@ -310,7 +309,7 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-/** Builds a player whose render and audio calls succeed, for the placement tests */
+/** Builds a player whose render and audio calls succeed, for the placement tests. */
 function createPlacementTestPlayer(): WebGPUPlayer {
     return {
         applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),

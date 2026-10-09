@@ -182,9 +182,7 @@ function isRawOnlyHDRPresentation(options: unknown): boolean {
     if (!options || typeof options !== 'object') {
         return false;
     }
-    const mediaSource = (options as {
-        mediaSource?: unknown
-    }).mediaSource;
+    const mediaSource = (options as { mediaSource?: unknown }).mediaSource;
     if (!mediaSource || typeof mediaSource !== 'object') {
         return false;
     }
@@ -273,8 +271,7 @@ type PlayerSettingsMenuItem = {
     secondaryText?: string
 };
 
-// A Dolby Vision base declared PQ or HLG outside the exact Profile 7 and 8 bases presents through the
-// ordinary static HDR routes, so it needs their probes as well as the Dolby Vision ones
+// A Dolby Vision base declared PQ or HLG outside the exact Profile 7 and 8 bases presents through the ordinary static HDR routes, so it needs their probes as well as the Dolby Vision ones
 type HDRDeviceProfileProbeScope =
     | 'dolby-vision'
     | 'dolby-vision-hdr-base'
@@ -329,18 +326,13 @@ const UNAUTHORIZED_PRESENTATION_ELIGIBILITY_OPTIONS: CustomPresentationEligibili
  * A raw-only HDR item presents every static or declared HDR base through raw planes, whatever the external result.
  * Other items wait only in the raw HDR scopes.
  */
-function isRawHDRDeviceProfileProbeScope(
-    probeScope: HDRDeviceProfileProbeScope,
-    rawOnlyHDRPresentation: boolean
-): boolean {
+function isRawHDRDeviceProfileProbeScope(probeScope: HDRDeviceProfileProbeScope, rawOnlyHDRPresentation: boolean): boolean {
     return RAW_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope)
         || (rawOnlyHDRPresentation && EXTERNAL_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope));
 }
 
 /** Returns the RPU route a Dolby Vision presentation authorizes, when the stream has one. */
-function getDolbyVisionReconstructionTarget(
-    presentationOptions: unknown
-): DolbyVisionReconstructionTarget | null {
+function getDolbyVisionReconstructionTarget(presentationOptions: unknown): DolbyVisionReconstructionTarget | null {
     const descriptor = getDolbyVisionPresentationDescriptor(presentationOptions);
     const rawFrameFormat = getDolbyVisionReconstructionRawFrameFormat(presentationOptions);
     if (
@@ -481,8 +473,7 @@ function hasExactSeparateProfile7Source(item: unknown): boolean {
             stream
             && typeof stream === 'object'
             && typeof (stream as PlaybackOptionsRecord).Type === 'string'
-            && ((stream as PlaybackOptionsRecord).Type as string).trim().toLowerCase()
-                === 'video'
+            && ((stream as PlaybackOptionsRecord).Type as string).trim().toLowerCase() === 'video'
         ) {
             videoStreamCount += 1;
         }
@@ -490,35 +481,26 @@ function hasExactSeparateProfile7Source(item: unknown): boolean {
     if (videoStreamCount !== 2) {
         return false;
     }
-    const selection = getDolbyVisionPresentationSelection({
-        mediaSource: { MediaStreams: mediaStreams }
-    });
-    return selection?.descriptor.profile === 7
-        && selection.descriptor.enhancementLayerPresent;
+    const selection = getDolbyVisionPresentationSelection({ mediaSource: { MediaStreams: mediaStreams } });
+    return selection?.descriptor.profile === 7 && selection.descriptor.enhancementLayerPresent;
 }
 
 function hasExactProfile7HDR10BaseSource(item: unknown): boolean {
     const presentationOptions = getDeviceProfilePresentationOptions(item);
-    return presentationOptions !== null
-        && getDolbyVisionProfile7HDR10BaseColorMetadata(presentationOptions) !== null;
+    return presentationOptions !== null && getDolbyVisionProfile7HDR10BaseColorMetadata(presentationOptions) !== null;
 }
 
 function hasExactProfile8HDR10BaseSource(item: unknown): boolean {
     const presentationOptions = getDeviceProfilePresentationOptions(item);
-    return presentationOptions !== null
-        && getDolbyVisionProfile8HDR10BaseColorMetadata(presentationOptions) !== null;
+    return presentationOptions !== null && getDolbyVisionProfile8HDR10BaseColorMetadata(presentationOptions) !== null;
 }
 
 function hasExactProfile8HLGBaseSource(item: unknown): boolean {
     const presentationOptions = getDeviceProfilePresentationOptions(item);
-    return presentationOptions !== null
-        && getDolbyVisionProfile8HLGBaseColorMetadata(presentationOptions) !== null;
+    return presentationOptions !== null && getDolbyVisionProfile8HLGBaseColorMetadata(presentationOptions) !== null;
 }
 
-function getDeviceProfilePresentationOptions(
-    item: unknown,
-    mediaSourceId?: string | null
-): unknown | null {
+function getDeviceProfilePresentationOptions(item: unknown, mediaSourceId?: string | null): unknown | null {
     if (!item || typeof item !== 'object') {
         return null;
     }
@@ -564,9 +546,7 @@ function getHDRDeviceProfileProbeScope(item: unknown): HDRDeviceProfileProbeScop
             return 'dolby-vision-profile8-hlg-base';
         }
         const baseTransfer = getDolbyVisionBaseColorMetadata(presentationOptions)?.transfer;
-        return baseTransfer === 'pq' || baseTransfer === 'hlg' ?
-            'dolby-vision-hdr-base' :
-            'dolby-vision';
+        return baseTransfer === 'pq' || baseTransfer === 'hlg' ? 'dolby-vision-hdr-base' : 'dolby-vision';
     }
     const colorMetadata = getPresentationInputColorMetadata(presentationOptions);
     if (colorMetadata?.transfer === 'pq' || colorMetadata?.transfer === 'hlg') {
@@ -578,10 +558,7 @@ function getHDRDeviceProfileProbeScope(item: unknown): HDRDeviceProfileProbeScop
 const DOLBY_VISION_HDR10_BASE_COLOR_METADATA = Object.freeze(createPQColorMetadata());
 const DOLBY_VISION_HLG_BASE_COLOR_METADATA = Object.freeze(createHLGColorMetadata());
 
-function hasAuthorizedDolbyVisionBaseRoute(
-    metadata: InputColorMetadata,
-    routeKeys: readonly ExternalHDRAuthorizationRouteKey[]
-): boolean {
+function hasAuthorizedDolbyVisionBaseRoute(metadata: InputColorMetadata, routeKeys: readonly ExternalHDRAuthorizationRouteKey[]): boolean {
     const routeKey = getExternalHDRAuthorizationRouteKey(metadata);
     return routeKey !== null && routeKeys.includes(routeKey);
 }
@@ -649,10 +626,8 @@ const MAX_JELLYFIN_VOLUME = 100;
 const MIN_JELLYFIN_VOLUME = 0;
 const CUSTOM_PLAYBACK_SETUP_TIMEOUT = Symbol('custom-playback-setup-timeout');
 const DEFERRED_RENEGOTIATION_ERROR_DELAY_MILLISECONDS = 0;
-const CUSTOM_PLAYBACK_INELIGIBLE_HTML_BACKEND_MESSAGE =
-    'Custom playback is ineligible; using the HTML backend';
-const CUSTOM_PLAYBACK_INELIGIBLE_RENEGOTIATION_MESSAGE =
-    'Custom playback is ineligible; requesting source renegotiation';
+const CUSTOM_PLAYBACK_INELIGIBLE_HTML_BACKEND_MESSAGE = 'Custom playback is ineligible; using the HTML backend';
+const CUSTOM_PLAYBACK_INELIGIBLE_RENEGOTIATION_MESSAGE = 'Custom playback is ineligible; requesting source renegotiation';
 // Logged reasons for declines that carry no engine ineligibility reason
 const CUSTOM_PLAYBACK_ELIGIBILITY_UNAVAILABLE_REASON = 'eligibility-unavailable';
 const WEBGPU_PRESENTATION_DISABLED_REASON = 'webgpu-presentation-disabled';
@@ -663,13 +638,13 @@ function isDocumentVisible(): boolean {
 }
 
 type CustomPlaybackSetupDeadline = {
-    /** Stops the setup deadline once the controller, which bounds its own startup, owns playback */
+    /** Stops the setup deadline once the controller, which bounds its own startup, owns playback. */
     release: () => void
 };
 
 /**
- * Bounds custom playback setup. The deadline covers capability, presentation, and controller construction;
- * the setup releases it when the controller starts, whose progress-aware startup bound then applies.
+ * Bounds custom playback setup.
+ * The deadline covers capability, presentation, and controller construction; the setup releases it when the controller starts, whose progress-aware startup bound then applies.
  */
 function waitForCustomPlaybackSetup<T>(
     startSetup: (deadline: CustomPlaybackSetupDeadline) => Promise<T>
@@ -755,9 +730,7 @@ function getCustomSubtitleCapabilities(
     };
 }
 
-function getAudioPrewarmStreams(
-    mediaStreamsValue: unknown
-): Array<{ sampleRate: unknown, streamIndex: number }> | null {
+function getAudioPrewarmStreams(mediaStreamsValue: unknown): Array<{ sampleRate: unknown, streamIndex: number }> | null {
     if (!Array.isArray(mediaStreamsValue)) {
         return null;
     }
@@ -811,9 +784,7 @@ function selectAudioPrewarmStream(
     if (!Number.isSafeInteger(requestedIndex) || Number(requestedIndex) < 0) {
         return null;
     }
-    return audioStreams.find(audioStream => (
-        audioStream.streamIndex === requestedIndex
-    )) ?? null;
+    return audioStreams.find(audioStream => (audioStream.streamIndex === requestedIndex)) ?? null;
 }
 
 function getSelectedAudioSampleRate(options: unknown): number | null {
@@ -835,9 +806,7 @@ function getSelectedAudioSampleRate(options: unknown): number | null {
         return null;
     }
 
-    return isSupportedCustomAudioSampleRate(selectedAudioStream.sampleRate) ?
-        selectedAudioStream.sampleRate :
-        null;
+    return isSupportedCustomAudioSampleRate(selectedAudioStream.sampleRate) ? selectedAudioStream.sampleRate : null;
 }
 
 function getAudioContextMaximumChannelCount(audioContext: AudioContext | null): number | null {
@@ -846,9 +815,7 @@ function getAudioContextMaximumChannelCount(audioContext: AudioContext | null): 
     }
     try {
         const maximumChannelCount = audioContext.destination.maxChannelCount;
-        return Number.isSafeInteger(maximumChannelCount) && maximumChannelCount > 0 ?
-            maximumChannelCount :
-            null;
+        return Number.isSafeInteger(maximumChannelCount) && maximumChannelCount > 0 ? maximumChannelCount : null;
     } catch {
         return null;
     }
@@ -865,10 +832,7 @@ function selectDecodedAudioOutputChannelCount(
     if (forceStereoDownmix) {
         return 2;
     }
-    return selectCustomAudioOutputChannelCountForMaximum(
-        maximumChannelCount,
-        eligibility.audioSourceChannelCount
-    );
+    return selectCustomAudioOutputChannelCountForMaximum(maximumChannelCount, eligibility.audioSourceChannelCount);
 }
 
 function selectAudioDownmixAlgorithm(
@@ -882,23 +846,17 @@ function getDecodedAudioDownmixSettings(
     eligibility: EligibleCustomPlayback,
     settings: WebGPUUserSettings
 ): AudioDownmixSettings | undefined {
-    return eligibility.audioOutputMode === 'decoded-pcm' ?
-        settings.audio.downmix :
-        undefined;
+    return eligibility.audioOutputMode === 'decoded-pcm' ? settings.audio.downmix : undefined;
 }
 
 /** Returns the play option of a dual-layer route that reconstructs without its EL. */
-function getDiscardedEnhancementLayerPlayOption(
-    eligibility: EligibleCustomPlayback
-): { discardDolbyVisionEnhancementLayer?: true } {
+function getDiscardedEnhancementLayerPlayOption(eligibility: EligibleCustomPlayback): { discardDolbyVisionEnhancementLayer?: true } {
     return eligibility.discardDolbyVisionEnhancementLayer ? { discardDolbyVisionEnhancementLayer: true } : {};
 }
 
 function initializeWebGPUAudioOutputManager(): WebGPUAudioOutputManager {
     const audioOutputManager = getWebGPUAudioOutputManager();
-    void audioOutputManager.setSelectedDeviceId(
-        loadWebGPUUserSettings().audio.outputDeviceId
-    );
+    void audioOutputManager.setSelectedDeviceId(loadWebGPUUserSettings().audio.outputDeviceId);
     return audioOutputManager;
 }
 
@@ -910,7 +868,7 @@ export default class WebGPUPlayer {
     name = 'WebGPU Player';
     type = PluginType.MediaPlayer;
     id = 'webgpuplayer';
-    // The wrapper preserves the HTML player's SyncPlay timing, rate, and events.
+    // The wrapper preserves the HTML player's SyncPlay timing, rate, and events
     syncPlayWrapAs = 'htmlvideoplayer';
     priority = 0;
 
@@ -957,8 +915,7 @@ export default class WebGPUPlayer {
     private currentPlaybackOptions: unknown = null;
     private currentNativeDeviceProfileProof: NativeDeviceProfileProof | null = null;
     private currentPlaybackRequiresSourceRenegotiation = false;
-    private currentDolbyVisionPresentationDescriptor: DolbyVisionPresentationDescriptor | null =
-        null;
+    private currentDolbyVisionPresentationDescriptor: DolbyVisionPresentationDescriptor | null = null;
     private currentPresentationColorMetadata: InputColorMetadata | null = null;
     // A Dolby Vision stream's declared base layer, presented by the ordinary routes when no RPU route is used
     private currentDolbyVisionBaseColorMetadata: InputColorMetadata | null = null;
@@ -979,16 +936,8 @@ export default class WebGPUPlayer {
 
     constructor() {
         const audioOutputManager = initializeWebGPUAudioOutputManager();
-        this.htmlDelegate = new HTMLPlayerDelegate(
-            this,
-            this.handleBackendStopped,
-            this.handleBackendError,
-            audioOutputManager
-        );
-        this.presenter = new WebGPUPresenter(
-            this.handlePresentationFallback,
-            this.handleDecodedPresentationRefresh
-        );
+        this.htmlDelegate = new HTMLPlayerDelegate(this, this.handleBackendStopped, this.handleBackendError, audioOutputManager);
+        this.presenter = new WebGPUPresenter(this.handlePresentationFallback, this.handleDecodedPresentationRefresh);
         if (typeof document !== 'undefined') {
             document.addEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
@@ -996,9 +945,7 @@ export default class WebGPUPlayer {
 
     get isFetching(): boolean {
         const customPlaybackState = this.customPlaybackController?.playbackState;
-        if (this.customPlaybackStartingGeneration !== null
-            || customPlaybackState === 'starting'
-            || customPlaybackState === 'seeking') {
+        if (this.customPlaybackStartingGeneration !== null || customPlaybackState === 'starting' || customPlaybackState === 'seeking') {
             return true;
         }
         return this.htmlDelegate.player.isFetching;
@@ -1027,7 +974,7 @@ export default class WebGPUPlayer {
         return backend.canPlayMediaType(mediaType);
     };
 
-    /** Synchronously preserves the optional HTML backend item check. */
+    /** Synchronously applies the optional HTML backend item check and, with custom decode enabled, the engine's metadata-only video route prefilter. */
     canPlayItem(item: unknown, playOptions?: unknown): boolean {
         const backend = this.htmlDelegate.player as BackendPlayer & OptionalItemCompatibility;
         const backendCanPlay = backend.canPlayItem?.(item, playOptions) ?? true;
@@ -1067,8 +1014,7 @@ export default class WebGPUPlayer {
         const presentationOptions = Array.isArray(mediaStreams) ?
             { mediaSource: { MediaStreams: mediaStreams } } :
             getDeviceProfilePresentationOptions(item, mediaSourceId);
-        return presentationOptions === null
-            || getDolbyVisionPresentationDescriptor(presentationOptions) === null;
+        return presentationOptions === null || getDolbyVisionPresentationDescriptor(presentationOptions) === null;
     }
 
     async getDeviceProfile(item: unknown, options?: unknown): Promise<unknown> {
@@ -1102,10 +1048,7 @@ export default class WebGPUPlayer {
             return playbackProfile;
         }
         const subtitleCapabilities = !isRetry && profile && typeof profile === 'object' ?
-            getCustomSubtitleCapabilities(
-                profile as DeviceProfile,
-                runtimeAvailability
-            ) :
+            getCustomSubtitleCapabilities(profile as DeviceProfile, runtimeAvailability) :
             null;
 
         const [ capabilities, nativeMediaAudioCapabilities ] = await Promise.all([
@@ -1142,8 +1085,7 @@ export default class WebGPUPlayer {
             case 'PictureInPicture':
             case 'PlaybackRate':
             case 'SetBrightness':
-                return this.hasAuthoritativeHTMLPlaybackSurface()
-                    && this.htmlDelegate.player.supports(feature);
+                return this.hasAuthoritativeHTMLPlaybackSurface() && this.htmlDelegate.player.supports(feature);
             default:
                 return this.htmlDelegate.player.supports(feature);
         }
@@ -1152,9 +1094,7 @@ export default class WebGPUPlayer {
     /** Cancels only an unresolved backend startup, leaving established playback intact. */
     cancelPendingPlay(): void {
         this.htmlDelegate.cancelPendingPlay();
-        const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(
-            this.backendSessionGeneration
-        );
+        const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(this.backendSessionGeneration);
         if (audioPrewarmClose) {
             void audioPrewarmClose;
         }
@@ -1194,19 +1134,13 @@ export default class WebGPUPlayer {
         const customPlaybackStop = this.detachCustomPlaybackController();
         const previousSessionGeneration = this.backendSessionGeneration;
         const generation = this.advancePresentationGeneration();
-        if (
-            previousSessionGeneration > 0
-            && !this.pendingStopCounts.has(previousSessionGeneration)
-        ) {
+        if (previousSessionGeneration > 0 && !this.pendingStopCounts.has(previousSessionGeneration)) {
             this.htmlDelegate.endSession(previousSessionGeneration);
         }
 
         this.backendSessionActive = true;
         this.backendSessionGeneration = generation;
-        this.currentNativeDeviceProfileProof = this.consumeNativeDeviceProfileProof(
-            options,
-            generation
-        );
+        this.currentNativeDeviceProfileProof = this.consumeNativeDeviceProfileProof(options, generation);
         this.backendPlayPendingGeneration = generation;
         this.deferredRenegotiationError = null;
         this.customPlaybackFallbackPromise = null;
@@ -1223,8 +1157,7 @@ export default class WebGPUPlayer {
             && this.isNonTranscodedSourceOptions(options)
             && !this.isCurrentSourceNativeCompatible(options);
         this.startCustomPlaybackAudioPrewarm(options, generation);
-        this.currentDolbyVisionPresentationDescriptor =
-            getDolbyVisionPresentationDescriptor(options);
+        this.currentDolbyVisionPresentationDescriptor = getDolbyVisionPresentationDescriptor(options);
         this.currentPresentationColorMetadata = getPresentationInputColorMetadata(options);
         this.currentDolbyVisionBaseColorMetadata = getDolbyVisionBaseColorMetadata(options);
         const customHDRPresentation = isWebGPUCustomDecodeEnabled()
@@ -1233,8 +1166,7 @@ export default class WebGPUPlayer {
                 || (this.currentPresentationColorMetadata !== null
                     && this.currentPresentationColorMetadata.transfer !== 'sdr')
             );
-        this.webGPUPresentationEnabled = isKnownSDRPresentationInput(options)
-            || customHDRPresentation;
+        this.webGPUPresentationEnabled = isKnownSDRPresentationInput(options) || customHDRPresentation;
         if (this.webGPUPresentationEnabled) {
             this.presenter.startSession(generation);
         } else {
@@ -1244,9 +1176,7 @@ export default class WebGPUPlayer {
         const backendStopCallBarrier = this.backendStopCallBarrier;
         const startPlayback = (): Promise<unknown> => {
             if (customPlaybackStop) {
-                return customPlaybackStop.then(() => (
-                    this.startBackendPlayback(options, generation)
-                ));
+                return customPlaybackStop.then(() => (this.startBackendPlayback(options, generation)));
             }
             return this.startBackendPlayback(options, generation);
         };
@@ -1324,9 +1254,7 @@ export default class WebGPUPlayer {
             document.removeEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
         this.stopCustomPlaybackBackgroundDrain();
-        const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(
-            this.backendSessionGeneration
-        );
+        const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(this.backendSessionGeneration);
         if (audioPrewarmClose) {
             void audioPrewarmClose;
         }
@@ -1368,10 +1296,7 @@ export default class WebGPUPlayer {
         }
 
         try {
-            if (
-                this.ownedBackendSessionGeneration != null
-                && this.ownedBackendSessionGeneration !== generation
-            ) {
+            if (this.ownedBackendSessionGeneration != null && this.ownedBackendSessionGeneration !== generation) {
                 await this.stopOwnedBackendForReplacement(generation);
             }
             if (!this.isRequestedSessionCurrent(generation)) {
@@ -1382,11 +1307,7 @@ export default class WebGPUPlayer {
             this.ownedBackendSessionGeneration = generation;
             const customDecodeEnabled = isWebGPUCustomDecodeEnabled();
             if (customDecodeEnabled) {
-                const customPlaybackResult = await this.startCustomPlaybackBounded(
-                    options,
-                    generation,
-                    getPlaybackStartTimeMicroseconds(options)
-                );
+                const customPlaybackResult = await this.startCustomPlaybackBounded(options, generation, getPlaybackStartTimeMicroseconds(options));
                 switch (customPlaybackResult.status) {
                     case 'handled':
                         return customPlaybackResult.result;
@@ -1397,11 +1318,7 @@ export default class WebGPUPlayer {
                         break;
                 }
             }
-            const disabledCustomSourceResult = this.renegotiateCustomOnlySourceWhenDisabled(
-                customDecodeEnabled,
-                options,
-                generation
-            );
+            const disabledCustomSourceResult = this.renegotiateCustomOnlySourceWhenDisabled(customDecodeEnabled, options, generation);
             if (disabledCustomSourceResult) {
                 switch (disabledCustomSourceResult.status) {
                     case 'handled':
@@ -1449,8 +1366,7 @@ export default class WebGPUPlayer {
             this.cancelPendingPausedPresentationRefresh();
             const requestedTimeMicroseconds = millisecondsToMicroseconds(value);
             this.lastKnownTimeMicroseconds = requestedTimeMicroseconds;
-            const recoveryTransitionActive =
-                this.customPlaybackRecoveryTimeMicroseconds !== null;
+            const recoveryTransitionActive = this.customPlaybackRecoveryTimeMicroseconds !== null;
             if (recoveryTransitionActive) {
                 this.customPlaybackRecoveryTimeMicroseconds = requestedTimeMicroseconds;
             }
@@ -1464,26 +1380,16 @@ export default class WebGPUPlayer {
                 this.customPlaybackFrameGeneration = seekGeneration;
                 this.cancelCustomPlaybackFrameCallback();
                 this.presenter.setDecodedFramePushMode(true, seekGeneration);
-                void Promise.resolve().then(() => (
-                    customPlaybackController.seek(requestedTimeMicroseconds)
-                )).then(result => {
+                void Promise.resolve().then(() => (customPlaybackController.seek(requestedTimeMicroseconds))).then(result => {
                     if (this.customPlaybackSeekRevision !== seekRevision) {
                         return;
                     }
-                    this.handleCustomPlaybackStartResult(
-                        customPlaybackController,
-                        backendGeneration,
-                        result
-                    );
+                    this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
                 }).catch((error: unknown): void => {
                     if (this.customPlaybackSeekRevision !== seekRevision) {
                         return;
                     }
-                    this.requestCustomPlaybackFallbackForError(
-                        customPlaybackController,
-                        backendGeneration,
-                        error
-                    );
+                    this.requestCustomPlaybackFallbackForError(customPlaybackController, backendGeneration, error);
                 });
                 return undefined;
             }
@@ -1517,9 +1423,7 @@ export default class WebGPUPlayer {
         const customPlaybackController = this.getActiveCustomPlaybackController();
         if (customPlaybackController) {
             const durationMicroseconds = customPlaybackController.durationMicroseconds;
-            return durationMicroseconds === null ?
-                null :
-                microsecondsToMilliseconds(durationMicroseconds);
+            return durationMicroseconds === null ? null : microsecondsToMilliseconds(durationMicroseconds);
         }
 
         const backendDurationMilliseconds = this.htmlDelegate.player.duration();
@@ -1630,11 +1534,7 @@ export default class WebGPUPlayer {
                 if (this.customPlaybackAudioSelectionRevision !== selectionRevision) {
                     return;
                 }
-                this.requestCustomPlaybackFallbackForError(
-                    customPlaybackController,
-                    backendGeneration,
-                    error
-                );
+                this.requestCustomPlaybackFallbackForError(customPlaybackController, backendGeneration, error);
             });
             return;
         }
@@ -1652,32 +1552,23 @@ export default class WebGPUPlayer {
     }
 
     getVolume(): number | undefined {
-        if (this.getActiveCustomPlaybackController()
-            || this.htmlPlaybackNormalizationGain !== null) {
+        if (this.getActiveCustomPlaybackController() || this.htmlPlaybackNormalizationGain !== null) {
             return this.customPlaybackVolume;
         }
         return this.htmlDelegate.player.getVolume();
     }
 
     volumeUp(): void {
-        if (this.getActiveCustomPlaybackController()
-            || this.htmlPlaybackNormalizationGain !== null) {
-            this.setVolume(Math.min(
-                this.customPlaybackVolume + CUSTOM_VOLUME_STEP,
-                MAX_JELLYFIN_VOLUME
-            ));
+        if (this.getActiveCustomPlaybackController() || this.htmlPlaybackNormalizationGain !== null) {
+            this.setVolume(Math.min(this.customPlaybackVolume + CUSTOM_VOLUME_STEP, MAX_JELLYFIN_VOLUME));
             return;
         }
         this.htmlDelegate.player.volumeUp();
     }
 
     volumeDown(): void {
-        if (this.getActiveCustomPlaybackController()
-            || this.htmlPlaybackNormalizationGain !== null) {
-            this.setVolume(Math.max(
-                this.customPlaybackVolume - CUSTOM_VOLUME_STEP,
-                MIN_JELLYFIN_VOLUME
-            ));
+        if (this.getActiveCustomPlaybackController() || this.htmlPlaybackNormalizationGain !== null) {
+            this.setVolume(Math.max(this.customPlaybackVolume - CUSTOM_VOLUME_STEP, MIN_JELLYFIN_VOLUME));
             return;
         }
         this.htmlDelegate.player.volumeDown();
@@ -1905,14 +1796,9 @@ export default class WebGPUPlayer {
     /** Applies live HDR display controls without rebuilding the shader pipeline. */
     updateRenderSettings(
         settings: HDRToSDRRenderSettings,
-        automaticInputPeakNits: boolean =
-        loadWebGPUUserSettings().render.automaticInputPeakNits
+        automaticInputPeakNits: boolean = loadWebGPUUserSettings().render.automaticInputPeakNits
     ): boolean {
-        return this.presenter.updateRenderSettings(
-            settings,
-            this.presentationGeneration,
-            automaticInputPeakNits
-        );
+        return this.presenter.updateRenderSettings(settings, this.presentationGeneration, automaticInputPeakNits);
     }
 
     /** Applies live gain changes to an active WebGPU stereo downmix when available. */
@@ -1933,13 +1819,10 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Applies force stereo and the downmix algorithm to active WebGPU decoded audio
-     * at once. Resolves false when no active session took them live.
+     * Applies force stereo and the downmix algorithm to active WebGPU decoded audio at once.
+     * Resolves false when no active session took them live.
      */
-    applyAudioOutputSettings(
-        forceStereoDownmix: boolean,
-        audioDownmixAlgorithm: CustomAudioDownmixAlgorithm
-    ): Promise<boolean> {
+    applyAudioOutputSettings(forceStereoDownmix: boolean, audioDownmixAlgorithm: CustomAudioDownmixAlgorithm): Promise<boolean> {
         const audioSettings = this.customPlaybackAudioSettings;
         if (!audioSettings || !this.getActiveCustomPlaybackController()) {
             return Promise.resolve(false);
@@ -1956,18 +1839,15 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Picks the decoded layout for the current device and settings and switches a
-     * live session to it. The controller ignores a request that changes nothing.
+     * Picks the decoded layout for the current device and settings and switches a live session to it.
+     * The controller ignores a request that changes nothing.
      * Resolves whether the session took the request.
      */
     private reconfigureCustomPlaybackAudioOutput(): Promise<boolean> {
         const customPlaybackController = this.getActiveCustomPlaybackController();
         const audioSettings = this.customPlaybackAudioSettings;
         const eligibility = this.lastCustomPlaybackEligibility;
-        if (!customPlaybackController
-            || !audioSettings
-            || !eligibility?.eligible
-            || eligibility.audioTrackIndex === null) {
+        if (!customPlaybackController || !audioSettings || !eligibility?.eligible || eligibility.audioTrackIndex === null) {
             return Promise.resolve(false);
         }
 
@@ -1996,8 +1876,7 @@ export default class WebGPUPlayer {
 
     /** Returns the retained source peak used when automatic metadata tracking is enabled. */
     getDetectedInputPeakNits(): number | null {
-        if (!this.backendSessionActive
-            || !this.webGPUPresentationEnabled) {
+        if (!this.backendSessionActive || !this.webGPUPresentationEnabled) {
             return null;
         }
         return this.activeDetectedInputPeakNits;
@@ -2005,16 +1884,13 @@ export default class WebGPUPlayer {
 
     /** Returns the combined custom A/V pipeline telemetry. */
     getCustomPlaybackTelemetry(): CustomPlaybackTelemetry | null {
-        const telemetry = this.customPlaybackController?.getTelemetry()
-            ?? this.lastCustomPlaybackTelemetry;
+        const telemetry = this.customPlaybackController?.getTelemetry() ?? this.lastCustomPlaybackTelemetry;
         return telemetry ? { ...telemetry } : null;
     }
 
     /** Returns the selected Jellyfin stream index rather than the decoder track ordinal. */
     getCustomPlaybackSelectedAudioStreamIndex(): number | null {
-        if (!this.getActiveCustomPlaybackController()
-            || !this.currentPlaybackOptions
-            || typeof this.currentPlaybackOptions !== 'object') {
+        if (!this.getActiveCustomPlaybackController() || !this.currentPlaybackOptions || typeof this.currentPlaybackOptions !== 'object') {
             return null;
         }
 
@@ -2028,9 +1904,7 @@ export default class WebGPUPlayer {
             return null;
         }
         const defaultIndex = (mediaSource as PlaybackOptionsRecord).DefaultAudioStreamIndex;
-        return Number.isSafeInteger(defaultIndex) && Number(defaultIndex) >= 0 ?
-            Number(defaultIndex) :
-            null;
+        return Number.isSafeInteger(defaultIndex) && Number(defaultIndex) >= 0 ? Number(defaultIndex) : null;
     }
 
     /** Returns the last eligibility decision without operational source data. */
@@ -2098,8 +1972,8 @@ export default class WebGPUPlayer {
             return;
         }
 
-        // Native HDR must stay on the browser-managed video path. External
-        // textures expose browser-converted sRGB, not the source PQ/HLG signal.
+        // Native HDR must stay on the browser-managed video path.
+        // External textures expose browser-converted sRGB, not the source PQ/HLG signal
         if (this.currentPresentationColorMetadata?.transfer !== 'sdr') {
             this.webGPUPresentationEnabled = false;
             this.presenter.endSession(this.presentationGeneration);
@@ -2114,12 +1988,7 @@ export default class WebGPUPlayer {
         const generation = this.presentationGeneration;
         this.presenter.setDecodedFramePushMode(false, generation);
         this.presenter.attach(presentationSurface, generation);
-        void this.configurePresentationColorPipeline(
-            generation,
-            'video-frame',
-            null,
-            null
-        ).then(configured => {
+        void this.configurePresentationColorPipeline(generation, 'video-frame', null, null).then(configured => {
             if (!configured && this.isRequestedSessionCurrent(this.backendSessionGeneration)) {
                 console.warn('WebGPU presentation returned to the native video surface');
             }
@@ -2140,10 +2009,7 @@ export default class WebGPUPlayer {
                 automaticInputPeakNits: true
             }
         };
-        const automaticSettings = createConfiguredHDRRenderSettings(
-            automaticUserSettings,
-            detectedInputPeakNits
-        );
+        const automaticSettings = createConfiguredHDRRenderSettings(automaticUserSettings, detectedInputPeakNits);
         this.activeDetectedInputPeakNits = automaticSettings.toneMapping.inputPeakNits;
         return {
             automaticInputPeakNits: userSettings.render.automaticInputPeakNits,
@@ -2159,22 +2025,14 @@ export default class WebGPUPlayer {
         videoOutputMode: CustomDecodeVideoOutputMode,
         rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat | null
     ): Promise<boolean> {
-        if (
-            dolbyVisionProfile === 5
-            && videoOutputMode === 'video-frame'
-            && rawVideoFrameFormat === null
-        ) {
+        if (dolbyVisionProfile === 5 && videoOutputMode === 'video-frame' && rawVideoFrameFormat === null) {
             return this.presenter.configureColorPipeline({
                 ...this.createHDRRenderConfiguration(4_000),
                 inputMode: 'external-dolby-vision',
                 profile: 5
             }, generation);
         }
-        if (
-            videoOutputMode !== 'raw-planes'
-            || rawVideoFrameFormat === null
-            || !isRawDolbyVisionVideoFrameFormat(rawVideoFrameFormat)
-        ) {
+        if (videoOutputMode !== 'raw-planes' || rawVideoFrameFormat === null || !isRawDolbyVisionVideoFrameFormat(rawVideoFrameFormat)) {
             return Promise.resolve(false);
         }
         return this.presenter.configureColorPipeline({
@@ -2221,8 +2079,7 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Presents a Dolby Vision base layer without its RPU: the exact native Profile 7 and 8 bases through
-     * external HDR, and any other declared base through the ordinary route the eligibility selected.
+     * Presents a Dolby Vision base layer without its RPU: the exact native Profile 7 and 8 bases through external HDR, and any other declared base through the ordinary route the eligibility selected.
      */
     private configureDolbyVisionBaseColorPipeline(
         dolbyVisionDescriptor: DolbyVisionPresentationDescriptor,
@@ -2236,12 +2093,7 @@ export default class WebGPUPlayer {
                 isDolbyVisionProfile7HDR10BaseLayerDescriptor(dolbyVisionDescriptor)
                 || isDolbyVisionProfile8HDR10BaseLayerDescriptor(dolbyVisionDescriptor)
                 || isDolbyVisionProfile8HLGBaseLayerDescriptor(dolbyVisionDescriptor);
-            if (
-                !descriptorSupported
-                || colorMetadata === null
-                || videoOutputMode !== 'video-frame'
-                || rawVideoFrameFormat !== null
-            ) {
+            if (!descriptorSupported || colorMetadata === null || videoOutputMode !== 'video-frame' || rawVideoFrameFormat !== null) {
                 return Promise.resolve(false);
             }
             return this.presenter.configureColorPipeline({
@@ -2259,11 +2111,9 @@ export default class WebGPUPlayer {
     }
 
     private getCurrentDolbyVisionBaseColorMetadata(): InputColorMetadata | null {
-        return getDolbyVisionProfile7HDR10BaseColorMetadata(
-            this.currentPlaybackOptions
-        ) ?? getDolbyVisionProfile8HDR10BaseColorMetadata(
-            this.currentPlaybackOptions
-        ) ?? getDolbyVisionProfile8HLGBaseColorMetadata(this.currentPlaybackOptions);
+        return getDolbyVisionProfile7HDR10BaseColorMetadata(this.currentPlaybackOptions)
+            ?? getDolbyVisionProfile8HDR10BaseColorMetadata(this.currentPlaybackOptions)
+            ?? getDolbyVisionProfile8HLGBaseColorMetadata(this.currentPlaybackOptions);
     }
 
     private configureColorMetadataPresentationPipeline(
@@ -2321,8 +2171,7 @@ export default class WebGPUPlayer {
 
     private applyStaticHDRMetadata(metadata: StaticHDRMetadata): void {
         const dolbyVisionBaseColorMetadata = this.getActiveDolbyVisionBaseColorMetadata();
-        if (this.currentPresentationColorMetadata?.transfer !== 'pq'
-            && dolbyVisionBaseColorMetadata?.transfer !== 'pq') {
+        if (this.currentPresentationColorMetadata?.transfer !== 'pq' && dolbyVisionBaseColorMetadata?.transfer !== 'pq') {
             return;
         }
 
@@ -2336,15 +2185,10 @@ export default class WebGPUPlayer {
         }
         const currentSettings = this.presenter.getRenderSettings();
         if (currentSettings.mode !== 'hdr-to-sdr'
-            || currentSettings.toneMapping.inputPeakNits
-                === configuration.settings.toneMapping.inputPeakNits) {
+            || currentSettings.toneMapping.inputPeakNits === configuration.settings.toneMapping.inputPeakNits) {
             return;
         }
-        if (!this.presenter.updateRenderSettings(
-            configuration.settings,
-            this.presentationGeneration,
-            true
-        )) {
+        if (!this.presenter.updateRenderSettings(configuration.settings, this.presentationGeneration, true)) {
             console.warn('WebGPU could not apply static HDR luminance metadata');
         }
     }
@@ -2401,13 +2245,9 @@ export default class WebGPUPlayer {
         }
     }
 
-    private getCustomPlaybackAudioPrewarm(
-        backendGeneration: number
-    ): BrowserAudioContextPrewarmLease | null {
+    private getCustomPlaybackAudioPrewarm(backendGeneration: number): BrowserAudioContextPrewarmLease | null {
         const audioPrewarm = this.customPlaybackAudioPrewarm;
-        return audioPrewarm?.backendGeneration === backendGeneration ?
-            audioPrewarm.lease :
-            null;
+        return audioPrewarm?.backendGeneration === backendGeneration ? audioPrewarm.lease : null;
     }
 
     private getCustomPlaybackAudioPrewarmForTrack(
@@ -2430,9 +2270,7 @@ export default class WebGPUPlayer {
         }
     }
 
-    private closeCustomPlaybackAudioPrewarm(
-        backendGeneration: number
-    ): Promise<void> | null {
+    private closeCustomPlaybackAudioPrewarm(backendGeneration: number): Promise<void> | null {
         const audioPrewarm = this.customPlaybackAudioPrewarm;
         if (!audioPrewarm || audioPrewarm.backendGeneration !== backendGeneration) {
             return null;
@@ -2468,9 +2306,7 @@ export default class WebGPUPlayer {
         audioTrackIndex: number | null,
         audioPrewarm: BrowserAudioContextPrewarmLease | null
     ): CustomAudioOutputFactory | undefined {
-        return audioTrackIndex === null ?
-            undefined :
-            audioOutputModule.createBrowserCustomAudioOutputFactory(audioPrewarm);
+        return audioTrackIndex === null ? undefined : audioOutputModule.createBrowserCustomAudioOutputFactory(audioPrewarm);
     }
 
     private createCustomPlaybackController(
@@ -2481,14 +2317,10 @@ export default class WebGPUPlayer {
         audioPrewarm: BrowserAudioContextPrewarmLease | null,
         backendGeneration: number
     ): CustomPlaybackController {
-        const controllerReference: { controller: CustomPlaybackController | null } = {
-            controller: null
-        };
+        const controllerReference: { controller: CustomPlaybackController | null } = { controller: null };
         const nativeAudioBridgeFactory = eligibility.audioTrackIndex === null ?
             undefined :
-            (): InstanceType<typeof nativeAudioBridgeModule.default> => (
-                new nativeAudioBridgeModule.default()
-            );
+            (): InstanceType<typeof nativeAudioBridgeModule.default> => (new nativeAudioBridgeModule.default());
         const customPlaybackController = new controllerModule.default({
             audioOutputFactory: this.createCustomPlaybackAudioOutputFactory(
                 audioOutputModule,
@@ -2497,11 +2329,7 @@ export default class WebGPUPlayer {
             ),
             eventHandler: (event: CustomPlaybackControllerEvent): void => {
                 if (controllerReference.controller) {
-                    this.handleCustomPlaybackEvent(
-                        controllerReference.controller,
-                        backendGeneration,
-                        event
-                    );
+                    this.handleCustomPlaybackEvent(controllerReference.controller, backendGeneration, event);
                 }
             },
             fallbackHook: (request: CustomPlaybackFallbackRequest): Promise<void> => {
@@ -2532,13 +2360,7 @@ export default class WebGPUPlayer {
         };
         const result = await waitForCustomPlaybackSetup(
             (deadline: CustomPlaybackSetupDeadline): Promise<CustomPlaybackAttemptResult> => (
-                this.tryStartCustomPlayback(
-                    options,
-                    backendGeneration,
-                    setupRevision,
-                    recoveryAnchorMicroseconds,
-                    deadline
-                )
+                this.tryStartCustomPlayback(options, backendGeneration, setupRevision, recoveryAnchorMicroseconds, deadline)
             )
         );
         if (result !== CUSTOM_PLAYBACK_SETUP_TIMEOUT) {
@@ -2570,17 +2392,11 @@ export default class WebGPUPlayer {
         }
 
         console.warn('Custom playback setup exceeded its bounded timeout');
-        return this.getCustomPlaybackUnavailableResult(
-            backendGeneration,
-            'startup-timeout',
-            recoveryAnchorMicroseconds
-        );
+        return this.getCustomPlaybackUnavailableResult(backendGeneration, 'startup-timeout', recoveryAnchorMicroseconds);
     }
 
-    /** Jellyfin can omit Rext BitDepth, so the exact raw plane format fixes the decoded depth. */
-    private alignPresentationBitDepthToRawFrames(
-        rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat | null
-    ): void {
+    /** Jellyfin can omit Rext BitDepth, so the raw plane format fixes the decoded depth. */
+    private alignPresentationBitDepthToRawFrames(rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat | null): void {
         if (!rawVideoFrameFormat) {
             return;
         }
@@ -2607,20 +2423,13 @@ export default class WebGPUPlayer {
         setupDeadline: CustomPlaybackSetupDeadline
     ): Promise<CustomPlaybackAttemptResult> {
         this.customPlaybackStartingGeneration = backendGeneration;
-        const eligibility = await this.getCustomPlaybackEligibilityForOptions(
-            options,
-            backendGeneration
-        );
+        const eligibility = await this.getCustomPlaybackEligibilityForOptions(options, backendGeneration);
         if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
             return { status: 'superseded' };
         }
         if (!eligibility?.eligible || !this.webGPUPresentationEnabled) {
             this.warnCustomPlaybackIneligible(eligibility);
-            return this.getCustomPlaybackUnavailableResult(
-                backendGeneration,
-                'source-unsupported',
-                recoveryAnchorMicroseconds
-            );
+            return this.getCustomPlaybackUnavailableResult(backendGeneration, 'source-unsupported', recoveryAnchorMicroseconds);
         }
         this.alignPresentationBitDepthToRawFrames(eligibility.rawVideoFrameFormat);
         this.customPlaybackSetupTelemetry = {
@@ -2682,11 +2491,7 @@ export default class WebGPUPlayer {
             if (!presentationSurface || presentationSurface === PLAYBACK_SUPERSEDED) {
                 return presentationSurface === PLAYBACK_SUPERSEDED ?
                     { status: 'superseded' } :
-                    this.getCustomPlaybackUnavailableResult(
-                        backendGeneration,
-                        'source-unsupported',
-                        recoveryAnchorMicroseconds
-                    );
+                    this.getCustomPlaybackUnavailableResult(backendGeneration, 'source-unsupported', recoveryAnchorMicroseconds);
             }
 
             this.customPlaybackSetupTelemetry = {
@@ -2706,11 +2511,7 @@ export default class WebGPUPlayer {
                 return { status: 'superseded' };
             }
             if (!colorPipelineConfigured || !this.webGPUPresentationEnabled) {
-                return this.getCustomPlaybackUnavailableResult(
-                    backendGeneration,
-                    'lifecycle-failed',
-                    recoveryAnchorMicroseconds
-                );
+                return this.getCustomPlaybackUnavailableResult(backendGeneration, 'lifecycle-failed', recoveryAnchorMicroseconds);
             }
 
             this.customPlaybackSetupTelemetry = {
@@ -2738,11 +2539,7 @@ export default class WebGPUPlayer {
             this.customPlaybackEmitUnpause = true;
             // Playback can start in a hidden tab, such as a queued next item
             this.synchronizeCustomPlaybackPageVisibility();
-            this.initializeCustomPlaybackGain(
-                customPlaybackController,
-                options,
-                userSettingsModule.selectAudioNormalization()
-            );
+            this.initializeCustomPlaybackGain(customPlaybackController, options, userSettingsModule.selectAudioNormalization());
             const audioDownmixAlgorithm = selectAudioDownmixAlgorithm(
                 eligibility.audioTrackIndex,
                 userSettingsModule.webGPUAudioDownmixAlgorithm()
@@ -2751,10 +2548,7 @@ export default class WebGPUPlayer {
 
             const startResult = await customPlaybackController.play({
                 audioDownmixAlgorithm,
-                audioDownmixSettings: getDecodedAudioDownmixSettings(
-                    eligibility,
-                    webGPUUserSettings
-                ),
+                audioDownmixSettings: getDecodedAudioDownmixSettings(eligibility, webGPUUserSettings),
                 audioOutputMode: eligibility.audioOutputMode ?? undefined,
                 audioTrackIndex: eligibility.audioTrackIndex,
                 decodedAudioOutputChannelCount,
@@ -2775,11 +2569,7 @@ export default class WebGPUPlayer {
             if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
                 return { status: 'superseded' };
             }
-            this.handleCustomPlaybackStartResult(
-                customPlaybackController,
-                backendGeneration,
-                startResult
-            );
+            this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, startResult);
             completedStartResult = startResult;
         } catch (error) {
             if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
@@ -2787,11 +2577,7 @@ export default class WebGPUPlayer {
             }
             console.warn('Custom playback startup failed; using the HTML backend', error);
             void this.detachCustomPlaybackController();
-            return this.getCustomPlaybackUnavailableResult(
-                backendGeneration,
-                'decode-failed',
-                recoveryAnchorMicroseconds
-            );
+            return this.getCustomPlaybackUnavailableResult(backendGeneration, 'decode-failed', recoveryAnchorMicroseconds);
         } finally {
             if (this.customPlaybackStartingGeneration === backendGeneration) {
                 this.customPlaybackStartingGeneration = null;
@@ -2799,18 +2585,12 @@ export default class WebGPUPlayer {
         }
 
         if (!completedStartResult) {
-            return this.getCustomPlaybackUnavailableResult(
-                backendGeneration,
-                'lifecycle-failed',
-                recoveryAnchorMicroseconds
-            );
+            return this.getCustomPlaybackUnavailableResult(backendGeneration, 'lifecycle-failed', recoveryAnchorMicroseconds);
         }
         return this.resolveCustomPlaybackStartResult(completedStartResult);
     }
 
-    private async resolveCustomPlaybackStartResult(
-        startResult: CustomPlaybackStartResult
-    ): Promise<CustomPlaybackAttemptResult> {
+    private async resolveCustomPlaybackStartResult(startResult: CustomPlaybackStartResult): Promise<CustomPlaybackAttemptResult> {
         switch (startResult.status) {
             case 'started':
                 return { result: undefined, status: 'handled' };
@@ -2866,10 +2646,7 @@ export default class WebGPUPlayer {
         this.beginCustomPlaybackAudioPrewarmClose(backendGeneration);
         const invalidatedGeneration = this.advancePresentationGeneration();
         this.presenter.endSession(invalidatedGeneration);
-        const accepted = this.emitCustomPlaybackRenegotiationRequired(
-            backendGeneration,
-            reason
-        );
+        const accepted = this.emitCustomPlaybackRenegotiationRequired(backendGeneration, reason);
         return {
             result: accepted ? undefined : PLAYBACK_SUPERSEDED,
             status: 'handled'
@@ -2907,8 +2684,7 @@ export default class WebGPUPlayer {
         this.lastCustomPlaybackRuntimeAvailability = runtimeAvailability;
         const [ capabilities, nativeMediaAudioCapabilities ] = await Promise.all([
             this.lastCustomDecodeCapabilities ?? probeCustomDecodeCapabilities(),
-            this.lastNativeMediaAudioCapabilities
-                ?? probeCachedNativeMediaAudioCapabilities()
+            this.lastNativeMediaAudioCapabilities ?? probeCachedNativeMediaAudioCapabilities()
         ]);
         if (!this.isRequestedSessionCurrent(backendGeneration)) {
             return null;
@@ -2939,33 +2715,16 @@ export default class WebGPUPlayer {
         if (!this.isRequestedSessionCurrent(backendGeneration)) {
             return null;
         }
-        const authorizedRawSDRRouteKeys = this.presenter
-            .getAuthorizedRawHDRRouteKeys()
-            .filter(isRawSDRRouteKey);
+        const authorizedRawSDRRouteKeys = this.presenter.getAuthorizedRawHDRRouteKeys().filter(isRawSDRRouteKey);
         // A Dolby Vision stream without an RPU route presents its declared base through the same static routes
-        const metadata = this.currentPresentationColorMetadata
-            ?? this.currentDolbyVisionBaseColorMetadata;
-        const rawHDRRequested = metadata !== null
-            && metadata.transfer !== 'sdr'
-            && (metadata.bitDepth === 10 || metadata.bitDepth === 12);
+        const metadata = this.currentPresentationColorMetadata ?? this.currentDolbyVisionBaseColorMetadata;
+        const rawHDRRequested = metadata !== null && metadata.transfer !== 'sdr' && (metadata.bitDepth === 10 || metadata.bitDepth === 12);
         const dolbyVisionRequested = this.currentDolbyVisionPresentationDescriptor !== null;
-        const reconstructionTarget = getDolbyVisionReconstructionTarget(
-            this.currentPlaybackOptions
-        );
-        const profile7HDR10BaseRequested =
-            getDolbyVisionProfile7HDR10BaseColorMetadata(
-                this.currentPlaybackOptions
-            ) !== null;
-        const profile8HDR10BaseRequested =
-            getDolbyVisionProfile8HDR10BaseColorMetadata(
-                this.currentPlaybackOptions
-            ) !== null;
-        const profile8HLGBaseRequested = getDolbyVisionProfile8HLGBaseColorMetadata(
-            this.currentPlaybackOptions
-        ) !== null;
-        const dolbyVisionBaseRequested = profile7HDR10BaseRequested
-            || profile8HDR10BaseRequested
-            || profile8HLGBaseRequested;
+        const reconstructionTarget = getDolbyVisionReconstructionTarget(this.currentPlaybackOptions);
+        const profile7HDR10BaseRequested = getDolbyVisionProfile7HDR10BaseColorMetadata(this.currentPlaybackOptions) !== null;
+        const profile8HDR10BaseRequested = getDolbyVisionProfile8HDR10BaseColorMetadata(this.currentPlaybackOptions) !== null;
+        const profile8HLGBaseRequested = getDolbyVisionProfile8HLGBaseColorMetadata(this.currentPlaybackOptions) !== null;
+        const dolbyVisionBaseRequested = profile7HDR10BaseRequested || profile8HDR10BaseRequested || profile8HLGBaseRequested;
         if (!rawHDRRequested && !dolbyVisionRequested) {
             return {
                 allowDolbyVision: false,
@@ -2974,8 +2733,7 @@ export default class WebGPUPlayer {
                 allowNativeHDR: false,
                 allowRawHDR: false,
                 allowRawSDR: authorizedRawSDRRouteKeys.length > 0,
-                authorizedExternalHDRRouteKeys:
-                    this.presenter.getAuthorizedExternalHDRRouteKeys(),
+                authorizedExternalHDRRouteKeys: this.presenter.getAuthorizedExternalHDRRouteKeys(),
                 authorizedRawHDRRouteKeys: authorizedRawSDRRouteKeys
             };
         }
@@ -3017,25 +2775,14 @@ export default class WebGPUPlayer {
         );
         return {
             ...this.getItemRawDolbyVisionRouteFlags(reconstructionTarget),
-            allowNativeDolbyVision: dolbyVisionRequested
-                && this.presenter.isExternalDolbyVisionPresentationAuthorized(),
+            allowNativeDolbyVision: dolbyVisionRequested && this.presenter.isExternalDolbyVisionPresentationAuthorized(),
             allowNativeDolbyVisionProfile7HDR10Base: profile7HDR10BaseRequested
-                && hasAuthorizedDolbyVisionBaseRoute(
-                    DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
-                    authorizedExternalHDRRouteKeys
-                ),
+                && hasAuthorizedDolbyVisionBaseRoute(DOLBY_VISION_HDR10_BASE_COLOR_METADATA, authorizedExternalHDRRouteKeys),
             allowNativeDolbyVisionProfile8HDR10Base: profile8HDR10BaseRequested
-                && hasAuthorizedDolbyVisionBaseRoute(
-                    DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
-                    authorizedExternalHDRRouteKeys
-                ),
+                && hasAuthorizedDolbyVisionBaseRoute(DOLBY_VISION_HDR10_BASE_COLOR_METADATA, authorizedExternalHDRRouteKeys),
             allowNativeDolbyVisionProfile8HLGBase: profile8HLGBaseRequested
-                && hasAuthorizedDolbyVisionBaseRoute(
-                    DOLBY_VISION_HLG_BASE_COLOR_METADATA,
-                    authorizedExternalHDRRouteKeys
-                ),
-            allowNativeHDR: (rawHDRRequested || dolbyVisionBaseRequested)
-                && authorizedExternalHDRRouteKeys.length > 0,
+                && hasAuthorizedDolbyVisionBaseRoute(DOLBY_VISION_HLG_BASE_COLOR_METADATA, authorizedExternalHDRRouteKeys),
+            allowNativeHDR: (rawHDRRequested || dolbyVisionBaseRequested) && authorizedExternalHDRRouteKeys.length > 0,
             allowRawHDR: rawHDRRequested && authorizedRawHDRRouteKeys.length > 0,
             allowRawSDR: authorizedRawSDRRouteKeys.length > 0,
             authorizedExternalHDRRouteKeys,
@@ -3048,9 +2795,7 @@ export default class WebGPUPlayer {
     }
 
     /** Returns the raw Dolby Vision flags of the current item's own RPU route; no other route's authorization counts. */
-    private getItemRawDolbyVisionRouteFlags(
-        reconstructionTarget: DolbyVisionReconstructionTarget | null
-    ): RawDolbyVisionRouteFlags {
+    private getItemRawDolbyVisionRouteFlags(reconstructionTarget: DolbyVisionReconstructionTarget | null): RawDolbyVisionRouteFlags {
         const flags: RawDolbyVisionRouteFlags = {
             allowDolbyVision: false,
             allowDolbyVisionProfile4: false,
@@ -3110,9 +2855,7 @@ export default class WebGPUPlayer {
      * Waits for the item's RPU route before eligibility.
      * Most keys authorize on first use, and a prewarmed key probes again on a GPU device recreated after negotiation; a settled probe resolves at once.
      */
-    private async waitForDolbyVisionReconstructionAuthorization(
-        target: DolbyVisionReconstructionTarget | null
-    ): Promise<void> {
+    private async waitForDolbyVisionReconstructionAuthorization(target: DolbyVisionReconstructionTarget | null): Promise<void> {
         if (!target) {
             return;
         }
@@ -3136,9 +2879,7 @@ export default class WebGPUPlayer {
             void this.presenter.prewarmDolbyVisionPresentationAuthorization(reconstructionTarget);
         }
         return {
-            authorizedExternalHDRRouteKeys: externalHDRRequested ?
-                this.presenter.getAuthorizedExternalHDRRouteKeys() :
-                [],
+            authorizedExternalHDRRouteKeys: externalHDRRequested ? this.presenter.getAuthorizedExternalHDRRouteKeys() : [],
             authorizedRawHDRRouteKeys: rawHDRRequested ?
                 this.presenter.getAuthorizedRawHDRRouteKeys().filter(
                     (routeKey: RawHDRAuthorizationRouteKey): boolean => !isRawSDRRouteKey(routeKey)
@@ -3161,10 +2902,7 @@ export default class WebGPUPlayer {
         }
         this.customPlaybackMuted = this.htmlDelegate.player.isMuted();
         this.htmlPlaybackNormalizationGain = null;
-        this.customPlaybackNormalizationGain = getAudioNormalizationLinearGain(
-            playbackOptions,
-            audioNormalizationMode
-        );
+        this.customPlaybackNormalizationGain = getAudioNormalizationLinearGain(playbackOptions, audioNormalizationMode);
         customPlaybackController.setNormalizationGain(this.customPlaybackNormalizationGain);
         customPlaybackController.setVolume(this.getLinearVolume(this.customPlaybackVolume));
         customPlaybackController.setMuted(this.customPlaybackMuted);
@@ -3178,8 +2916,7 @@ export default class WebGPUPlayer {
         if (!this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
             return;
         }
-        if (result.status === 'started'
-            && customPlaybackController.playbackState === 'paused') {
+        if (result.status === 'started' && customPlaybackController.playbackState === 'paused') {
             this.scheduleCustomPlaybackFrame(customPlaybackController, false);
         }
     }
@@ -3205,10 +2942,7 @@ export default class WebGPUPlayer {
             case 'statechange':
                 if (event.state === 'paused') {
                     this.cancelCustomPlaybackFrameCallback();
-                    const pausedRefresh = this.getCurrentPausedPresentationRefresh(
-                        customPlaybackController,
-                        backendGeneration
-                    );
+                    const pausedRefresh = this.getCurrentPausedPresentationRefresh(customPlaybackController, backendGeneration);
                     if (!pausedRefresh) {
                         // Preserve the shell's outstanding pause across any seek generation
                         this.customPlaybackEmitUnpause = true;
@@ -3237,15 +2971,10 @@ export default class WebGPUPlayer {
                 break;
             case 'timeupdate':
                 this.lastKnownTimeMicroseconds = event.currentTimeMicroseconds;
-                htmlBackend.notifyCustomPlaybackTimeUpdate(
-                    microsecondsToMilliseconds(event.currentTimeMicroseconds)
-                );
+                htmlBackend.notifyCustomPlaybackTimeUpdate(microsecondsToMilliseconds(event.currentTimeMicroseconds));
                 break;
             case 'waiting':
-                if (!this.getCurrentPausedPresentationRefresh(
-                    customPlaybackController,
-                    backendGeneration
-                )) {
+                if (!this.getCurrentPausedPresentationRefresh(customPlaybackController, backendGeneration)) {
                     htmlBackend.notifyCustomPlaybackWaiting();
                 }
                 break;
@@ -3257,11 +2986,7 @@ export default class WebGPUPlayer {
             case 'error':
                 console.warn('Custom playback pipeline error', event.message);
                 if (!event.recoverable) {
-                    this.handleCustomPlaybackTerminalFailure(
-                        customPlaybackController,
-                        backendGeneration,
-                        new Error(event.message)
-                    );
+                    this.handleCustomPlaybackTerminalFailure(customPlaybackController, backendGeneration, new Error(event.message));
                 }
                 break;
             case 'fallback-requested':
@@ -3273,15 +2998,9 @@ export default class WebGPUPlayer {
         }
     }
 
-    private scheduleCustomPlaybackFrame(
-        customPlaybackController: CustomPlaybackController,
-        continueWhilePlaying: boolean
-    ): void {
+    private scheduleCustomPlaybackFrame(customPlaybackController: CustomPlaybackController, continueWhilePlaying: boolean): void {
         if (this.customPlaybackFrameCallback !== null
-            || !this.isCustomPlaybackCurrent(
-                customPlaybackController,
-                this.backendSessionGeneration
-            )) {
+            || !this.isCustomPlaybackCurrent(customPlaybackController, this.backendSessionGeneration)) {
             return;
         }
 
@@ -3320,12 +3039,7 @@ export default class WebGPUPlayer {
 
         const decodedFrame = customPlaybackController.takeCurrentFrame();
         const presentationState = decodedFrame ?
-            this.presentCustomPlaybackFrame(
-                customPlaybackController,
-                backendGeneration,
-                presentationGeneration,
-                decodedFrame
-            ) :
+            this.presentCustomPlaybackFrame(customPlaybackController, backendGeneration, presentationGeneration, decodedFrame) :
             'no-frame';
         if (presentationState === 'failed') {
             return;
@@ -3359,11 +3073,7 @@ export default class WebGPUPlayer {
                 );
             } :
             undefined;
-        const frameSubmitted = this.presenter.presentDecodedFrame(
-            decodedFrame,
-            presentationGeneration,
-            videoFrameSubmissionCompleted
-        );
+        const frameSubmitted = this.presenter.presentDecodedFrame(decodedFrame, presentationGeneration, videoFrameSubmissionCompleted);
         if (!frameSubmitted) {
             const frameDiscarded = customPlaybackController.notifyFrameDiscarded(decodedFrame);
             if (frameDiscarded && this.presenter.getTelemetry().state === 'initializing') {
@@ -3376,8 +3086,7 @@ export default class WebGPUPlayer {
             );
             return 'failed';
         }
-        if (decodedFrame.outputMode === 'raw-planes'
-            && !customPlaybackController.notifyFramePresented(decodedFrame)) {
+        if (decodedFrame.outputMode === 'raw-planes' && !customPlaybackController.notifyFramePresented(decodedFrame)) {
             this.requestCustomPlaybackFallbackForError(
                 customPlaybackController,
                 backendGeneration,
@@ -3464,9 +3173,7 @@ export default class WebGPUPlayer {
         }
     }
 
-    private startCustomPlaybackBackgroundDrain(
-        customPlaybackController: CustomPlaybackController
-    ): void {
+    private startCustomPlaybackBackgroundDrain(customPlaybackController: CustomPlaybackController): void {
         if (this.customPlaybackBackgroundDrainTimer !== null) {
             return;
         }
@@ -3481,11 +3188,7 @@ export default class WebGPUPlayer {
                 customPlaybackController.drainBackgroundVideo();
             } catch (error) {
                 this.stopCustomPlaybackBackgroundDrain();
-                this.requestCustomPlaybackFallbackForError(
-                    customPlaybackController,
-                    backendGeneration,
-                    error
-                );
+                this.requestCustomPlaybackFallbackForError(customPlaybackController, backendGeneration, error);
             }
         }, CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS);
     }
@@ -3529,51 +3232,35 @@ export default class WebGPUPlayer {
         void this.refreshPausedDecodedPresentation(refresh);
     };
 
-    private async refreshPausedDecodedPresentation(
-        refresh: PendingPausedPresentationRefresh
-    ): Promise<void> {
+    private async refreshPausedDecodedPresentation(refresh: PendingPausedPresentationRefresh): Promise<void> {
         try {
             if (!this.isPendingPausedPresentationRefreshCurrent(refresh)) {
                 return;
             }
 
-            // The decoder owns transferred frames, so a paused invalidation re-decodes
-            // exactly one generation instead of retaining a full-resolution CPU copy
+            // The decoder owns transferred frames, so a paused invalidation re-decodes exactly one generation instead of retaining a full-resolution CPU copy
             const result = await refresh.controller.seek(refresh.mediaTimeMicroseconds);
             if (!this.isPendingPausedPresentationRefreshCurrent(refresh)) {
                 return;
             }
 
             this.pendingPausedPresentationRefresh = null;
-            this.handleCustomPlaybackStartResult(
-                refresh.controller,
-                refresh.backendGeneration,
-                result
-            );
+            this.handleCustomPlaybackStartResult(refresh.controller, refresh.backendGeneration, result);
         } catch (error) {
             if (!this.isPendingPausedPresentationRefreshCurrent(refresh)) {
                 return;
             }
 
             this.pendingPausedPresentationRefresh = null;
-            this.requestCustomPlaybackFallbackForError(
-                refresh.controller,
-                refresh.backendGeneration,
-                error
-            );
+            this.requestCustomPlaybackFallbackForError(refresh.controller, refresh.backendGeneration, error);
         }
     }
 
-    private isPendingPausedPresentationRefreshCurrent(
-        refresh: PendingPausedPresentationRefresh
-    ): boolean {
+    private isPendingPausedPresentationRefreshCurrent(refresh: PendingPausedPresentationRefresh): boolean {
         return this.pendingPausedPresentationRefresh === refresh
             && this.presentationGeneration === refresh.presentationGeneration
             && this.customPlaybackFrameGeneration === refresh.presentationGeneration
-            && this.isCustomPlaybackCurrent(
-                refresh.controller,
-                refresh.backendGeneration
-            );
+            && this.isCustomPlaybackCurrent(refresh.controller, refresh.backendGeneration);
     }
 
     private getCurrentPausedPresentationRefresh(
@@ -3629,11 +3316,7 @@ export default class WebGPUPlayer {
             return Promise.resolve(PLAYBACK_SUPERSEDED);
         }
 
-        const fallbackOperation = this.runCustomPlaybackFallback(
-            customPlaybackController,
-            backendGeneration,
-            request
-        );
+        const fallbackOperation = this.runCustomPlaybackFallback(customPlaybackController, backendGeneration, request);
         const fallbackPromise = fallbackOperation.finally((): void => {
             if (this.customPlaybackFallbackPromise === fallbackPromise) {
                 this.customPlaybackFallbackPromise = null;
@@ -3666,38 +3349,26 @@ export default class WebGPUPlayer {
         if (!this.isRequestedSessionCurrent(backendGeneration)) {
             return PLAYBACK_SUPERSEDED;
         }
-        const recoveryTimeMicroseconds =
-            this.customPlaybackRecoveryTimeMicroseconds ?? request.mediaTimeMicroseconds;
+        const recoveryTimeMicroseconds = this.customPlaybackRecoveryTimeMicroseconds ?? request.mediaTimeMicroseconds;
         this.lastKnownTimeMicroseconds = recoveryTimeMicroseconds;
 
-        if (
-            request.disposition === 'renegotiate-source'
-            || this.currentPlaybackRequiresSourceRenegotiation
-        ) {
-            const accepted = this.emitCustomPlaybackRenegotiationRequired(
-                backendGeneration,
-                request.reason
-            );
+        if (request.disposition === 'renegotiate-source' || this.currentPlaybackRequiresSourceRenegotiation) {
+            const accepted = this.emitCustomPlaybackRenegotiationRequired(backendGeneration, request.reason);
             return accepted ? undefined : PLAYBACK_SUPERSEDED;
         }
 
         this.htmlPlaybackNormalizationGain = this.customPlaybackNormalizationGain;
         this.applyHTMLPlaybackVolume();
-        const nativeOptions = this.createNativeFallbackOptions(
-            recoveryTimeMicroseconds
-        );
+        const nativeOptions = this.createNativeFallbackOptions(recoveryTimeMicroseconds);
         this.currentPlaybackOptions = nativeOptions;
         try {
             const result = await this.htmlDelegate.player.play(nativeOptions);
             if (!this.isRequestedSessionCurrent(backendGeneration)) {
                 return PLAYBACK_SUPERSEDED;
             }
-            const latestRecoveryTimeMicroseconds =
-                this.customPlaybackRecoveryTimeMicroseconds ?? recoveryTimeMicroseconds;
+            const latestRecoveryTimeMicroseconds = this.customPlaybackRecoveryTimeMicroseconds ?? recoveryTimeMicroseconds;
             if (latestRecoveryTimeMicroseconds !== recoveryTimeMicroseconds) {
-                this.htmlDelegate.player.currentTime(
-                    microsecondsToMilliseconds(latestRecoveryTimeMicroseconds)
-                );
+                this.htmlDelegate.player.currentTime(microsecondsToMilliseconds(latestRecoveryTimeMicroseconds));
             }
             this.lastKnownTimeMicroseconds = latestRecoveryTimeMicroseconds;
             this.customPlaybackRecoveryTimeMicroseconds = null;
@@ -3727,11 +3398,8 @@ export default class WebGPUPlayer {
         }
     }
 
-    private createNativeFallbackOptions(
-        mediaTimeMicroseconds: Microseconds
-    ): PlaybackOptionsRecord {
-        if (!this.currentPlaybackOptions
-            || typeof this.currentPlaybackOptions !== 'object') {
+    private createNativeFallbackOptions(mediaTimeMicroseconds: Microseconds): PlaybackOptionsRecord {
+        if (!this.currentPlaybackOptions || typeof this.currentPlaybackOptions !== 'object') {
             throw new TypeError('Custom playback fallback options are unavailable');
         }
 
@@ -3746,8 +3414,7 @@ export default class WebGPUPlayer {
         if (!Number.isSafeInteger(audioStreamIndex) || audioStreamIndex < 0) {
             throw new RangeError('Audio stream index must be a non-negative safe integer');
         }
-        if (!this.currentPlaybackOptions
-            || typeof this.currentPlaybackOptions !== 'object') {
+        if (!this.currentPlaybackOptions || typeof this.currentPlaybackOptions !== 'object') {
             return;
         }
 
@@ -3772,15 +3439,8 @@ export default class WebGPUPlayer {
         backendGeneration: number,
         selectionRevision: number
     ): Promise<void> {
-        const eligibility = await this.getCustomPlaybackEligibilityForOptions(
-            this.currentPlaybackOptions,
-            backendGeneration
-        );
-        if (!this.isCustomPlaybackAudioSelectionCurrent(
-            customPlaybackController,
-            backendGeneration,
-            selectionRevision
-        )) {
+        const eligibility = await this.getCustomPlaybackEligibilityForOptions(this.currentPlaybackOptions, backendGeneration);
+        if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
         }
         if (!eligibility?.eligible || eligibility.audioTrackIndex === null) {
@@ -3805,31 +3465,17 @@ export default class WebGPUPlayer {
         const audioOutputMode = eligibility.audioOutputMode ?? 'decoded-pcm';
         // The live output knows its current device; the prewarm only knew the startup one
         const maximumChannelCount = customPlaybackController.getAudioOutputMaximumChannelCount()
-            ?? getAudioContextMaximumChannelCount(
-                this.getCustomPlaybackAudioPrewarm(backendGeneration)?.audioContext ?? null
-            );
+            ?? getAudioContextMaximumChannelCount(this.getCustomPlaybackAudioPrewarm(backendGeneration)?.audioContext ?? null);
         const result = await customPlaybackController.setAudioStreamIndex(
             eligibility.audioTrackIndex,
             audioOutputMode,
-            selectDecodedAudioOutputChannelCount(
-                eligibility,
-                maximumChannelCount,
-                audioSettings.forceStereoDownmix
-            ),
+            selectDecodedAudioOutputChannelCount(eligibility, maximumChannelCount, audioSettings.forceStereoDownmix),
             audioOutputMode === 'decoded-pcm' ? audioSettings.downmix : undefined
         );
-        if (!this.isCustomPlaybackAudioSelectionCurrent(
-            customPlaybackController,
-            backendGeneration,
-            selectionRevision
-        )) {
+        if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
         }
-        this.handleCustomPlaybackStartResult(
-            customPlaybackController,
-            backendGeneration,
-            result
-        );
+        this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
     }
 
     private detachCustomPlaybackController(): Promise<void> | null {
@@ -3857,15 +3503,11 @@ export default class WebGPUPlayer {
         return stopPromise;
     }
 
-    private captureCustomPlaybackTelemetry(
-        customPlaybackController: CustomPlaybackController
-    ): void {
+    private captureCustomPlaybackTelemetry(customPlaybackController: CustomPlaybackController): void {
         this.lastCustomPlaybackTelemetry = customPlaybackController.getTelemetry();
     }
 
-    private clearCustomPlaybackController(
-        customPlaybackController: CustomPlaybackController
-    ): void {
+    private clearCustomPlaybackController(customPlaybackController: CustomPlaybackController): void {
         if (this.customPlaybackController !== customPlaybackController) {
             return;
         }
@@ -3883,10 +3525,7 @@ export default class WebGPUPlayer {
         this.customPlaybackEmitUnpause = false;
     }
 
-    private isCustomPlaybackCurrent(
-        customPlaybackController: CustomPlaybackController,
-        backendGeneration: number
-    ): boolean {
+    private isCustomPlaybackCurrent(customPlaybackController: CustomPlaybackController, backendGeneration: number): boolean {
         return this.customPlaybackController === customPlaybackController
             && this.customPlaybackBackendGeneration === backendGeneration
             && this.isRequestedSessionCurrent(backendGeneration);
@@ -3903,11 +3542,7 @@ export default class WebGPUPlayer {
 
     private getActiveCustomPlaybackController(): CustomPlaybackController | null {
         const customPlaybackController = this.customPlaybackController;
-        if (!customPlaybackController
-            || !this.isCustomPlaybackCurrent(
-                customPlaybackController,
-                this.backendSessionGeneration
-            )) {
+        if (!customPlaybackController || !this.isCustomPlaybackCurrent(customPlaybackController, this.backendSessionGeneration)) {
             return null;
         }
         return customPlaybackController;
@@ -3931,9 +3566,7 @@ export default class WebGPUPlayer {
     }
 
     private requireJellyfinVolume(value: unknown): number {
-        const numericValue = typeof value === 'string' && value.trim() !== '' ?
-            Number(value) :
-            value;
+        const numericValue = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
         if (typeof numericValue !== 'number'
             || !Number.isFinite(numericValue)
             || numericValue < MIN_JELLYFIN_VOLUME
@@ -3951,18 +3584,12 @@ export default class WebGPUPlayer {
         if (this.htmlPlaybackNormalizationGain === null) {
             return value;
         }
-        const normalizedLinearVolume = Math.min(
-            this.getLinearVolume(value) * this.htmlPlaybackNormalizationGain,
-            1
-        );
-        return MAX_JELLYFIN_VOLUME
-            * normalizedLinearVolume ** (1 / JELLYFIN_VOLUME_CURVE_EXPONENT);
+        const normalizedLinearVolume = Math.min(this.getLinearVolume(value) * this.htmlPlaybackNormalizationGain, 1);
+        return MAX_JELLYFIN_VOLUME * normalizedLinearVolume ** (1 / JELLYFIN_VOLUME_CURVE_EXPONENT);
     }
 
     private applyHTMLPlaybackVolume(): void {
-        this.htmlDelegate.player.setVolume(
-            this.getHTMLPlaybackVolume(this.customPlaybackVolume)
-        );
+        this.htmlDelegate.player.setVolume(this.getHTMLPlaybackVolume(this.customPlaybackVolume));
     }
 
     private resetHTMLPlaybackNormalization(): void {
@@ -3973,10 +3600,7 @@ export default class WebGPUPlayer {
         this.htmlDelegate.player.setVolume(this.customPlaybackVolume);
     }
 
-    private emitCustomPlaybackTerminalError(
-        backendGeneration: number,
-        error: unknown
-    ): void {
+    private emitCustomPlaybackTerminalError(backendGeneration: number, error: unknown): void {
         if (
             !this.isRequestedSessionCurrent(backendGeneration)
             || this.backendPlayPendingGeneration === backendGeneration
@@ -4013,23 +3637,18 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Requests one transcode retry. Returns true when the current play() continues as a start: the host
-     * accepted the request, or its error is deferred until play() resolves.
+     * Requests one transcode retry.
+     * Returns true when the current play() continues as a start: the host accepted the request, or its error is deferred until play() resolves.
      */
     private emitCustomPlaybackRenegotiationRequired(
         backendGeneration: number,
         reason: CustomPlaybackFallbackRequest['reason']
     ): boolean {
-        if (
-            !this.isRequestedSessionCurrent(backendGeneration)
-            || this.customPlaybackTerminalErrorGeneration === backendGeneration
-        ) {
+        if (!this.isRequestedSessionCurrent(backendGeneration) || this.customPlaybackTerminalErrorGeneration === backendGeneration) {
             return false;
         }
 
-        const mediaError = reason === 'network-failed' ?
-            MediaError.NETWORK_ERROR :
-            MediaError.MEDIA_NOT_SUPPORTED;
+        const mediaError = reason === 'network-failed' ? MediaError.NETWORK_ERROR : MediaError.MEDIA_NOT_SUPPORTED;
         let accepting = true;
         let accepted = false;
         const request: SourceRenegotiationRequest = {
@@ -4079,10 +3698,7 @@ export default class WebGPUPlayer {
         }, DEFERRED_RENEGOTIATION_ERROR_DELAY_MILLISECONDS);
     }
 
-    private readonly handlePresentationFallback = (
-        generation: number,
-        reason: PresentationFallbackReason
-    ): void => {
+    private readonly handlePresentationFallback = (generation: number, reason: PresentationFallbackReason): void => {
         if (generation !== this.presentationGeneration) {
             return;
         }
@@ -4100,11 +3716,7 @@ export default class WebGPUPlayer {
                 reason: 'lifecycle-failed'
             };
             console.warn(`Custom playback presentation failed: ${reason}`);
-            void this.requestCustomPlaybackFallback(
-                customPlaybackController,
-                this.backendSessionGeneration,
-                request
-            );
+            void this.requestCustomPlaybackFallback(customPlaybackController, this.backendSessionGeneration, request);
         }
     };
 
@@ -4204,9 +3816,7 @@ export default class WebGPUPlayer {
         releaseBackendStopCall?.();
     }
 
-    private enqueueBackendOperation<Result>(
-        operation: () => PromiseLike<Result> | Result
-    ): Promise<Result> {
+    private enqueueBackendOperation<Result>(operation: () => PromiseLike<Result> | Result): Promise<Result> {
         const previousTail = this.backendOperationTail;
         let releaseOperation: () => void = () => undefined;
         const operationTail = new Promise<void>(resolve => {
@@ -4271,12 +3881,8 @@ export default class WebGPUPlayer {
         return this.backendSessionActive && this.backendSessionGeneration === generation;
     }
 
-    private isCustomPlaybackSetupCurrent(
-        backendGeneration: number,
-        setupRevision: number
-    ): boolean {
-        return this.customPlaybackSetupRevision === setupRevision
-            && this.isRequestedSessionCurrent(backendGeneration);
+    private isCustomPlaybackSetupCurrent(backendGeneration: number, setupRevision: number): boolean {
+        return this.customPlaybackSetupRevision === setupRevision && this.isRequestedSessionCurrent(backendGeneration);
     }
 
     private rememberNativeDeviceProfile(item: unknown, profile: DeviceProfile): void {
@@ -4299,10 +3905,7 @@ export default class WebGPUPlayer {
         }
     }
 
-    private consumeNativeDeviceProfileProof(
-        options: unknown,
-        generation: number
-    ): NativeDeviceProfileProof | null {
+    private consumeNativeDeviceProfileProof(options: unknown, generation: number): NativeDeviceProfileProof | null {
         const pendingProof = this.pendingNativeDeviceProfileProof;
         this.pendingNativeDeviceProfileProof = null;
         if (!pendingProof || pendingProof.itemKey !== getPlaybackItemKey(options)) {
@@ -4323,11 +3926,7 @@ export default class WebGPUPlayer {
     }
 
     private isDeviceProfileRetry(options: unknown): boolean {
-        return Boolean(
-            options
-            && typeof options === 'object'
-            && (options as DeviceProfileRequestOptions).isRetry === true
-        );
+        return Boolean(options && typeof options === 'object' && (options as DeviceProfileRequestOptions).isRetry === true);
     }
 
     /** Waits for raw HDR only when the external probe authorized no native route, which static HEVC HDR prefers. */
@@ -4339,9 +3938,7 @@ export default class WebGPUPlayer {
     }
 
     /** Raw SDR authorization is independent of HDR settings but never widens a retry. */
-    private async getDeviceProfileRawSDRRouteKeys(
-        isRetry: boolean
-    ): Promise<RawHDRAuthorizationRouteKey[]> {
+    private async getDeviceProfileRawSDRRouteKeys(isRetry: boolean): Promise<RawHDRAuthorizationRouteKey[]> {
         if (isRetry) {
             return [];
         }
@@ -4381,10 +3978,7 @@ export default class WebGPUPlayer {
     }
 
     /** Returns only the HDR routes authorized on the present GPU device. */
-    private async getHDRDeviceProfileOptions(
-        item: unknown,
-        isRetry: boolean
-    ): Promise<CustomDeviceProfileOptions> {
+    private async getHDRDeviceProfileOptions(item: unknown, isRetry: boolean): Promise<CustomDeviceProfileOptions> {
         const authorizedRawSDRRouteKeys = await this.getDeviceProfileRawSDRRouteKeys(isRetry);
         const HDRToneMappingEnabled = !isRetry && await getWebGPUHDRToneMappingEnabled();
         const probeScope = getHDRDeviceProfileProbeScope(item);
@@ -4392,11 +3986,7 @@ export default class WebGPUPlayer {
         const rawOnlyHDRPresentation = isRawOnlyHDRPresentation(presentationOptions);
         const reconstructionTarget = getDolbyVisionReconstructionTarget(presentationOptions);
         if (HDRToneMappingEnabled) {
-            await this.prewarmHDRDeviceProfileItemRoutes(
-                probeScope,
-                rawOnlyHDRPresentation,
-                reconstructionTarget
-            );
+            await this.prewarmHDRDeviceProfileItemRoutes(probeScope, rawOnlyHDRPresentation, reconstructionTarget);
         }
         const externalHDRProbed = EXTERNAL_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope);
         const rawHDRProbed = isRawHDRDeviceProfileProbeScope(probeScope, rawOnlyHDRPresentation);
@@ -4404,8 +3994,7 @@ export default class WebGPUPlayer {
         const authorizedExternalHDRRouteKeys = HDRToneMappingEnabled && externalHDRProbed ?
             this.presenter.getAuthorizedExternalHDRRouteKeys() :
             [];
-        const authorizedRawHDRRouteKeys = HDRToneMappingEnabled
-            && rawHDRProbed ?
+        const authorizedRawHDRRouteKeys = HDRToneMappingEnabled && rawHDRProbed ?
             this.presenter.getAuthorizedRawHDRRouteKeys().filter(
                 (routeKey: RawHDRAuthorizationRouteKey): boolean => !isRawSDRRouteKey(routeKey)
             ) :
@@ -4414,44 +4003,39 @@ export default class WebGPUPlayer {
             HDRToneMappingEnabled && DolbyVisionProbed,
             reconstructionTarget
         );
-        const allowNativeDolbyVisionProfile7HDR10Base =
-            allowsNativeDolbyVisionBaseDeviceProfileRoute(
-                HDRToneMappingEnabled,
-                probeScope,
-                'dolby-vision-profile7',
-                item,
-                hasExactProfile7HDR10BaseSource,
-                DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
-                authorizedExternalHDRRouteKeys
-            );
-        const allowNativeDolbyVisionProfile8HDR10Base =
-            allowsNativeDolbyVisionBaseDeviceProfileRoute(
-                HDRToneMappingEnabled,
-                probeScope,
-                'dolby-vision-profile8-hdr10-base',
-                item,
-                hasExactProfile8HDR10BaseSource,
-                DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
-                authorizedExternalHDRRouteKeys
-            );
-        const allowNativeDolbyVisionProfile8HLGBase =
-            allowsNativeDolbyVisionBaseDeviceProfileRoute(
-                HDRToneMappingEnabled,
-                probeScope,
-                'dolby-vision-profile8-hlg-base',
-                item,
-                hasExactProfile8HLGBaseSource,
-                DOLBY_VISION_HLG_BASE_COLOR_METADATA,
-                authorizedExternalHDRRouteKeys
-            );
+        const allowNativeDolbyVisionProfile7HDR10Base = allowsNativeDolbyVisionBaseDeviceProfileRoute(
+            HDRToneMappingEnabled,
+            probeScope,
+            'dolby-vision-profile7',
+            item,
+            hasExactProfile7HDR10BaseSource,
+            DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
+            authorizedExternalHDRRouteKeys
+        );
+        const allowNativeDolbyVisionProfile8HDR10Base = allowsNativeDolbyVisionBaseDeviceProfileRoute(
+            HDRToneMappingEnabled,
+            probeScope,
+            'dolby-vision-profile8-hdr10-base',
+            item,
+            hasExactProfile8HDR10BaseSource,
+            DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
+            authorizedExternalHDRRouteKeys
+        );
+        const allowNativeDolbyVisionProfile8HLGBase = allowsNativeDolbyVisionBaseDeviceProfileRoute(
+            HDRToneMappingEnabled,
+            probeScope,
+            'dolby-vision-profile8-hlg-base',
+            item,
+            hasExactProfile8HLGBaseSource,
+            DOLBY_VISION_HLG_BASE_COLOR_METADATA,
+            authorizedExternalHDRRouteKeys
+        );
         return {
             ...rawDolbyVisionRouteFlags,
             ...(rawDolbyVisionRouteFlags.allowDolbyVisionProfile7 && hasExactSeparateProfile7Source(item) ? {
                 allowDolbyVisionProfile7HDR10Base: true
             } : {}),
-            allowNativeDolbyVision: HDRToneMappingEnabled
-                && DolbyVisionProbed
-                && this.presenter.isExternalDolbyVisionPresentationAuthorized(),
+            allowNativeDolbyVision: HDRToneMappingEnabled && DolbyVisionProbed && this.presenter.isExternalDolbyVisionPresentationAuthorized(),
             ...(allowNativeDolbyVisionProfile7HDR10Base ? {
                 allowNativeDolbyVisionProfile7HDR10Base: true
             } : {}),
@@ -4486,9 +4070,7 @@ export default class WebGPUPlayer {
     }
 
     private isPresentationSessionCurrent(generation: number): boolean {
-        return this.backendSessionActive
-            && this.webGPUPresentationEnabled
-            && this.presentationGeneration === generation;
+        return this.backendSessionActive && this.webGPUPresentationEnabled && this.presentationGeneration === generation;
     }
 
     private advancePresentationGeneration(): number {

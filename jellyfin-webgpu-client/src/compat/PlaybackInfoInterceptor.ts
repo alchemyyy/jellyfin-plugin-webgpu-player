@@ -213,12 +213,7 @@ export async function interceptPlaybackInfoRequest(config: InternalAxiosRequestC
 
     const vetoMediaStreams = await getVetoMediaStreams(record, body);
     const decision = applyPlaybackInfoRequestPolicy(body, {
-        allowVideoStreamCopy: shouldAllowVideoStreamCopy(
-            record.player,
-            record.item,
-            body.MediaSourceId,
-            vetoMediaStreams
-        ),
+        allowVideoStreamCopy: shouldAllowVideoStreamCopy(record.player, record.item, body.MediaSourceId, vetoMediaStreams),
         currentPlayMethod: record.player.streamInfo?.playMethod,
         player: record.player,
         purpose: record.purpose

@@ -34,7 +34,7 @@ async function isHostReachable(mediaSource: MediaSourceInfo, environment: Direct
     }
     if (!endpointInfo.IsLocal) {
         const path = (mediaSource.Path || '').toLowerCase();
-        // This only works when the client runs on the server machine
+        // A loopback path only works when the client runs on the server machine
         return !LOOPBACK_HOST_NAMES.some(hostName => path.includes(hostName));
     }
     return true;

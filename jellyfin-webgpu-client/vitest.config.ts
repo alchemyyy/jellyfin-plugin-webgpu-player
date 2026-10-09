@@ -15,7 +15,6 @@ const HOST_SOURCE_PATH = jellyfinWeb.resolveJellyfinWebSourceDirectory().split(p
 const CLIENT_IMPORTER = path.join(constants.CLIENT_DIRECTORY, 'package.json');
 // Package names and host module paths, but not relative, absolute, virtual, or protocol (node:) specifiers
 const BARE_SPECIFIER_PATTERN = /^[\w@][^:]*$/;
-// The add-on's tests import the add-on through its absolute specifiers
 const { TESTS_DIRECTORY } = constants;
 // Coverage patterns are relative to this package
 const ADDON_SOURCE_PATTERN = path.relative(constants.CLIENT_DIRECTORY, constants.ADDON_SOURCE_DIRECTORY).split(path.sep).join('/');
@@ -50,6 +49,7 @@ export default defineConfig({
     },
     resolve: {
         alias: {
+            // The add-on's tests import the add-on through its absolute specifiers
             'addons/webGPUPlayer': constants.ADDON_SOURCE_DIRECTORY,
             'webgpu-player': constants.WEBGPU_PLAYER_SOURCE_DIRECTORY,
             'hls.js': constants.WEBGPU_PLAYER_HLS_DIRECTORY

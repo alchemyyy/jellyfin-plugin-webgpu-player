@@ -42,7 +42,7 @@ import {
     type RawHDRAuthorizationRouteKey
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
 
-// Mirrors Jellyfin.Data/Enums/VideoRangeType.cs in the backend checkout
+// Mirrors Jellyfin.Data/Enums/VideoRangeType.cs in the Jellyfin server
 const JELLYFIN_VIDEO_RANGE_TYPES = [
     'Unknown',
     'SDR',
@@ -73,8 +73,7 @@ const STATIC_HEVC_VIDEO_RANGE_TYPES = [
     'HDR10Plus'
 ] as const satisfies readonly JellyfinVideoRangeType[];
 
-// DOVIInvalid is Jellyfin's label for compatibility IDs outside each profile's standard set, which RPU
-// reconstruction presents like any other
+// DOVIInvalid is Jellyfin's label for compatibility IDs outside each profile's standard set, which RPU reconstruction presents like any other
 const DOLBY_VISION_HEVC_VIDEO_RANGE_TYPES = [
     'DOVI',
     'DOVIWithHDR10',
@@ -849,8 +848,8 @@ const HEVC_VIDEO_RANGE_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        // Jellyfin 12.x labels a base whose transfer contradicts its compatibility ID DOVIInvalid; the
-        // declared HDR10 base is not PQ, so the stream reconstructs from its RPU
+        // Jellyfin 12.x labels a base whose transfer contradicts its compatibility ID DOVIInvalid.
+        // The declared HDR10 base is not PQ, so the stream reconstructs from its RPU
         expectedRoute: createRawDolbyVisionRoute(8),
         label: 'Dolby Vision Profile 8 with compatibility ID 1 over an HLG base, labeled DOVIInvalid',
         runtimeEligible: true,
@@ -1644,7 +1643,7 @@ function getItemProfile(
     });
 }
 
-/** Asserts negotiation, runtime ownership, their conjunction, and the exact selected route. */
+/** Asserts negotiation, runtime ownership, their conjunction, and the selected route. */
 function expectFullyQualifiedMatrixRow(row: HEVCDirectPlayMatrixRow): void {
     const playbackOptions = createPlaybackOptions(row.videoStream);
     const deviceProfileAdvertised = isSameSessionNativePlaybackCompatible(
@@ -1748,7 +1747,7 @@ describe('HEVC DirectPlay support matrix', () => {
         expectFullyQualifiedMatrixRow
     );
 
-    // A stock condition scoped to an MP4 alias token (mj2) once rejected every Dolby Vision range in MP4 files
+    // A stock condition scoped to an MP4 alias token (mj2) would otherwise reject every Dolby Vision range in MP4 files
     it.each(HEVC_VIDEO_RANGE_MATRIX)(
         '$label: advertises the MP4 probe container exactly as Matroska',
         (row: HEVCDirectPlayMatrixRow) => {

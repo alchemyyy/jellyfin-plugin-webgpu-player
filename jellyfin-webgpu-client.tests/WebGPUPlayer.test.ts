@@ -144,7 +144,7 @@ vi.mock('addons/webGPUPlayer/WebGPUPlaybackPreferences', () => ({
     refreshWebGPUPlaybackPreferences: playbackPreferencesMockState.refreshWebGPUPlaybackPreferences
 }));
 
-// WebGPUUserSettings still persists through the host's user settings
+// WebGPUUserSettings persists through the host's user settings
 vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: {
         get: vi.fn(() => userSettingsMockState.webGPUPlaybackSettings),
@@ -1465,7 +1465,6 @@ const RAW_SDR_ROUTE_KEY = 'I420P10:bt709:bt709:limited:sdr';
 const EXTERNAL_PQ_ROUTE_KEY = 'external-hevc-main10-bt709-limited:pq-v1';
 const EXTERNAL_HLG_ROUTE_KEY = 'external-hevc-main10-bt709-limited:hlg-v1';
 
-/** Returns the presentation options of the latest eligibility check. */
 function getLastEligibilityOptions(): Record<string, unknown> | undefined {
     return vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[2];
 }
@@ -3899,7 +3898,7 @@ describe('WebGPUPlayer HTML delegation', () => {
     it.each([
         { expectedOutput: 6, maximumOutput: 6, sourceChannels: 6 },
         { expectedOutput: 8, maximumOutput: 8, sourceChannels: 8 },
-        // A 7.1 bed folds into a 5.1 destination, and three channels use one
+        // A 7.1 bed folds into a 5.1 destination, and three-channel audio selects 5.1 on a 7.1 destination
         { expectedOutput: 6, maximumOutput: 6, sourceChannels: 8 },
         { expectedOutput: 6, maximumOutput: 8, sourceChannels: 3 },
         { expectedOutput: 2, maximumOutput: 2, sourceChannels: 8 }
