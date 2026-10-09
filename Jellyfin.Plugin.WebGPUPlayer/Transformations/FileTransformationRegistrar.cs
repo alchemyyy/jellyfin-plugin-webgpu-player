@@ -1,7 +1,5 @@
 using System;
-using System.Linq;
 using System.Reflection;
-using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.WebGPUPlayer.Addon;
@@ -64,7 +62,7 @@ public sealed class FileTransformationRegistrar(ILogger<FileTransformationRegist
             return WebClientRewriteMode.Disabled;
         }
 
-        MethodInfo? registerMethod = FileTransformationFunctions.FindRegisterMethod(AssemblyLoadContext.All.SelectMany(context => context.Assemblies));
+        MethodInfo? registerMethod = WebClientRewriteState.FileTransformationRegisterMethod;
         if (registerMethod is null)
         {
             logger.LogInformation("File Transformation is not installed; WebGPU Player rewrites index.html and config.json with its own middleware");

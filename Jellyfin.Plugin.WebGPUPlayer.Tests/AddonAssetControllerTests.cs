@@ -54,7 +54,7 @@ public sealed class AddonAssetControllerTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    [Theory(SkipTestWithoutData = true)]
+    [Theory]
     [MemberData(nameof(EmbeddedAssets))]
     public async Task GetAsset_EmbeddedFile_ServesItsBytesTypeAndCachePolicy(string relativePath)
     {
@@ -79,21 +79,13 @@ public sealed class AddonAssetControllerTests
     }
 
     [Fact]
-    public void EmbeddedAddon_IsEitherAbsentOrComplete()
+    public void EmbeddedAddon_IsComplete()
     {
-        // An embedded manifest must name an embedded entry; without a manifest nothing is injected
-        if (AddonCatalog.Resources.ContainsKey(AssetFunctions.ManifestFileName))
-        {
-            Assert.NotNull(AddonCatalog.Entry);
-            Assert.True(AddonCatalog.Resources.ContainsKey(AddonCatalog.Entry));
-            Assert.Null(AddonCatalog.Problem);
-        }
-        else
-        {
-            Assert.Null(AddonCatalog.Entry);
-            Assert.NotNull(AddonCatalog.Problem);
-        }
-
+        // The plugin build fails without the add-on manifest (WGP0001), and the manifest must name an embedded entry
+        Assert.True(AddonCatalog.Resources.ContainsKey(AssetFunctions.ManifestFileName));
+        Assert.NotNull(AddonCatalog.Entry);
+        Assert.True(AddonCatalog.Resources.ContainsKey(AddonCatalog.Entry));
+        Assert.Null(AddonCatalog.Problem);
         Assert.All(AddonCatalog.Resources.Values, resourceName => Assert.StartsWith(AssetFunctions.ResourcePrefix, resourceName, StringComparison.Ordinal));
     }
 

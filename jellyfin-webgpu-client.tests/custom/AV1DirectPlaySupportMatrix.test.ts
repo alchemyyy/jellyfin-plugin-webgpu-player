@@ -35,6 +35,7 @@ import {
     RAW_HDR_AUTHORIZATION_ROUTE_KEYS,
     type RawHDRAuthorizationRouteKey
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
+import { createVerifiedCodecCapability } from './CustomDecodeCapabilityBuilders';
 
 // The labels MediaBrowser.Model/Entities/MediaStream.cs gives Profile 10:
 // 10.0 is DOVI, 10.1 DOVIWithHDR10 or DOVIWithHDR10Plus, 10.2 DOVIWithSDR, and 10.4 DOVIWithHLG.
@@ -187,18 +188,6 @@ const DECLARED_BASE_ELIGIBILITY_OPTIONS: CustomPlaybackEligibilityOptions = {
     allowDolbyVision: false
 };
 
-function createCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
-    codec: Codec,
-    supported: boolean
-): CustomDecodeCodecCapability<Codec> {
-    return {
-        codec,
-        codecString: codec,
-        reason: supported ? 'decode-output-verified' : 'config-unsupported',
-        status: supported ? 'supported' : 'unsupported'
-    };
-}
-
 function createRawHDRCapability(codec: CustomRawHDRVideoCodec, supported: boolean): CustomRawHDRVideoCodecCapability {
     return {
         bitDepth: 10,
@@ -214,12 +203,12 @@ function createRawHDRCapability(codec: CustomRawHDRVideoCodec, supported: boolea
 function createAV1Capabilities(rawAV1Supported: boolean): CustomDecodeCapabilities {
     const audio = {} as Record<CustomAudioCodec, CustomDecodeCodecCapability<CustomAudioCodec>>;
     for (const codec of CUSTOM_AUDIO_CODECS) {
-        audio[codec] = createCodecCapability(codec, codec === 'aac');
+        audio[codec] = createVerifiedCodecCapability(codec, codec === 'aac');
     }
 
     const video = {} as Record<CustomVideoCodec, CustomDecodeCodecCapability<CustomVideoCodec>>;
     for (const codec of CUSTOM_VIDEO_CODECS) {
-        video[codec] = createCodecCapability(codec, codec === 'av1');
+        video[codec] = createVerifiedCodecCapability(codec, codec === 'av1');
     }
 
     const rawHDRVideo = {} as Record<CustomRawHDRVideoCodec, CustomRawHDRVideoCodecCapability>;

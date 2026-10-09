@@ -144,7 +144,7 @@ public sealed class FileTransformationTests
 
         // NOTE: FindRegisterMethod_FindsPluginInterfaceInAFileTransformationAssembly may already have loaded a fake File Transformation, which accepts both registrations.
         // Without it the plugin's own middleware is chosen
-        bool fileTransformationLoaded = FileTransformationFunctions.FindRegisterMethod(AssemblyLoadContext.All.SelectMany(context => context.Assemblies)) is not null;
+        bool fileTransformationLoaded = WebClientRewriteState.FileTransformationRegisterMethod is not null;
         WebClientRewriteMode expected = (AddonCatalog.Entry is not null, fileTransformationLoaded) switch
         {
             (false, _) => WebClientRewriteMode.Disabled,

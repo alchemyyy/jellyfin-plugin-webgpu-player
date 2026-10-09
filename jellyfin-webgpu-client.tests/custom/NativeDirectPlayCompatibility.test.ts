@@ -350,7 +350,7 @@ describe('NativeDirectPlayCompatibility', () => {
     it('accepts a proven audio-less video source without applying VideoAudio profiles', () => {
         const options = createOptions();
         options.mediaSource.DefaultAudioStreamIndex = null;
-        options.mediaSource.MediaStreams = options.mediaSource.MediaStreams?.filter(stream => (stream.Type !== 'Audio'));
+        options.mediaSource.MediaStreams = options.mediaSource.MediaStreams?.filter(stream => stream.Type !== 'Audio');
 
         expect(isSameSessionNativePlaybackCompatible(options, createProfile())).toBe(true);
     });

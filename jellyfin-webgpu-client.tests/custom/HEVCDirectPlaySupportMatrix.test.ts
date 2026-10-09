@@ -41,6 +41,11 @@ import {
     RAW_HDR_AUTHORIZATION_ROUTE_KEYS,
     type RawHDRAuthorizationRouteKey
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
+import {
+    createBundledHEVCCapabilities,
+    createHEVCRangeExtensionCapability,
+    createVerifiedCodecCapability
+} from './CustomDecodeCapabilityBuilders';
 
 // Mirrors Jellyfin.Data/Enums/VideoRangeType.cs in the Jellyfin server
 const JELLYFIN_VIDEO_RANGE_TYPES = [
@@ -298,18 +303,6 @@ const FULL_ELIGIBILITY_OPTIONS: CustomPlaybackEligibilityOptions = {
     runtimeAvailability: AVAILABLE_RUNTIME
 };
 
-function createCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
-    codec: Codec,
-    supported: boolean
-): CustomDecodeCodecCapability<Codec> {
-    return {
-        codec,
-        codecString: codec,
-        reason: supported ? 'decode-output-verified' : 'config-unsupported',
-        status: supported ? 'supported' : 'unsupported'
-    };
-}
-
 function createRawHDRCapability(
     codec: CustomRawHDRVideoCodec,
     supported: boolean
@@ -324,31 +317,13 @@ function createRawHDRCapability(
     };
 }
 
-function createHEVCRangeExtensionCapability(
-    variant: HEVCRangeExtensionVariant
-): HEVCRangeExtensionCapability {
-    const definition = HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant];
-    return {
-        bitDepth: definition.bitDepth,
-        chromaFormat: definition.chromaFormat,
-        codec: 'hevc',
-        codecString: definition.config.codec,
-        format: definition.format,
-        jellyfinProfile: definition.jellyfinProfile,
-        pixelFormat: definition.pixelFormat,
-        reason: 'output-copy-supported',
-        status: 'supported',
-        variant
-    };
-}
-
 function createFullyQualifiedHEVCCapabilities(): CustomDecodeCapabilities {
     const audio = {} as Record<
         CustomAudioCodec,
         CustomDecodeCodecCapability<CustomAudioCodec>
     >;
     for (const codec of CUSTOM_AUDIO_CODECS) {
-        audio[codec] = createCodecCapability(codec, codec === 'aac');
+        audio[codec] = createVerifiedCodecCapability(codec, codec === 'aac');
     }
 
     const video = {} as Record<
@@ -356,7 +331,7 @@ function createFullyQualifiedHEVCCapabilities(): CustomDecodeCapabilities {
         CustomDecodeCodecCapability<CustomVideoCodec>
     >;
     for (const codec of CUSTOM_VIDEO_CODECS) {
-        video[codec] = createCodecCapability(codec, codec === 'hevc');
+        video[codec] = createVerifiedCodecCapability(codec, codec === 'hevc');
     }
 
     const rawHDRVideo = {} as Record<
@@ -372,43 +347,12 @@ function createFullyQualifiedHEVCCapabilities(): CustomDecodeCapabilities {
         HEVCRangeExtensionCapability
     >;
     for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
-        hevcRangeExtensions[variant] = createHEVCRangeExtensionCapability(variant);
+        hevcRangeExtensions[variant] = createHEVCRangeExtensionCapability(variant, true);
     }
 
     return {
         audio,
-        bundledHEVC: {
-            qualifications: {
-                'main-1080p': {
-                    bitDepth: 8,
-                    codecString: 'hvc1.1.6.L120.B0',
-                    vector: 'main-1080p',
-                    format: 'I420',
-                    profile: 'main',
-                    reason: 'decode-output-verified',
-                    status: 'supported'
-                },
-                'main10-1080p': {
-                    bitDepth: 10,
-                    codecString: 'hvc1.2.4.L120.B0',
-                    vector: 'main10-1080p',
-                    format: 'I420P10',
-                    profile: 'main10',
-                    reason: 'decode-output-verified',
-                    status: 'supported'
-                },
-                'main10-4k': {
-                    bitDepth: 10,
-                    codecString: 'hvc1.2.4.L153.B0',
-                    vector: 'main10-4k',
-                    format: 'I420P10',
-                    profile: 'main10',
-                    reason: 'decode-output-verified',
-                    status: 'supported'
-                }
-            },
-            reason: 'complete'
-        },
+        bundledHEVC: createBundledHEVCCapabilities(),
         hevcRangeExtensions,
         nativeDolbyVisionHEVC: {
             bitDepth: 10,
@@ -1506,7 +1450,7 @@ function createSoftwareDecodeHEVCCapabilities(): CustomDecodeCapabilities {
     >;
     for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
         hevcRangeExtensions[variant] = {
-            ...createHEVCRangeExtensionCapability(variant),
+            ...createHEVCRangeExtensionCapability(variant, true),
             reason: 'config-unsupported',
             status: 'unsupported'
         };
@@ -1533,7 +1477,7 @@ function createSoftwareDecodeHEVCCapabilities(): CustomDecodeCapabilities {
         },
         video: {
             ...capabilities.video,
-            hevc: createCodecCapability('hevc', false)
+            hevc: createVerifiedCodecCapability('hevc', false)
         }
     };
 }

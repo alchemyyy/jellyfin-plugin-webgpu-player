@@ -141,7 +141,10 @@ import WebGPUPresenter, {
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
 
-import type { DolbyVisionAuthorizationTelemetry } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
+import type {
+    DolbyVisionAuthorizationRoute,
+    DolbyVisionAuthorizationTelemetry
+} from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
 import type {
     ExternalDolbyVisionAuthorizationTelemetry
 } from 'webgpu-player/validation/ExternalDolbyVisionPresentationAuthorization';
@@ -1758,52 +1761,25 @@ export default class WebGPUPlayer {
         return this.presenter.getTelemetry();
     }
 
-    /** Returns bounded exact-device raw HDR authorization state. */
+    /** Returns the raw HDR authorization results per route key on the current GPU device and canvas format. */
     getRawHDRAuthorizationTelemetry(): RawHDRAuthorizationTelemetry {
         return this.presenter.getRawHDRAuthorizationTelemetry();
     }
 
-    /** Returns bounded exact-device single-layer Dolby Vision authorization state for one raw format. */
+    /** Returns the authorization result of one raw Dolby Vision route and raw base-layer format on the current GPU device and canvas format. */
     getDolbyVisionAuthorizationTelemetry(
+        route: DolbyVisionAuthorizationRoute,
         format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
     ): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getDolbyVisionAuthorizationTelemetry(format);
+        return this.presenter.getDolbyVisionAuthorizationTelemetry(route, format);
     }
 
-    /** Returns exact Profile 4 MEL/base-fallback authorization telemetry for one raw base-layer format. */
-    getProfile4DolbyVisionAuthorizationTelemetry(
-        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
-    ): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile4DolbyVisionAuthorizationTelemetry(format);
-    }
-
-    /** Returns exact Profile 4 FEL residual authorization telemetry for one raw base-layer format. */
-    getProfile4FELDolbyVisionAuthorizationTelemetry(
-        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
-    ): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile4FELDolbyVisionAuthorizationTelemetry(format);
-    }
-
-    /** Returns exact Profile 7 MEL/base-fallback authorization telemetry for one raw base-layer format. */
-    getProfile7DolbyVisionAuthorizationTelemetry(
-        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
-    ): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile7DolbyVisionAuthorizationTelemetry(format);
-    }
-
-    /** Returns exact Profile 7 FEL residual authorization telemetry for one raw base-layer format. */
-    getProfile7FELDolbyVisionAuthorizationTelemetry(
-        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
-    ): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile7FELDolbyVisionAuthorizationTelemetry(format);
-    }
-
-    /** Returns bounded exact-device external Profile 5 authorization state. */
+    /** Returns the external Profile 5 Dolby Vision authorization result on the current GPU device and canvas format. */
     getExternalDolbyVisionAuthorizationTelemetry(): ExternalDolbyVisionAuthorizationTelemetry {
         return this.presenter.getExternalDolbyVisionAuthorizationTelemetry();
     }
 
-    /** Returns bounded exact-device native Main10 authorization state. */
+    /** Returns the native Main10 external-texture authorization results per route key on the current GPU device and canvas format. */
     getExternalHDRAuthorizationTelemetry(): ExternalHDRAuthorizationTelemetry {
         return this.presenter.getExternalHDRAuthorizationTelemetry();
     }
@@ -2010,12 +1986,7 @@ export default class WebGPUPlayer {
         });
     }
 
-    private createHDRRenderConfiguration(
-        detectedInputPeakNits: number
-    ): Readonly<{
-            automaticInputPeakNits: boolean
-            settings: HDRToSDRRenderSettings
-        }> {
+    private createHDRRenderConfiguration(detectedInputPeakNits: number): WebGPUUserSettings['render'] {
         const userSettings = loadWebGPUUserSettings();
         const automaticUserSettings: WebGPUUserSettings = {
             ...userSettings,

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.Loader;
 using Jellyfin.Plugin.WebGPUPlayer.Addon;
 
@@ -10,9 +11,9 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Transformations;
 /// </summary>
 public static class WebClientRewriteState
 {
-    // Plugin assemblies load before the web host starts, so one scan answers for the process lifetime
-    private static readonly Lazy<bool> FileTransformationLoaded = new Lazy<bool>(
-        () => FileTransformationFunctions.FindRegisterMethod(AssemblyLoadContext.All.SelectMany(context => context.Assemblies)) is not null);
+    // Plugin assemblies load before the registrar or the web host starts, so one scan answers for the process lifetime
+    private static readonly Lazy<MethodInfo?> FileTransformationScan = new Lazy<MethodInfo?>(
+        () => FileTransformationFunctions.FindRegisterMethod(AssemblyLoadContext.All.SelectMany(context => context.Assemblies)));
 
     private static volatile WebClientRewriteMode currentMode;
 
@@ -20,6 +21,11 @@ public static class WebClientRewriteState
     /// Gets the registrar's decision.
     /// </summary>
     public static WebClientRewriteMode Mode => currentMode;
+
+    /// <summary>
+    /// Gets the File Transformation registration method, or <c>null</c> when File Transformation is not loaded.
+    /// </summary>
+    public static MethodInfo? FileTransformationRegisterMethod => FileTransformationScan.Value;
 
     /// <summary>
     /// Records the registrar's decision.
@@ -36,6 +42,6 @@ public static class WebClientRewriteState
     /// <returns><c>true</c> when the registrar picked the middleware, or has not decided yet and is expected to pick it.</returns>
     public static bool IsMiddlewareActive()
     {
-        return WebClientRewriteFunctions.IsMiddlewareActive(currentMode, AddonCatalog.Entry is not null, FileTransformationLoaded.Value);
+        return WebClientRewriteFunctions.IsMiddlewareActive(currentMode, AddonCatalog.Entry is not null, FileTransformationRegisterMethod is not null);
     }
 }

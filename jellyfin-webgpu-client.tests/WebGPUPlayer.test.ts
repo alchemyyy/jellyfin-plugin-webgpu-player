@@ -21,6 +21,7 @@ import type {
     NativeMediaAudioCodecCapability,
     NativeMediaAudioLayoutCapability
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
+import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
 
 type MockAudioEligibilityOverride = {
     audioOutputMode?: 'native-media'
@@ -517,6 +518,15 @@ const EXPECTED_HTML_PLAYER_EVENTS = [
 ] as const;
 
 vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
+    // The vector telemetry that each raw Dolby Vision route reports for the prewarmed I420P10 base layer
+    const dolbyVisionRouteVectors: Record<DolbyVisionAuthorizationRoute, { routeKey: string, sampleCount: number, vectorVersion: number }> = {
+        'profile4-base': { routeKey: 'I420P10:dovi-profile4-base-v1', sampleCount: 18, vectorVersion: 4 },
+        'profile4-fel': { routeKey: 'I420P10:dovi-profile4-fel-v1', sampleCount: 9, vectorVersion: 4 },
+        'profile7-base': { routeKey: 'I420P10:dovi-profile7-base-v1', sampleCount: 18, vectorVersion: 4 },
+        'profile7-fel': { routeKey: 'I420P10:dovi-profile7-fel-v1', sampleCount: 9, vectorVersion: 4 },
+        'single-layer': { routeKey: 'I420P10:dovi-rpu-v1', sampleCount: 4, vectorVersion: 1 }
+    };
+
     class MockWebGPUPresenter {
         readonly fallbackHandler: (generation: number) => void;
         readonly decodedPresentationRefreshHandler: (generation: number) => void;
@@ -622,53 +632,11 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
                 'unavailable',
             targetFormat: 'bgra8unorm'
         }));
-        getDolbyVisionAuthorizationTelemetry = vi.fn(() => ({
+        getDolbyVisionAuthorizationTelemetry = vi.fn((route: DolbyVisionAuthorizationRoute) => ({
+            ...dolbyVisionRouteVectors[route],
             failureReason: presenterMockState.dolbyVisionAuthorized ? null : 'pixel-mismatch',
-            vectorVersion: 1,
             maximumChannelError: presenterMockState.dolbyVisionAuthorized ? 0 : 1,
             renderSettingsVersion: 4,
-            routeKey: 'I420P10:dovi-rpu-v1',
-            sampleCount: 4,
-            status: presenterMockState.dolbyVisionAuthorized ? 'authorized' : 'rejected',
-            targetFormat: 'bgra8unorm'
-        }));
-        getProfile4DolbyVisionAuthorizationTelemetry = vi.fn(() => ({
-            failureReason: presenterMockState.dolbyVisionAuthorized ? null : 'pixel-mismatch',
-            vectorVersion: 4,
-            maximumChannelError: presenterMockState.dolbyVisionAuthorized ? 0 : 1,
-            renderSettingsVersion: 4,
-            routeKey: 'I420P10:dovi-profile4-base-v1',
-            sampleCount: 18,
-            status: presenterMockState.dolbyVisionAuthorized ? 'authorized' : 'rejected',
-            targetFormat: 'bgra8unorm'
-        }));
-        getProfile4FELDolbyVisionAuthorizationTelemetry = vi.fn(() => ({
-            failureReason: presenterMockState.dolbyVisionAuthorized ? null : 'pixel-mismatch',
-            vectorVersion: 4,
-            maximumChannelError: presenterMockState.dolbyVisionAuthorized ? 0 : 1,
-            renderSettingsVersion: 4,
-            routeKey: 'I420P10:dovi-profile4-fel-v1',
-            sampleCount: 9,
-            status: presenterMockState.dolbyVisionAuthorized ? 'authorized' : 'rejected',
-            targetFormat: 'bgra8unorm'
-        }));
-        getProfile7DolbyVisionAuthorizationTelemetry = vi.fn(() => ({
-            failureReason: presenterMockState.dolbyVisionAuthorized ? null : 'pixel-mismatch',
-            vectorVersion: 4,
-            maximumChannelError: presenterMockState.dolbyVisionAuthorized ? 0 : 1,
-            renderSettingsVersion: 4,
-            routeKey: 'I420P10:dovi-profile7-base-v1',
-            sampleCount: 18,
-            status: presenterMockState.dolbyVisionAuthorized ? 'authorized' : 'rejected',
-            targetFormat: 'bgra8unorm'
-        }));
-        getProfile7FELDolbyVisionAuthorizationTelemetry = vi.fn(() => ({
-            failureReason: presenterMockState.dolbyVisionAuthorized ? null : 'pixel-mismatch',
-            vectorVersion: 4,
-            maximumChannelError: presenterMockState.dolbyVisionAuthorized ? 0 : 1,
-            renderSettingsVersion: 4,
-            routeKey: 'I420P10:dovi-profile7-fel-v1',
-            sampleCount: 9,
             status: presenterMockState.dolbyVisionAuthorized ? 'authorized' : 'rejected',
             targetFormat: 'bgra8unorm'
         }));
@@ -873,10 +841,7 @@ type MockPresenter = {
     decodedPresentationRefreshHandler: (generation: number) => void
     endSession: MockFunction
     fallbackHandler: (generation: number) => void
-    getProfile4DolbyVisionAuthorizationTelemetry: MockFunction
-    getProfile4FELDolbyVisionAuthorizationTelemetry: MockFunction
-    getProfile7DolbyVisionAuthorizationTelemetry: MockFunction
-    getProfile7FELDolbyVisionAuthorizationTelemetry: MockFunction
+    getDolbyVisionAuthorizationTelemetry: MockFunction
     getRenderSettings: MockFunction
     getTelemetry: MockFunction
     isRawDolbyVisionPresentationAuthorized: MockFunction
@@ -3577,19 +3542,20 @@ describe('WebGPUPlayer HTML delegation', () => {
     it('reports each dual-layer Dolby Vision authorization for the requested raw base-layer format', () => {
         const player = new WebGPUPlayer();
         const presenter = getPresenter();
-        const telemetryMethods = [
-            'getProfile4DolbyVisionAuthorizationTelemetry',
-            'getProfile4FELDolbyVisionAuthorizationTelemetry',
-            'getProfile7DolbyVisionAuthorizationTelemetry',
-            'getProfile7FELDolbyVisionAuthorizationTelemetry'
+        const dualLayerRoutes = [
+            'profile4-base',
+            'profile4-fel',
+            'profile7-base',
+            'profile7-fel'
         ] as const;
 
-        for (const telemetryMethod of telemetryMethods) {
-            player[telemetryMethod]('I422P10');
-            player[telemetryMethod]();
+        for (const route of dualLayerRoutes) {
+            presenter.getDolbyVisionAuthorizationTelemetry.mockClear();
+            player.getDolbyVisionAuthorizationTelemetry(route, 'I422P10');
+            player.getDolbyVisionAuthorizationTelemetry(route);
 
             // Without a format each reports the prewarmed I420P10 key
-            expect(presenter[telemetryMethod].mock.calls).toEqual([ [ 'I422P10' ], [ 'I420P10' ] ]);
+            expect(presenter.getDolbyVisionAuthorizationTelemetry.mock.calls).toEqual([ [ route, 'I422P10' ], [ route, 'I420P10' ] ]);
         }
     });
 
