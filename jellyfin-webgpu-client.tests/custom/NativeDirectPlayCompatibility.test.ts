@@ -160,10 +160,7 @@ function createProfile(): DeviceProfile {
 
 describe('NativeDirectPlayCompatibility', () => {
     it('proves an exact selected source against direct, container, and codec profiles', () => {
-        expect(isSameSessionNativePlaybackCompatible(
-            createOptions(),
-            createProfile()
-        )).toBe(true);
+        expect(isSameSessionNativePlaybackCompatible(createOptions(), createProfile())).toBe(true);
     });
 
     it('ignores native profile bitrate conditions during fallback selection', () => {
@@ -179,10 +176,7 @@ describe('NativeDirectPlayCompatibility', () => {
             Value: '1'
         });
 
-        expect(isSameSessionNativePlaybackCompatible(
-            createOptions(),
-            profile
-        )).toBe(true);
+        expect(isSameSessionNativePlaybackCompatible(createOptions(), profile)).toBe(true);
     });
 
     it.each([
@@ -303,10 +297,7 @@ describe('NativeDirectPlayCompatibility', () => {
             throw new Error('Expected a container profile condition');
         }
         condition.Condition = 'GreaterThan' as unknown as typeof condition.Condition;
-        expect(isSameSessionNativePlaybackCompatible(
-            createOptions(),
-            operatorProfile
-        )).toBe(false);
+        expect(isSameSessionNativePlaybackCompatible(createOptions(), operatorProfile)).toBe(false);
     });
 
     it('uses profile container blacklists only to scope matching restrictions', () => {
@@ -359,9 +350,7 @@ describe('NativeDirectPlayCompatibility', () => {
     it('accepts a proven audio-less video source without applying VideoAudio profiles', () => {
         const options = createOptions();
         options.mediaSource.DefaultAudioStreamIndex = null;
-        options.mediaSource.MediaStreams = options.mediaSource.MediaStreams?.filter(stream => (
-            stream.Type !== 'Audio'
-        ));
+        options.mediaSource.MediaStreams = options.mediaSource.MediaStreams?.filter(stream => (stream.Type !== 'Audio'));
 
         expect(isSameSessionNativePlaybackCompatible(options, createProfile())).toBe(true);
     });

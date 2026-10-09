@@ -31,9 +31,9 @@ configureEngineFeatureFlags({
 });
 
 /**
- * Plugin constructor for Jellyfin Web's plugin manager. `new WebGPUPlayerAddon(bag)` binds the host
- * bridge, installs the host-compatible hooks, and returns the player; a constructor that returns an
- * object makes `new` yield that object.
+ * Plugin constructor for Jellyfin Web's plugin manager.
+ * `new WebGPUPlayerAddon(bag)` binds the host bridge, installs the host-compatible hooks, and returns the player.
+ * A constructor that returns an object makes `new` yield that object.
  */
 function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWebGPUPlayer {
     bindHostBridge(bag);

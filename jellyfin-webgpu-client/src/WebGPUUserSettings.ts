@@ -244,9 +244,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
 }
 
 /** Loads local player settings without adding server-side profile state. */
-export function loadWebGPUUserSettings(
-    storage: WebGPUUserSettingsStorage = currentSettings
-): WebGPUUserSettings {
+export function loadWebGPUUserSettings(storage: WebGPUUserSettingsStorage = currentSettings): WebGPUUserSettings {
     try {
         const serializedSettings = storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY, false);
         if (!serializedSettings) {
@@ -272,7 +270,7 @@ export function saveWebGPUUserSettings(
     return normalizedSettings;
 }
 
-/** Builds the actual HDR settings for a source while respecting metadata mode. */
+/** Builds a source's HDR render settings: automatic mode takes the detected input peak, clamped to the setting's range, and paper white never exceeds the input peak. */
 export function createConfiguredHDRRenderSettings(
     settings: WebGPUUserSettings,
     detectedInputPeakNits: number
@@ -301,9 +299,7 @@ export function createConfiguredHDRRenderSettings(
 }
 
 /** Resets only tone-mapping and display settings. */
-export function resetWebGPURenderSettings(
-    settings: WebGPUUserSettings
-): WebGPUUserSettings {
+export function resetWebGPURenderSettings(settings: WebGPUUserSettings): WebGPUUserSettings {
     const defaults = createDefaultWebGPUUserSettings();
     const normalizedSettings = normalizeWebGPUUserSettings(settings);
     return {
@@ -313,9 +309,7 @@ export function resetWebGPURenderSettings(
 }
 
 /** Resets only audio output and downmix settings. */
-export function resetWebGPUAudioSettings(
-    settings: WebGPUUserSettings
-): WebGPUUserSettings {
+export function resetWebGPUAudioSettings(settings: WebGPUUserSettings): WebGPUUserSettings {
     const defaults = createDefaultWebGPUUserSettings();
     const normalizedSettings = normalizeWebGPUUserSettings(settings);
     return {

@@ -72,10 +72,7 @@ function createCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec
     };
 }
 
-function createRangeExtensionCapability(
-    variant: HEVCRangeExtensionVariant,
-    supported: boolean
-): HEVCRangeExtensionCapability {
+function createRangeExtensionCapability(variant: HEVCRangeExtensionVariant, supported: boolean): HEVCRangeExtensionCapability {
     const definition = HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant];
     return {
         bitDepth: definition.bitDepth,
@@ -92,28 +89,17 @@ function createRangeExtensionCapability(
 }
 
 function createCapabilities(
-    supportedVariants: ReadonlySet<HEVCRangeExtensionVariant> = new Set(
-        HEVC_RANGE_EXTENSION_VARIANTS
-    )
+    supportedVariants: ReadonlySet<HEVCRangeExtensionVariant> = new Set(HEVC_RANGE_EXTENSION_VARIANTS)
 ): CustomDecodeCapabilities {
-    const audio = {} as Record<
-        CustomAudioCodec,
-        CustomDecodeCodecCapability<CustomAudioCodec>
-    >;
+    const audio = {} as Record<CustomAudioCodec, CustomDecodeCodecCapability<CustomAudioCodec>>;
     for (const codec of CUSTOM_AUDIO_CODECS) {
         audio[codec] = createCodecCapability(codec, codec === 'aac');
     }
-    const video = {} as Record<
-        CustomVideoCodec,
-        CustomDecodeCodecCapability<CustomVideoCodec>
-    >;
+    const video = {} as Record<CustomVideoCodec, CustomDecodeCodecCapability<CustomVideoCodec>>;
     for (const codec of CUSTOM_VIDEO_CODECS) {
         video[codec] = createCodecCapability(codec);
     }
-    const rawHDRVideo = {} as Record<
-        CustomRawHDRVideoCodec,
-        CustomRawHDRVideoCodecCapability
-    >;
+    const rawHDRVideo = {} as Record<CustomRawHDRVideoCodec, CustomRawHDRVideoCodecCapability>;
     for (const codec of CUSTOM_RAW_HDR_VIDEO_CODECS) {
         rawHDRVideo[codec] = {
             bitDepth: 10,
@@ -124,15 +110,9 @@ function createCapabilities(
             status: 'unsupported'
         };
     }
-    const hevcRangeExtensions = {} as Record<
-        HEVCRangeExtensionVariant,
-        HEVCRangeExtensionCapability
-    >;
+    const hevcRangeExtensions = {} as Record<HEVCRangeExtensionVariant, HEVCRangeExtensionCapability>;
     for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
-        hevcRangeExtensions[variant] = createRangeExtensionCapability(
-            variant,
-            supportedVariants.has(variant)
-        );
+        hevcRangeExtensions[variant] = createRangeExtensionCapability(variant, supportedVariants.has(variant));
     }
     return {
         audio,
@@ -187,10 +167,7 @@ function createSDRRouteKeys(): RawHDRAuthorizationRouteKey[] {
     return routeKeys;
 }
 
-function getConditionValue(
-    profile: CodecProfile,
-    property: string
-): string | null {
+function getConditionValue(profile: CodecProfile, property: string): string | null {
     return profile.Conditions?.find(condition => condition.Property === property)?.Value ?? null;
 }
 
@@ -239,15 +216,10 @@ describe('HEVC range-extension device profile', () => {
             getConditionValue(profile, 'VideoProfile') === 'Rext'
         ));
 
-        const SDRProfile = RextProfiles.find(profile => (
-            getConditionValue(profile, 'VideoRangeType') === 'SDR'
-        ));
+        const SDRProfile = RextProfiles.find(profile => (getConditionValue(profile, 'VideoRangeType') === 'SDR'));
 
         expect(RextProfiles).toHaveLength(JELLYFIN_HEVC_VIDEO_RANGE_TYPES.length);
-        expect(RextProfiles.map(profile => getConditionValue(
-            profile,
-            'VideoRangeType'
-        ))).toEqual(JELLYFIN_HEVC_VIDEO_RANGE_TYPES);
+        expect(RextProfiles.map(profile => getConditionValue(profile, 'VideoRangeType'))).toEqual(JELLYFIN_HEVC_VIDEO_RANGE_TYPES);
         expect(getConditionValue(SDRProfile as CodecProfile, 'VideoBitDepth')).toBe('8|10|12');
         expect(RextProfiles.filter(profile => (
             getConditionValue(profile, 'VideoRangeType') !== 'SDR'
@@ -255,9 +227,7 @@ describe('HEVC range-extension device profile', () => {
     });
 
     it('removes generic Rext when one same-depth capability is missing', () => {
-        const supportedVariants = new Set<HEVCRangeExtensionVariant>(
-            HEVC_RANGE_EXTENSION_VARIANTS
-        );
+        const supportedVariants = new Set<HEVCRangeExtensionVariant>(HEVC_RANGE_EXTENSION_VARIANTS);
         supportedVariants.delete('main444-10');
 
         const result = augmentDeviceProfileForCustomDecode(
@@ -277,9 +247,7 @@ describe('HEVC range-extension device profile', () => {
     });
 
     it('requires both indistinguishable SDR color ranges before advertising Rext', () => {
-        const routeKeys = createSDRRouteKeys().filter(routeKey => (
-            routeKey !== 'I422P10:bt709:bt709:full:sdr'
-        ));
+        const routeKeys = createSDRRouteKeys().filter(routeKey => (routeKey !== 'I422P10:bt709:bt709:full:sdr'));
 
         const result = augmentDeviceProfileForCustomDecode(
             createBaseProfile(),
@@ -312,18 +280,11 @@ describe('HEVC range-extension device profile', () => {
         );
         const profiles = getMeasuredHEVCProfiles(result.profile);
 
-        const namedProfiles = profiles.filter(profile => (
-            getConditionValue(profile, 'VideoProfile') === 'Main 4:2:2 10'
-        ));
-        const SDRProfile = namedProfiles.find(profile => (
-            getConditionValue(profile, 'VideoRangeType') === 'SDR'
-        ));
+        const namedProfiles = profiles.filter(profile => (getConditionValue(profile, 'VideoProfile') === 'Main 4:2:2 10'));
+        const SDRProfile = namedProfiles.find(profile => (getConditionValue(profile, 'VideoRangeType') === 'SDR'));
 
         expect(namedProfiles).toHaveLength(JELLYFIN_HEVC_VIDEO_RANGE_TYPES.length);
-        expect(namedProfiles.map(profile => getConditionValue(
-            profile,
-            'VideoRangeType'
-        ))).toEqual(JELLYFIN_HEVC_VIDEO_RANGE_TYPES);
+        expect(namedProfiles.map(profile => getConditionValue(profile, 'VideoRangeType'))).toEqual(JELLYFIN_HEVC_VIDEO_RANGE_TYPES);
         expect(SDRProfile).toBeDefined();
         expect(getConditionValue(SDRProfile as CodecProfile, 'VideoBitDepth')).toBe('10');
         expect(namedProfiles.filter(profile => (
@@ -426,9 +387,7 @@ describe('HEVC range-extension runtime eligibility', () => {
                 videoDecoderBackend: 'native',
                 videoOutputMode: 'raw-planes'
             });
-            expect(hasPotentialCustomPlaybackVideoRoute(
-                (options as { mediaSource: object }).mediaSource
-            )).toBe(true);
+            expect(hasPotentialCustomPlaybackVideoRoute((options as { mediaSource: object }).mediaSource)).toBe(true);
         }
     );
 
@@ -436,9 +395,7 @@ describe('HEVC range-extension runtime eligibility', () => {
         'infers omitted HDR bit depth and selects exact %s output',
         variant => {
             const definition = HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant];
-            const routeKey = (
-                `${definition.format}:bt2020-ncl:bt2020:limited:pq`
-            ) as RawHDRAuthorizationRouteKey;
+            const routeKey = (`${definition.format}:bt2020-ncl:bt2020:limited:pq`) as RawHDRAuthorizationRouteKey;
             const options = createPlaybackOptions({
                 BitDepth: null,
                 PixelFormat: definition.pixelFormat,

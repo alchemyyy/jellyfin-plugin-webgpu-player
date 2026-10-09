@@ -199,10 +199,7 @@ function createCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec
     };
 }
 
-function createRawHDRCapability(
-    codec: CustomRawHDRVideoCodec,
-    supported: boolean
-): CustomRawHDRVideoCodecCapability {
+function createRawHDRCapability(codec: CustomRawHDRVideoCodec, supported: boolean): CustomRawHDRVideoCodecCapability {
     return {
         bitDepth: 10,
         codec,
@@ -215,26 +212,17 @@ function createRawHDRCapability(
 
 /** Qualifies native 8-bit AV1 decode, and raw AV1 Main 10 planes when requested. */
 function createAV1Capabilities(rawAV1Supported: boolean): CustomDecodeCapabilities {
-    const audio = {} as Record<
-        CustomAudioCodec,
-        CustomDecodeCodecCapability<CustomAudioCodec>
-    >;
+    const audio = {} as Record<CustomAudioCodec, CustomDecodeCodecCapability<CustomAudioCodec>>;
     for (const codec of CUSTOM_AUDIO_CODECS) {
         audio[codec] = createCodecCapability(codec, codec === 'aac');
     }
 
-    const video = {} as Record<
-        CustomVideoCodec,
-        CustomDecodeCodecCapability<CustomVideoCodec>
-    >;
+    const video = {} as Record<CustomVideoCodec, CustomDecodeCodecCapability<CustomVideoCodec>>;
     for (const codec of CUSTOM_VIDEO_CODECS) {
         video[codec] = createCodecCapability(codec, codec === 'av1');
     }
 
-    const rawHDRVideo = {} as Record<
-        CustomRawHDRVideoCodec,
-        CustomRawHDRVideoCodecCapability
-    >;
+    const rawHDRVideo = {} as Record<CustomRawHDRVideoCodec, CustomRawHDRVideoCodecCapability>;
     for (const codec of CUSTOM_RAW_HDR_VIDEO_CODECS) {
         rawHDRVideo[codec] = createRawHDRCapability(codec, rawAV1Supported && codec === 'av1');
     }
@@ -267,9 +255,7 @@ function createAV1Capabilities(rawAV1Supported: boolean): CustomDecodeCapabiliti
     };
 }
 
-function createSDRAV1Stream(
-    overrides: Readonly<Record<string, unknown>> = {}
-): Readonly<Record<string, unknown>> {
+function createSDRAV1Stream(overrides: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> {
     return {
         BitDepth: 8,
         Codec: 'av1',
@@ -638,7 +624,7 @@ const AV1_ROUTE_FALLBACK_MATRIX: readonly AV1RouteFallbackRow[] = [
     }
 ];
 
-/** Returns Jellyfin Web's stock av1 profile, whose ranges follow the display: HDR10, HDR10+, and HLG on HDR. */
+/** Returns Jellyfin Web's stock AV1 codec profile, whose ranges follow the display: HDR10, HDR10+, and HLG on HDR. */
 function createStockAV1CodecProfile(videoRangeTypes: string): CodecProfile {
     return {
         Codec: 'av1',
@@ -683,18 +669,9 @@ function createMatrixProfile(
 
 const fullyQualifiedCapabilities = createAV1Capabilities(true);
 const nativeDecodeCapabilities = createAV1Capabilities(false);
-const fullyQualifiedProfile: DeviceProfile = createMatrixProfile(
-    fullyQualifiedCapabilities,
-    FULL_ROUTE_OPTIONS
-);
-const declaredBaseProfile: DeviceProfile = createMatrixProfile(
-    fullyQualifiedCapabilities,
-    DECLARED_BASE_ROUTE_OPTIONS
-);
-const nativeDecodeProfile: DeviceProfile = createMatrixProfile(
-    nativeDecodeCapabilities,
-    FULL_ROUTE_OPTIONS
-);
+const fullyQualifiedProfile: DeviceProfile = createMatrixProfile(fullyQualifiedCapabilities, FULL_ROUTE_OPTIONS);
+const declaredBaseProfile: DeviceProfile = createMatrixProfile(fullyQualifiedCapabilities, DECLARED_BASE_ROUTE_OPTIONS);
+const nativeDecodeProfile: DeviceProfile = createMatrixProfile(nativeDecodeCapabilities, FULL_ROUTE_OPTIONS);
 
 /** Mirrors the host, which also advertises a Dolby Vision item's own exact route when the item has one. */
 function getItemProfile(
@@ -723,24 +700,13 @@ function expectFullyQualifiedMatrixRow(row: AV1DirectPlayMatrixRow): void {
     const playbackOptions = createPlaybackOptions(row.videoStream);
     const deviceProfileAdvertised = isSameSessionNativePlaybackCompatible(
         playbackOptions,
-        getItemProfile(
-            playbackOptions,
-            fullyQualifiedProfile,
-            fullyQualifiedCapabilities,
-            FULL_ROUTE_OPTIONS
-        )
+        getItemProfile(playbackOptions, fullyQualifiedProfile, fullyQualifiedCapabilities, FULL_ROUTE_OPTIONS)
     );
-    const eligibility = getCustomPlaybackEligibility(
-        playbackOptions,
-        fullyQualifiedCapabilities,
-        FULL_ELIGIBILITY_OPTIONS
-    );
+    const eligibility = getCustomPlaybackEligibility(playbackOptions, fullyQualifiedCapabilities, FULL_ELIGIBILITY_OPTIONS);
 
     expect(deviceProfileAdvertised).toBe(row.deviceProfileAdvertised);
     expect(eligibility.eligible).toBe(row.runtimeEligible);
-    expect(deviceProfileAdvertised && eligibility.eligible).toBe(
-        row.directPlaySupported
-    );
+    expect(deviceProfileAdvertised && eligibility.eligible).toBe(row.directPlaySupported);
     expect(getEligibleRoute(eligibility)).toEqual(row.expectedRoute ?? null);
     if (!eligibility.eligible && row.expectedIneligibilityReason) {
         expect(eligibility.reason).toBe(row.expectedIneligibilityReason);
@@ -769,7 +735,7 @@ function isAdvertised(
     );
 }
 
-/** A null route means the configuration offers no DirectPlay route for the variant. */
+/** Asserts the route a variant takes under a fallback configuration; a null route means the configuration offers no DirectPlay route for it. */
 function expectFallbackRoute(
     videoStream: Readonly<Record<string, unknown>>,
     genericProfile: DeviceProfile,
@@ -783,11 +749,7 @@ function expectFallbackRoute(
         playbackOptions,
         getItemProfile(playbackOptions, genericProfile, capabilities, profileOptions)
     );
-    const eligibility = getCustomPlaybackEligibility(
-        playbackOptions,
-        capabilities,
-        eligibilityOptions
-    );
+    const eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, eligibilityOptions);
 
     expect(deviceProfileAdvertised && eligibility.eligible).toBe(expectedRoute !== null);
     if (expectedRoute !== null) {

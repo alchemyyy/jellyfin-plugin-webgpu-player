@@ -1,5 +1,5 @@
-// Ported from the fork's components/playback/PreferredVideoPlayer; the stock host has no ordering seam,
-// so the preference is applied by HostCompatibleWebGPUPlayer.canPlayItem instead of PlaybackManager.getPlayer
+// Ported from the fork's components/playback/PreferredVideoPlayer.
+// The stock host has no ordering seam, so HostCompatibleWebGPUPlayer.canPlayItem applies the preference instead of PlaybackManager.getPlayer
 
 export enum VideoPlayerPreference {
     Auto = 'auto',

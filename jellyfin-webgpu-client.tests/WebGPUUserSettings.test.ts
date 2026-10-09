@@ -122,11 +122,7 @@ describe('WebGPUUserSettings', () => {
 
         const saved = saveWebGPUUserSettings(changedSettings, storage);
 
-        expect(storage.set).toHaveBeenCalledWith(
-            WEBGPU_USER_SETTINGS_STORAGE_KEY,
-            JSON.stringify(saved),
-            false
-        );
+        expect(storage.set).toHaveBeenCalledWith(WEBGPU_USER_SETTINGS_STORAGE_KEY, JSON.stringify(saved), false);
         expect(loadWebGPUUserSettings(storage)).toEqual(saved);
     });
 

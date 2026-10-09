@@ -102,8 +102,7 @@ export class HTMLPlayerDelegate {
                     return;
                 }
 
-                // Retire this session before notifying listeners so nested stop
-                // or play calls cannot forward the same backend stop again.
+                // Retire this session before notifying listeners so nested stop or play calls cannot forward the same backend stop again
                 this.forwardingGeneration = null;
                 this.detachEventHandlers();
                 this.releaseAudioOutputTarget();
@@ -304,9 +303,7 @@ export class HTMLPlayerDelegate {
         this.eventHandlers.clear();
     }
 
-    private readonly prepareAudioOutput = async (
-        mediaElement: HTMLMediaElement
-    ): Promise<void> => {
+    private readonly prepareAudioOutput = async (mediaElement: HTMLMediaElement): Promise<void> => {
         if (this.audioOutputElement === mediaElement && this.audioOutputTargetLease) {
             await this.audioOutputTargetLease.ready;
             return;

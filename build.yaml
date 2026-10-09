@@ -1,7 +1,7 @@
 ---
 name: "WebGPU Player"
 guid: "8f79872d-a0a6-4b96-b5e4-2042079007ac"
-version: "1.1.0.0"
+version: "1.2.0.0"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "WebGPU and WebCodecs video player for Jellyfin Web"
@@ -15,4 +15,4 @@ owner: "alchemyyy"
 artifacts:
 - "Jellyfin.Plugin.WebGPUPlayer.dll"
 changelog: >
-  Release 1.1.0.0
+  Release 1.2.0.0

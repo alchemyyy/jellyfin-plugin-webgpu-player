@@ -475,11 +475,7 @@ function createPlayOptions(url: string, container = 'MP4'): TestPlayOptions {
 }
 
 async function createPlayer(useWebGPUHLSRuntime = false): Promise<HtmlVideoPlayerTestHarness> {
-    const player = new HtmlVideoPlayer(
-        undefined,
-        true,
-        useWebGPUHLSRuntime
-    ) as unknown as HtmlVideoPlayerTestHarness;
+    const player = new HtmlVideoPlayer(undefined, true, useWebGPUHLSRuntime) as unknown as HtmlVideoPlayerTestHarness;
     await player.createMediaElement({ fullscreen: false });
     player._currentPlayOptions = {
         item: { ServerId: 'server' },
@@ -629,10 +625,7 @@ describe('HtmlVideoPlayer playback controls', () => {
 
         player.unpause();
         player.pause();
-        pendingPlay.reject(new DOMException(
-            'The play() request was interrupted by a call to pause().',
-            'AbortError'
-        ));
+        pendingPlay.reject(new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'));
         await Promise.resolve();
         await Promise.resolve();
 
@@ -745,10 +738,8 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
 
         Object.defineProperty(surface.container, 'clientWidth', { configurable: true, value: 800 });
         Object.defineProperty(surface.container, 'clientHeight', { configurable: true, value: 450 });
-        vi.spyOn(surface.container, 'getBoundingClientRect')
-            .mockReturnValue(createRectangle(10, 20, 800, 450));
-        vi.spyOn(surface.video, 'getBoundingClientRect')
-            .mockReturnValue(createRectangle(110, 70, 600, 300));
+        vi.spyOn(surface.container, 'getBoundingClientRect').mockReturnValue(createRectangle(10, 20, 800, 450));
+        vi.spyOn(surface.video, 'getBoundingClientRect').mockReturnValue(createRectangle(110, 70, 600, 300));
 
         player.setSubtitleStreamIndex(0);
         await vi.waitFor(() => {
@@ -1187,9 +1178,7 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         await nativePlayer.play(createPlayOptions('https://example.test/first.mp4'));
         expect(specializedSubtitleRendererMock.warmup).not.toHaveBeenCalled();
 
-        vi.mocked(appSettings.get).mockImplementation((name: string) => (
-            name === 'subtitlerenderpgs' ? 'true' : null
-        ));
+        vi.mocked(appSettings.get).mockImplementation((name: string) => (name === 'subtitlerenderpgs' ? 'true' : null));
         await nativePlayer.play(createPlayOptions('https://example.test/second.mp4'));
         await vi.waitFor(() => {
             expect(specializedSubtitleRendererMock.warmup).toHaveBeenCalledOnce();
@@ -1321,15 +1310,8 @@ describe('HtmlVideoPlayer play generations', () => {
 
     it('awaits WebGPU audio routing before assigning an autoplay source', async () => {
         const outputReady = createDeferred<void>();
-        const prepareAudioOutput = vi.fn(
-            async (): Promise<void> => outputReady.promise
-        );
-        const player = new HtmlVideoPlayer(
-            undefined,
-            true,
-            true,
-            prepareAudioOutput
-        ) as unknown as HtmlVideoPlayerTestHarness;
+        const prepareAudioOutput = vi.fn(async (): Promise<void> => outputReady.promise);
+        const player = new HtmlVideoPlayer(undefined, true, true, prepareAudioOutput) as unknown as HtmlVideoPlayerTestHarness;
 
         const playPromise = player.play(createPlayOptions('https://example.test/routed.mp4'));
         await vi.waitFor(() => expect(prepareAudioOutput).toHaveBeenCalledTimes(1));
@@ -1639,8 +1621,7 @@ describe('HtmlVideoPlayer play generations', () => {
             maxMaxBufferLength: 30
         }));
         expect(playbackManagerMock.getMaxStreamingBitrate).not.toHaveBeenCalled();
-        expect(hlsModuleMock.MockHls.DefaultConfig.backBufferLength)
-            .toBe(Number.POSITIVE_INFINITY);
+        expect(hlsModuleMock.MockHls.DefaultConfig.backBufferLength).toBe(Number.POSITIVE_INFINITY);
         expect(hlsModuleMock.MockHls.DefaultConfig.liveBackBufferLength).toBeNull();
         expect(hlsModuleMock.MockHls.DefaultConfig.lowLatencyMode).toBe(true);
     });
@@ -1662,9 +1643,7 @@ describe('HtmlVideoPlayer play generations', () => {
             maxBufferLength: 30,
             maxMaxBufferLength: 30
         }));
-        expect(hlsModuleMock.instances[0].config).not.toHaveProperty(
-            'frontBufferFlushThreshold'
-        );
+        expect(hlsModuleMock.instances[0].config).not.toHaveProperty('frontBufferFlushThreshold');
     });
 
     it('keeps the legacy 6 s HTML HLS buffer at high bitrates', async () => {

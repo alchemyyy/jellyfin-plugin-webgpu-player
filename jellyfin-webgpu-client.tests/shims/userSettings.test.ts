@@ -51,11 +51,9 @@ describe('UserSettings shim preferred video player', () => {
     it('persists the selection for the current user on this client', () => {
         const settings = new UserSettings();
 
-        expect(settings.preferredVideoPlayer(VideoPlayerPreference.HTML))
-            .toBe(VideoPlayerPreference.HTML);
+        expect(settings.preferredVideoPlayer(VideoPlayerPreference.HTML)).toBe(VideoPlayerPreference.HTML);
 
-        expect(localStorage.getItem('user-1-preferredVideoPlayer'))
-            .toBe(VideoPlayerPreference.HTML);
+        expect(localStorage.getItem('user-1-preferredVideoPlayer')).toBe(VideoPlayerPreference.HTML);
         expect(settings.preferredVideoPlayer()).toBe(VideoPlayerPreference.HTML);
     });
 
@@ -71,8 +69,7 @@ describe('UserSettings shim preferred video player', () => {
         localStorage.setItem('user-1-preferredVideoPlayer', VideoPlayerPreference.WEBGPU);
 
         expect(settings.preferredVideoPlayer('native')).toBe(VideoPlayerPreference.Auto);
-        expect(localStorage.getItem('user-1-preferredVideoPlayer'))
-            .toBe(VideoPlayerPreference.Auto);
+        expect(localStorage.getItem('user-1-preferredVideoPlayer')).toBe(VideoPlayerPreference.Auto);
     });
 });
 
@@ -80,8 +77,7 @@ describe('UserSettings shim WebGPU audio downmix algorithm', () => {
     it('defaults to standard Lo/Ro with dynamic peak limiting', () => {
         const settings = new UserSettings();
 
-        expect(settings.webGPUAudioDownmixAlgorithm())
-            .toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+        expect(settings.webGPUAudioDownmixAlgorithm()).toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
     });
 
     it('persists a supported selection for the current user on this client', () => {
@@ -91,23 +87,18 @@ describe('UserSettings shim WebGPU audio downmix algorithm', () => {
             CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845
         )).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845);
 
-        expect(localStorage.getItem('user-1-webGPUAudioDownmixAlgorithm'))
-            .toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845);
-        expect(settings.webGPUAudioDownmixAlgorithm())
-            .toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845);
+        expect(localStorage.getItem('user-1-webGPUAudioDownmixAlgorithm')).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845);
+        expect(settings.webGPUAudioDownmixAlgorithm()).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845);
     });
 
     it('normalizes invalid persisted and assigned values to the default', () => {
         const settings = new UserSettings();
         localStorage.setItem('user-1-webGPUAudioDownmixAlgorithm', 'unsupported');
 
-        expect(settings.webGPUAudioDownmixAlgorithm())
-            .toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+        expect(settings.webGPUAudioDownmixAlgorithm()).toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
 
-        expect(settings.webGPUAudioDownmixAlgorithm('also-unsupported'))
-            .toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
-        expect(localStorage.getItem('user-1-webGPUAudioDownmixAlgorithm'))
-            .toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+        expect(settings.webGPUAudioDownmixAlgorithm('also-unsupported')).toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+        expect(localStorage.getItem('user-1-webGPUAudioDownmixAlgorithm')).toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
     });
 });
 
@@ -202,8 +193,7 @@ describe('UserSettings shim storage scope', () => {
     it('exports accessors bound to the shared instance', () => {
         expect(preferredVideoPlayer(VideoPlayerPreference.HTML)).toBe(VideoPlayerPreference.HTML);
         expect(currentSettings.preferredVideoPlayer()).toBe(VideoPlayerPreference.HTML);
-        expect(webGPUAudioDownmixAlgorithm(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4))
-            .toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4);
+        expect(webGPUAudioDownmixAlgorithm(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4)).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4);
         expect(currentSettings.webGPUAudioDownmixAlgorithm()).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4);
         expect(selectAudioNormalization('Off')).toBe('Off');
         expect(currentSettings.selectAudioNormalization()).toBe('Off');

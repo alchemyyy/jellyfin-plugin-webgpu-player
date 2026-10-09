@@ -85,10 +85,7 @@ function setPlayResult(media: HTMLMediaElement, playResult: Promise<void>): void
     });
 }
 
-function bindTestPlayer(
-    hlsPlayer: MockHLSPlayer,
-    onEstablishedError?: (errorType: string) => void
-): BoundTestPlayer {
+function bindTestPlayer(hlsPlayer: MockHLSPlayer, onEstablishedError?: (errorType: string) => void): BoundTestPlayer {
     const instance = { _hlsPlayer: hlsPlayer as MockHLSPlayer | null };
     const reject = vi.fn();
     const resolve = vi.fn();
@@ -188,10 +185,7 @@ describe('bindEventsToHlsPlayer session ownership', () => {
         setPlayResult(media, Promise.resolve());
         const hlsPlayer = new MockHLSPlayer(media);
         const establishedError = vi.fn();
-        const { instance, reject, resolve } = bindTestPlayer(
-            hlsPlayer,
-            establishedError
-        );
+        const { instance, reject, resolve } = bindTestPlayer(hlsPlayer, establishedError);
         const errorListener = vi.fn();
         Events.on(instance, 'error', errorListener);
 

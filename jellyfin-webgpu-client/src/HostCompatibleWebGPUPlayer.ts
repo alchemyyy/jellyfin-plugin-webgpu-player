@@ -43,8 +43,7 @@ function stopSupersededEncodings(options: unknown): void {
 }
 
 /**
- * The fork's WebGPU player adapted to the stock PlaybackManager, which lacks the fork's
- * bitrate purposes, superseded results, and request generations.
+ * The fork's WebGPU player adapted to the stock PlaybackManager, which lacks the fork's bitrate purposes, superseded results, and request generations.
  */
 export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
     // Written by the stock PlaybackManager through getPlayerData()
@@ -110,8 +109,7 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     stop(destroyPlayer: boolean): Promise<unknown> {
         this.hostRequestRevision += 1;
-        // NOTE: PlaybackManager ignores 'stopped' while isChangingStream is set, which a stop during a
-        // stream change would otherwise leave behind
+        // NOTE: PlaybackManager ignores 'stopped' while isChangingStream is set, which a stop during a stream change would otherwise leave behind
         this.isChangingStream = false;
         return super.stop(destroyPlayer);
     }

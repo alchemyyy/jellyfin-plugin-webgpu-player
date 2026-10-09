@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.2.0.0",
+                "changelog": "Release 1.2.0.0",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases/download/v1.2.0.0/webgpu-player_1.2.0.0.zip",
+                "checksum": "b51448d511154a45b14721596cb289d0",
+                "timestamp": "2026-10-09T05:46:49Z"
+            },
+            {
                 "version": "1.1.0.0",
                 "changelog": "Release 1.1.0.0",
                 "targetAbi": "12.1.0.0",

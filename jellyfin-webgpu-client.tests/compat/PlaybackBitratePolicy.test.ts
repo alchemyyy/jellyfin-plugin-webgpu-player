@@ -10,18 +10,12 @@ import {
 
 describe('PlaybackBitratePolicy', () => {
     it('preserves existing player behavior without a bitrate policy hook', () => {
-        expect(getPlayerMaxStreamingBitrate(
-            {},
-            25_000_000,
-            PLAYBACK_SELECTION_BITRATE_PURPOSE
-        )).toBe(25_000_000);
+        expect(getPlayerMaxStreamingBitrate({}, 25_000_000, PLAYBACK_SELECTION_BITRATE_PURPOSE)).toBe(25_000_000);
     });
 
     it('passes the fallback and explicit purpose to the player policy', () => {
         const getMaxStreamingBitrate = vi.fn(bitrateRequest => (
-            bitrateRequest?.purpose === TRANSCODE_OUTPUT_BITRATE_PURPOSE ?
-                bitrateRequest.fallbackBitrate :
-                null
+            bitrateRequest?.purpose === TRANSCODE_OUTPUT_BITRATE_PURPOSE ? bitrateRequest.fallbackBitrate : null
         ));
 
         expect(getPlayerMaxStreamingBitrate(
@@ -83,10 +77,6 @@ describe('PlaybackBitratePolicy', () => {
         transcodingBitrate,
         mediaSource
     ) => {
-        expect(shouldUsePostSelectionTranscodeBitrate(
-            selectionBitrate,
-            transcodingBitrate,
-            mediaSource
-        )).toBe(false);
+        expect(shouldUsePostSelectionTranscodeBitrate(selectionBitrate, transcodingBitrate, mediaSource)).toBe(false);
     });
 });

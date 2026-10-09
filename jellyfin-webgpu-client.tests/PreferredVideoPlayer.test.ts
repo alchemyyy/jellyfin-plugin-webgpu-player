@@ -17,8 +17,7 @@ describe('PreferredVideoPlayer', () => {
     it.each([ undefined, null, '', 'native', 1 ])(
         'normalizes unsupported preference %s to auto',
         preference => {
-            expect(normalizeVideoPlayerPreference(preference))
-                .toBe(VideoPlayerPreference.Auto);
+            expect(normalizeVideoPlayerPreference(preference)).toBe(VideoPlayerPreference.Auto);
         }
     );
 });

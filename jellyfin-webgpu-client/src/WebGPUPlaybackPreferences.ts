@@ -1,8 +1,7 @@
 import { loadWebGPUUserSettings, type WebGPUUserSettings } from './WebGPUUserSettings';
 
 // The custom decode and HDR tone mapping preferences, kept per browser with the other WebGPU user settings.
-// They shape the device profile the server decides on, so a playback keeps the values its negotiation adopted and a
-// stored change applies from the next negotiation: the next item, a restart, or a stream change
+// They shape the device profile the server decides on, so a playback keeps the values its negotiation adopted and a stored change applies from the next negotiation: the next item, a restart, or a stream change
 
 type WebGPUPlaybackPreferences = WebGPUUserSettings['playback'];
 

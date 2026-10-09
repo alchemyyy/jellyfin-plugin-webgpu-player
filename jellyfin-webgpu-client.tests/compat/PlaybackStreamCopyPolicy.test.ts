@@ -12,16 +12,7 @@ describe('PlaybackStreamCopyPolicy', () => {
         const mediaStreams = [{ Codec: 'hevc', Type: 'Video' }];
         const supportsVideoStreamCopy = vi.fn(() => false);
 
-        expect(shouldAllowVideoStreamCopy(
-            { supportsVideoStreamCopy },
-            item,
-            'dolby-vision-source',
-            mediaStreams
-        )).toBe(false);
-        expect(supportsVideoStreamCopy).toHaveBeenCalledWith(
-            item,
-            'dolby-vision-source',
-            mediaStreams
-        );
+        expect(shouldAllowVideoStreamCopy({ supportsVideoStreamCopy }, item, 'dolby-vision-source', mediaStreams)).toBe(false);
+        expect(supportsVideoStreamCopy).toHaveBeenCalledWith(item, 'dolby-vision-source', mediaStreams);
     });
 });

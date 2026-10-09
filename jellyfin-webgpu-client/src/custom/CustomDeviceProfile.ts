@@ -625,9 +625,7 @@ function applyOptionalCustomSubtitleProfiles(
     return applyCustomSubtitleProfiles(profile, capabilities);
 }
 
-function removeBitrateConditions(
-    conditions: NonNullable<CodecProfile['Conditions']>
-): NonNullable<CodecProfile['Conditions']> {
+function removeBitrateConditions(conditions: NonNullable<CodecProfile['Conditions']>): NonNullable<CodecProfile['Conditions']> {
     return conditions.filter(condition => (
         !condition.Property || !BITRATE_CONDITION_PROPERTIES.has(condition.Property)
     ));
@@ -641,9 +639,7 @@ function removeBitratePlaybackConstraints(profile: DeviceProfile): void {
 
     for (const codecProfile of profile.CodecProfiles ?? []) {
         if (codecProfile.ApplyConditions) {
-            codecProfile.ApplyConditions = removeBitrateConditions(
-                codecProfile.ApplyConditions
-            );
+            codecProfile.ApplyConditions = removeBitrateConditions(codecProfile.ApplyConditions);
         }
         if (codecProfile.Conditions) {
             codecProfile.Conditions = removeBitrateConditions(codecProfile.Conditions);
@@ -651,17 +647,13 @@ function removeBitratePlaybackConstraints(profile: DeviceProfile): void {
     }
     for (const containerProfile of profile.ContainerProfiles ?? []) {
         if (containerProfile.Conditions) {
-            containerProfile.Conditions = removeBitrateConditions(
-                containerProfile.Conditions
-            );
+            containerProfile.Conditions = removeBitrateConditions(containerProfile.Conditions);
         }
     }
 }
 
 /** Clones a device profile and removes bitrate from playback selection. */
-export function createBitrateIndependentDeviceProfile(
-    profile: DeviceProfile
-): DeviceProfile {
+export function createBitrateIndependentDeviceProfile(profile: DeviceProfile): DeviceProfile {
     const clonedProfile = cloneDeviceProfile(profile);
     removeBitratePlaybackConstraints(clonedProfile);
     return clonedProfile;
@@ -677,9 +669,7 @@ function getSupportedVideoCodecs(
     const supportedCodecs: CustomVideoCodec[] = [];
     for (const codec of CUSTOM_VIDEO_CODECS) {
         const rangeExtensionSupported = codec === 'hevc'
-            && Object.values(capabilities.hevcRangeExtensions ?? {}).some(
-                capability => capability.status === 'supported'
-            );
+            && Object.values(capabilities.hevcRangeExtensions ?? {}).some(capability => capability.status === 'supported');
         if (supportsNativeVideoCodec(codec, capabilities)
             || rangeExtensionSupported
             || (codec === 'hevc' && supportsNativeMain10HEVC(capabilities))
@@ -718,9 +708,7 @@ function getSupportedAudioCodecs(
     return supportedCodecs;
 }
 
-function getSupportedRawHDRVideoCodecs(
-    capabilities: CustomDecodeCapabilities
-): CustomVideoCodec[] {
+function getSupportedRawHDRVideoCodecs(capabilities: CustomDecodeCapabilities): CustomVideoCodec[] {
     const supportedCodecs: CustomVideoCodec[] = [];
     const rawHDRVideoCapabilities = capabilities.rawHDRVideo;
 
@@ -850,9 +838,7 @@ function getUniqueTokens(tokens: readonly string[]): string[] {
     return uniqueTokens;
 }
 
-function getCustomContainerScope(
-    containerValue: string | null | undefined
-): CustomContainerScope {
+function getCustomContainerScope(containerValue: string | null | undefined): CustomContainerScope {
     const normalizedValue = containerValue?.trim().toLowerCase() ?? '';
     if (!normalizedValue) {
         return {
@@ -888,12 +874,8 @@ function getCustomContainerScope(
     };
 }
 
-function hasNativeRuntimeConditions(
-    conditions: readonly ProfileCondition[] | null | undefined
-): boolean {
-    return conditions?.some(condition => NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(
-        condition.Property ?? ''
-    )) === true;
+function hasNativeRuntimeConditions(conditions: readonly ProfileCondition[] | null | undefined): boolean {
+    return conditions?.some(condition => NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(condition.Property ?? '')) === true;
 }
 
 function removeNativeRuntimeConditions(
@@ -902,9 +884,7 @@ function removeNativeRuntimeConditions(
     if (!conditions) {
         return undefined;
     }
-    return conditions.filter(condition => !NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(
-        condition.Property ?? ''
-    ));
+    return conditions.filter(condition => !NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(condition.Property ?? ''));
 }
 
 function getDeclaredDirectPlayVideoCodecs(profile: DeviceProfile): string[] {
@@ -947,14 +927,10 @@ function createRuntimeConditionProfile(
         Container: containers.join(',')
     };
     if (codecProfile.ApplyConditions) {
-        runtimeProfile.ApplyConditions = removeNativeRuntimeConditions(
-            codecProfile.ApplyConditions
-        );
+        runtimeProfile.ApplyConditions = removeNativeRuntimeConditions(codecProfile.ApplyConditions);
     }
     if (codecProfile.Conditions) {
-        runtimeProfile.Conditions = removeNativeRuntimeConditions(
-            codecProfile.Conditions
-        );
+        runtimeProfile.Conditions = removeNativeRuntimeConditions(codecProfile.Conditions);
     }
     return runtimeProfile;
 }
@@ -1522,9 +1498,8 @@ function widenRawHDRCodecProfiles(
 }
 
 /**
- * Returns a codec's route containers plus the aliases the server's probe string carries for them. An MP4 file
- * probes as `mov,mp4,m4a,3gp,3g2,mj2` and a server profile matches any single token, so a stock profile scoped
- * to an alias such as `mj2` would also constrain every MP4 file the route plays.
+ * Returns a codec's route containers plus the aliases the server's probe string carries for them.
+ * An MP4 file probes as `mov,mp4,m4a,3gp,3g2,mj2` and a server profile matches any single token, so a stock profile scoped to an alias such as `mj2` would also constrain every MP4 file the route plays.
  */
 function getCustomContainerFamilyForVideoCodec(codec: CustomVideoCodec): Set<string> {
     const containerFamily = new Set<string>();
@@ -1571,9 +1546,7 @@ function getCustomContainersForVideoCodec(codec: CustomVideoCodec): string[] {
     return containers;
 }
 
-function createMeasuredRouteConditions(
-    route: MeasuredVideoRoute
-): NonNullable<CodecProfile['Conditions']> {
+function createMeasuredRouteConditions(route: MeasuredVideoRoute): NonNullable<CodecProfile['Conditions']> {
     const conditions: NonNullable<CodecProfile['Conditions']> = [];
     conditions.push({
         Condition: EQUALS_ANY_CONDITION,
@@ -1604,9 +1577,7 @@ function createMeasuredRouteConditions(
     return conditions;
 }
 
-function createMeasuredRouteApplyConditions(
-    route: MeasuredVideoRoute
-): NonNullable<CodecProfile['ApplyConditions']> {
+function createMeasuredRouteApplyConditions(route: MeasuredVideoRoute): NonNullable<CodecProfile['ApplyConditions']> {
     return createMeasuredRouteConditions(route).filter(condition => (
         condition.Property !== VIDEO_INTERLACED_PROPERTY
         && (
@@ -1616,9 +1587,7 @@ function createMeasuredRouteApplyConditions(
     ));
 }
 
-function createHEVCSDRMeasuredVideoRoutes(
-    capabilities: CustomDecodeCapabilities
-): MeasuredVideoRoute[] {
+function createHEVCSDRMeasuredVideoRoutes(capabilities: CustomDecodeCapabilities): MeasuredVideoRoute[] {
     const routes: MeasuredVideoRoute[] = [];
     if (supportsNativeVideoCodec('hevc', capabilities)) {
         routes.push({
@@ -1984,9 +1953,7 @@ function getCodecMeasuredVideoRoutes(
 }
 
 /** Returns the stock-profile ceiling of a codec's routes: every authorized profile, range, and depth. */
-function createMeasuredRouteProfilePlan(
-    routes: readonly MeasuredVideoRoute[]
-): AuthorizedCodecProfilePlan | null {
+function createMeasuredRouteProfilePlan(routes: readonly MeasuredVideoRoute[]): AuthorizedCodecProfilePlan | null {
     const bitDepths: number[] = [];
     const profiles: string[] = [];
     const rangeTypes: string[] = [];
@@ -2205,9 +2172,7 @@ function isRawFormatPresentationAuthorized(
 ): boolean {
     if (transfer === 'sdr') {
         return ([ 'limited', 'full' ] as const).every(
-            (range: 'full' | 'limited'): boolean => routeKeys.includes(
-                `${format}:bt709:bt709:${range}:sdr`
-            )
+            (range: 'full' | 'limited'): boolean => routeKeys.includes(`${format}:bt709:bt709:${range}:sdr`)
         );
     }
     const requiredRouteKey = `${format}:bt2020-ncl:bt2020:limited:${transfer}`;
@@ -2229,8 +2194,7 @@ function isRangeExtensionPresentationAuthorized(
 }
 
 /**
- * Generic Rext hides chroma format from negotiation, so every qualified chroma
- * variant at the bit depth must decode and present before the depth is advertised.
+ * Generic Rext hides chroma format from negotiation, so every qualified chroma variant at the bit depth must decode and present before the depth is advertised.
  */
 function hasCompleteRextBitDepthEnvelope(
     capabilities: CustomDecodeCapabilities,
@@ -2257,9 +2221,7 @@ const HEVC_RANGE_EXTENSION_RANGE_TYPES = [
 
 type HEVCRangeExtensionRangeType = typeof HEVC_RANGE_EXTENSION_RANGE_TYPES[number];
 
-function getRangeExtensionTransfer(
-    rangeType: HEVCRangeExtensionRangeType
-): ColorTransfer {
+function getRangeExtensionTransfer(rangeType: HEVCRangeExtensionRangeType): ColorTransfer {
     switch (rangeType) {
         case 'SDR':
             return 'sdr';
@@ -2409,15 +2371,12 @@ type AudioSampleRateConstraint = Readonly<{
     sampleRates: readonly number[]
 }>;
 
-function createAudioSampleRateConditions(
-    constraint: AudioSampleRateConstraint
-): ProfileCondition[] {
+function createAudioSampleRateConditions(constraint: AudioSampleRateConstraint): ProfileCondition[] {
     switch (constraint.kind) {
         case 'bounded':
             // Jellyfin reuses Equals/LTE conditions as transcode output targets.
-            // Paired complement profiles also reject valid in-range routes on
-            // Jellyfin 12. Keep negotiation target-neutral and let runtime
-            // eligibility enforce the qualified resampler envelope.
+            // Paired complement profiles also reject valid in-range routes on Jellyfin 12.
+            // Negotiation therefore stays target-neutral, and runtime eligibility enforces the qualified resampler envelope
             return [ {
                 Condition: NOT_EQUALS_CONDITION,
                 IsRequired: true,
@@ -2562,9 +2521,7 @@ function createMeasuredDTSRouteProfiles(): CodecProfile[] {
     return measuredProfiles;
 }
 
-function createMeasuredTrueHDRouteProfiles(
-    codec: 'mlp' | 'truehd'
-): CodecProfile[] {
+function createMeasuredTrueHDRouteProfiles(codec: 'mlp' | 'truehd'): CodecProfile[] {
     const measuredProfiles: CodecProfile[] = [];
     const channelCounts: number[] = [];
     const exactSampleRatesByChannelCount = new Map<number, number[]>();
@@ -2709,9 +2666,7 @@ function createSplitAudioRouteProfiles(
 }
 
 /**
- * Keeps HTML-player audio constraints outside custom routes while removing the
- * bit-depth, channel, sample-rate, and secondary-track limits replaced by
- * measured decoded-PCM routes.
+ * Keeps HTML-player audio constraints outside custom routes while removing the bit-depth, channel, sample-rate, and secondary-track limits replaced by measured decoded-PCM routes.
  */
 function splitOriginalAudioRouteProfiles(
     profile: DeviceProfile,
@@ -2766,8 +2721,7 @@ function appendMeasuredNativeAudioRouteProfiles(
 
     for (const codec of [ 'ac3', 'eac3' ] as const) {
         if (capabilities.audio[codec].status === 'supported') {
-            // The decoded-PCM profile below covers the native route at 48 kHz
-            // without letting its exact rate veto the software fallback
+            // The decoded-PCM profile below covers the native route at 48 kHz without letting its exact rate veto the software fallback
             continue;
         }
         const channelCounts = getSupportedNativeMediaChannelCounts(
@@ -2788,9 +2742,7 @@ function appendMeasuredNativeAudioRouteProfiles(
     }
 }
 
-function getDecodedAudioCodecs(
-    capabilities: CustomDecodeCapabilities
-): CustomAudioCodec[] {
+function getDecodedAudioCodecs(capabilities: CustomDecodeCapabilities): CustomAudioCodec[] {
     const decodedAudioCodecs: CustomAudioCodec[] = [];
     for (const codec of CUSTOM_AUDIO_CODECS) {
         if (capabilities.audio[codec].status !== 'supported') {
@@ -2904,8 +2856,8 @@ function appendMeasuredAudioRouteProfiles(
 }
 
 /**
- * Clones and widens direct-play declarations only for proven WebCodecs and
- * Mediabunny combinations. Existing transcoding behavior is copied unchanged.
+ * Clones and widens direct-play declarations only for proven WebCodecs and Mediabunny combinations.
+ * Existing transcoding behavior is copied unchanged.
  */
 export function augmentDeviceProfileForCustomDecode(
     profile: DeviceProfile,
@@ -2914,9 +2866,7 @@ export function augmentDeviceProfileForCustomDecode(
 ): CustomDeviceProfileResult {
     const clonedProfile = cloneDeviceProfile(profile);
     const nativeHDRVideoRangeTypes = options.allowNativeHDR === true ?
-        getAuthorizedExternalHDRVideoRangeTypes(
-            options.authorizedExternalHDRRouteKeys ?? []
-        ) :
+        getAuthorizedExternalHDRVideoRangeTypes(options.authorizedExternalHDRRouteKeys ?? []) :
         [];
     const overlappingRawDolbyVisionRangeTypes =
         authorizeNativeDolbyVisionBaseRanges(
@@ -2933,9 +2883,7 @@ export function augmentDeviceProfileForCustomDecode(
             || options.allowRawHDR === true && !routeKey.endsWith(':sdr')
         )
     );
-    const rawHEVCHDRVideoRangeTypes = getAuthorizedRawHEVCHDRVideoRangeTypes(
-        rawHDRVideoRangeTypes
-    );
+    const rawHEVCHDRVideoRangeTypes = getAuthorizedRawHEVCHDRVideoRangeTypes(rawHDRVideoRangeTypes);
     const availableRawDolbyVisionVideoRangeTypes = getDolbyVisionVideoRangeTypes(
         capabilities,
         options.allowDolbyVision === true,
@@ -2955,8 +2903,7 @@ export function augmentDeviceProfileForCustomDecode(
         availableRawDolbyVisionVideoRangeTypes;
     const allowRawDolbyVision = rawDolbyVisionVideoRangeTypes.length > 0;
     if (overlappingRawDolbyVisionRangeTypes.size > 0) {
-        // Runtime prefers the authorized native compatible base for these ranges and keeps
-        // raw reconstruction only as its fallback, so the native route advertises them
+        // Runtime prefers the authorized native compatible base for these ranges and keeps raw reconstruction only as its fallback, so the native route advertises them
         rawDolbyVisionVideoRangeTypes = rawDolbyVisionVideoRangeTypes.filter(rangeType => (
             !overlappingRawDolbyVisionRangeTypes.has(rangeType)
         ));
