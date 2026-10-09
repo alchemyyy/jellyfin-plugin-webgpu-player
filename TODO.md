@@ -21,6 +21,22 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   A frame whose decoder state does not fit fails in the decoder.
   Rebuilding either package with a 4 GiB heap and reading its returned pointers unsigned would lift the limit.
   The MPEG-2/VC-1 kit already has a 4 GiB heap.
+- AVI, and the legacy codecs it usually carries.
+  The engine's prefilter declines AVI, FLV, ASF, and MPEG program streams, because no route's container carries them and Mediabunny 1.52.2 demuxes none of them.
+  It also declines MPEG-4 Part 2 (DivX, Xvid), H.263, MS-MPEG4, MPEG-1, and Theora in any container, because no route decodes them.
+  Jellyfin's HTML player then plays them through a server transcode.
+  Closing it takes two halves:
+  - Decode: FFmpeg's `mpeg4`, `h263`, and `msmpeg4v3` decoders in a WebAssembly kit (the MPEG-2/VC-1 kit is the nearest), with a qualification vector, a probe, eligibility, and profile rules.
+    That alone plays MPEG-4 Part 2 in Matroska and MP4.
+  - Demux: an AVI demuxer that feeds the worker's packet sinks, covering RIFF chunks with `idx1` or OpenDML indexes, timestamps from each stream's rate and scale, DivX packed B-frames, and VBR MP3 or AC-3 audio chunks.
+- Interlaced video.
+  The prefilter, eligibility, and the measured route profiles all require `IsInterlaced` false, so interlaced MPEG-2, H.264, HEVC, and VC-1 go to the HTML player and the server transcodes them.
+  Closing it needs a deinterlacer on the custom path before those conditions can drop, such as a field-adaptive WebGPU pass over decoded frames that follows the stream's field order, or FFmpeg's filter in the MPEG-2/VC-1 kit.
+- VobSub (`dvdsub`) subtitles.
+  The augmented profile lists vtt, ass, ssa, and pgssub only, so the server burns a selected VobSub track in, the play method becomes Transcode, and the custom path is ineligible.
+  A 4K source is then re-encoded just to burn in a bitmap.
+  The host's libbitsub already renders VobSub.
+  Closing it needs a `dvdsub` subtitle profile and a delivery the server supports for an external `.idx`/`.sub` pair (not yet checked), then libbitsub's VobSub path on both backends.
 
 ## Startup performance
 
@@ -50,6 +66,9 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   Only a malformed stream mixes them, so this is robustness work, not a playback gap.
 - Anamorphic AV1.
   Playback is already correct; stripping Jellyfin's `IsAnamorphic` flag is worth doing only if it ever blocks a route.
+- Report the Mediabunny defects the engine contains upstream.
+  Header-stripped laced Matroska blocks (`CustomDecodeInputFormats.ts`) and the unhandled `close()` after a custom decoder fails (`HandledDecodeFailures.ts`) both remain in Mediabunny 1.61.3; the engine book's `decisions.md` describes them.
+  Reporting them is a public action and needs the project owner's decision.
 
 ## Settled decisions
 
