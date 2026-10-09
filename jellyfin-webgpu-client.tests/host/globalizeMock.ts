@@ -1,7 +1,6 @@
 import sourceStrings from 'addons/webGPUPlayer/strings/en-us.json';
 
-// A lib/globalize stand-in for suites that render add-on text: the add-on's source strings with {0}-style arguments
-// substituted, and every other key returned unchanged, as the host returns a key it cannot find
+// A lib/globalize stand-in for suites that render add-on text: the add-on's source strings with {0}-style arguments substituted, and every other key returned unchanged, as the host returns a key it cannot find
 
 const SOURCE_STRINGS: Readonly<Record<string, string>> = sourceStrings;
 

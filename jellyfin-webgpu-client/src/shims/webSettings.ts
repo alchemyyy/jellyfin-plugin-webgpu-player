@@ -1,7 +1,6 @@
 import fetchLocal from 'utils/fetchLocal';
 
-// Shim for scripts/settings/webSettings: the host module caches config.json privately, so the add-on keeps
-// its own copy of the CORS credential lookup
+// Shim for scripts/settings/webSettings: the host module caches config.json privately, so the add-on keeps its own copy of the CORS credential lookup
 
 type WebConfigCredentials = {
     includeCorsCredentials?: boolean

@@ -182,7 +182,7 @@ function requirePanelElement<ElementType extends Element>(
     return element;
 }
 
-// The panel's exact audio status texts
+// The panel's audio status texts, verbatim from the source strings
 const AUDIO_DOWNMIX_LIVE_STATUS =
     'Downmix gains applied live and saved for the active WebGPU stereo downmix.';
 const AUDIO_DOWNMIX_PENDING_STATUS =

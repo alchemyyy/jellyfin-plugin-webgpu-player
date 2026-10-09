@@ -1,7 +1,7 @@
 // @ts-check
 
-// Adapted from Jellyfin Web's eslint.config.mjs: the same rules for the add-on, without the React plugins (the
-// add-on has no JSX). Host modules resolve from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR
+// Adapted from Jellyfin Web's eslint.config.mjs: the same rules for the add-on, without the React plugins (the add-on has no JSX).
+// Host modules resolve from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR
 import path from 'path';
 import eslint from '@eslint/js';
 import comments from '@eslint-community/eslint-plugin-eslint-comments/configs';
@@ -63,8 +63,8 @@ export const sharedConfigs = tseslint.config(
             'array-callback-return': ['error', { 'checkForEach': true }],
             'curly': ['error', 'multi-line', 'consistent'],
             'default-case-last': 'error',
-            // Aliases this resolver cannot see: the engine submodule and the add-on's own absolute specifiers (tsconfig
-            // paths, which the typecheck verifies), and the hls.js fork submodule (webpack and Vitest aliases)
+            // Aliases this resolver cannot see.
+            // The engine submodule and the add-on's own absolute specifiers are tsconfig paths, which the typecheck verifies; the hls.js fork submodule is a webpack and Vitest alias
             'import/no-unresolved': ['error', { 'ignore': ['^webgpu-player/', '^addons/webGPUPlayer/', '^hls\\.js(/|$)'] }],
             'max-params': ['error', 7],
             'new-cap': [

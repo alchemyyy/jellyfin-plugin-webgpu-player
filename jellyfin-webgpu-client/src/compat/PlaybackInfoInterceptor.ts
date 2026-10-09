@@ -23,8 +23,7 @@ import {
 import { shouldAllowVideoStreamCopy } from './PlaybackStreamCopyPolicy';
 
 // Applies the WebGPU player's negotiation rules to the stock PlaybackManager's PlaybackInfo requests.
-// The SDK posts PlaybackInfo through the global axios instance, and getDeviceProfile runs before every
-// request, so a marker in the returned device profile identifies the requests this player negotiates
+// The SDK posts PlaybackInfo through the global axios instance, and getDeviceProfile runs before every request, so a marker in the returned device profile identifies the requests this player negotiates
 // NOTE: LiveStreams/Open goes through apiClient.ajax, not axios, and keeps the stock behavior
 
 /** DeviceProfile property that carries the negotiation token; it is removed before the request is sent */
@@ -156,13 +155,9 @@ function findMediaSourceStreams(item: NegotiationItem, mediaSourceId: string): u
 }
 
 /**
- * Returns the streams the fork's PlaybackManager passed to the stream-copy veto:
- * the playing source for stream changes, and the fetched source item for playback.
+ * Returns the streams the fork's PlaybackManager passed to the stream-copy veto: the playing source for stream changes, and the fetched source item for playback.
  */
-async function getVetoMediaStreams(
-    record: NegotiationRecord,
-    body: PlaybackInfoRequestBody
-): Promise<unknown[] | undefined> {
+async function getVetoMediaStreams(record: NegotiationRecord, body: PlaybackInfoRequestBody): Promise<unknown[] | undefined> {
     if (record.purpose === PlaybackInfoNegotiationPurpose.StreamChange) {
         const mediaStreams = record.player.streamInfo?.mediaSource?.MediaStreams;
         return Array.isArray(mediaStreams) ? mediaStreams : undefined;
@@ -198,9 +193,7 @@ async function getVetoMediaStreams(
 }
 
 /** Rewrites a marked PlaybackInfo request with the WebGPU player's negotiation rules. */
-export async function interceptPlaybackInfoRequest(
-    config: InternalAxiosRequestConfig
-): Promise<InternalAxiosRequestConfig> {
+export async function interceptPlaybackInfoRequest(config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> {
     if (!isPlaybackInfoRequest(config)) {
         return config;
     }
@@ -253,8 +246,7 @@ function createDirectPlayEnvironment(serverId: string | null | undefined): Direc
 }
 
 /**
- * Sizes a transcode that a bitrate-free first selection fixed: like the fork's PlaybackManager,
- * it re-issues the request once with the original bitrate and returns that response instead.
+ * Sizes a transcode that a bitrate-free first selection fixed: like the fork's PlaybackManager, it re-issues the request once with the original bitrate and returns that response instead.
  */
 export async function interceptPlaybackInfoResponse(
     axiosInstance: AxiosInstance,
@@ -287,11 +279,7 @@ export async function interceptPlaybackInfoResponse(
         return response;
     }
 
-    const sizedBody = createTranscodeSizingRequestBody(
-        sentBody,
-        selection.mediaSource.Id,
-        sizing.transcodingBitrate
-    );
+    const sizedBody = createTranscodeSizingRequestBody(sentBody, selection.mediaSource.Id, sizing.transcodingBitrate);
     const sizedConfig: NegotiatedRequestConfig = {
         ...config,
         data: JSON.stringify(sizedBody),

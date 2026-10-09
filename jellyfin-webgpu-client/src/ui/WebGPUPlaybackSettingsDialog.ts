@@ -179,10 +179,7 @@ NUMERIC_CONTROL_CONFIGURATIONS.push(
 
 let activePanel: ActivePanel | null = null;
 
-function getNumericSetting(
-    settings: WebGPUUserSettings,
-    key: NumericSettingKey
-): number {
+function getNumericSetting(settings: WebGPUUserSettings, key: NumericSettingKey): number {
     switch (key) {
         case 'brightness':
             return settings.render.settings.display.brightness;
@@ -271,10 +268,7 @@ function translateToHTML(key: string, ...replacements: unknown[]): string {
     return escapeHtml(globalize.translate(key, ...replacements));
 }
 
-function createDefaultButtonHTML(
-    settingKey: DefaultSettingKey,
-    settingName: string
-): string {
+function createDefaultButtonHTML(settingKey: DefaultSettingKey, settingName: string): string {
     return `
         <button
             aria-label="${translateToHTML('WebGPURestoreSettingDefault', settingName)}"
@@ -372,10 +366,7 @@ function createPanelHTML(): string {
                             />
                             <span>${translateToHTML('WebGPUEnableCustomDecode')}</span>
                         </label>
-                        ${createDefaultButtonHTML(
-                            'enableCustomDecode',
-                            globalize.translate('WebGPUSettingNameCustomDecode')
-                        )}
+                        ${createDefaultButtonHTML('enableCustomDecode', globalize.translate('WebGPUSettingNameCustomDecode'))}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
                         ${translateToHTML('WebGPUEnableCustomDecodeHelp')}
@@ -389,10 +380,7 @@ function createPanelHTML(): string {
                             />
                             <span>${translateToHTML('WebGPUEnableHDRToneMapping')}</span>
                         </label>
-                        ${createDefaultButtonHTML(
-                            'enableHDRToneMapping',
-                            globalize.translate('WebGPUSettingNameHDRToneMapping')
-                        )}
+                        ${createDefaultButtonHTML('enableHDRToneMapping', globalize.translate('WebGPUSettingNameHDRToneMapping'))}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
                         ${translateToHTML('WebGPUEnableHDRToneMappingHelp')}
@@ -419,10 +407,7 @@ function createPanelHTML(): string {
                                 <option value="reinhard">Reinhard</option>
                             </select>
                         </div>
-                        ${createDefaultButtonHTML(
-                            'operator',
-                            globalize.translate('WebGPUSettingNameToneMapOperator')
-                        )}
+                        ${createDefaultButtonHTML('operator', globalize.translate('WebGPUSettingNameToneMapOperator'))}
                     </div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
@@ -433,10 +418,7 @@ function createPanelHTML(): string {
                             />
                             <span>${translateToHTML('WebGPUTrackSourcePeakMetadata')}</span>
                         </label>
-                        ${createDefaultButtonHTML(
-                            'automaticInputPeakNits',
-                            globalize.translate('WebGPUSettingNameSourcePeakTracking')
-                        )}
+                        ${createDefaultButtonHTML('automaticInputPeakNits', globalize.translate('WebGPUSettingNameSourcePeakTracking'))}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
                         ${translateToHTML('WebGPUTrackSourcePeakMetadataHelp')}
@@ -515,10 +497,7 @@ function createPanelHTML(): string {
                                 </option>
                             </select>
                         </div>
-                        ${createDefaultButtonHTML(
-                            'audioDownmixAlgorithm',
-                            globalize.translate('WebGPUSettingNameDownmixAlgorithm')
-                        )}
+                        ${createDefaultButtonHTML('audioDownmixAlgorithm', globalize.translate('WebGPUSettingNameDownmixAlgorithm'))}
                     </div>
                     <div
                         class="fieldDescription"
@@ -533,10 +512,7 @@ function createPanelHTML(): string {
                             />
                             <span>${translateToHTML('WebGPUForceStereo')}</span>
                         </label>
-                        ${createDefaultButtonHTML(
-                            'forceStereoDownmix',
-                            globalize.translate('WebGPUSettingNameForceStereo')
-                        )}
+                        ${createDefaultButtonHTML('forceStereoDownmix', globalize.translate('WebGPUSettingNameForceStereo'))}
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
                         ${translateToHTML('WebGPUForceStereoHelp')}
@@ -565,10 +541,7 @@ function createPanelHTML(): string {
         </div>`;
 }
 
-function requireElement<ElementType extends Element>(
-    parent: ParentNode,
-    selector: string
-): ElementType {
+function requireElement<ElementType extends Element>(parent: ParentNode, selector: string): ElementType {
     const element = parent.querySelector<ElementType>(selector);
     if (!element) {
         throw new Error(`WebGPU settings panel is missing ${selector}`);
@@ -580,9 +553,7 @@ function setStatus(element: HTMLElement, message: string): void {
     element.textContent = message;
 }
 
-function getAudioOutputMessageTranslationKey(
-    messageCode: WebGPUAudioOutputMessageCode
-): AddonStringKey {
+function getAudioOutputMessageTranslationKey(messageCode: WebGPUAudioOutputMessageCode): AddonStringKey {
     switch (messageCode) {
         case 'applying':
             return 'WebGPUAudioOutputStatusApplying';
@@ -626,8 +597,7 @@ function getAudioOutputMessageTranslationKey(
 }
 
 function getMissingSelectedOutputLabel(snapshot: WebGPUAudioOutputSnapshot): string {
-    const selectedDeviceActive = snapshot.selectedDeviceId !== null
-        && snapshot.activeDeviceId === snapshot.selectedDeviceId;
+    const selectedDeviceActive = snapshot.selectedDeviceId !== null && snapshot.activeDeviceId === snapshot.selectedDeviceId;
     if (selectedDeviceActive || snapshot.selectedDeviceAvailability === 'active') {
         return globalize.translate('WebGPUSelectedAudioOutputActive');
     }
@@ -643,9 +613,7 @@ function getMissingSelectedOutputLabel(snapshot: WebGPUAudioOutputSnapshot): str
 
 function positionPanelBelowPlaybackInfo(panel: HTMLElement): void {
     let playbackInfoBottom: number | null = null;
-    const playbackInfoElements = document.querySelectorAll<HTMLElement>(
-        PLAYBACK_INFO_SELECTOR
-    );
+    const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
     for (const playbackInfoElement of playbackInfoElements) {
         if (playbackInfoElement.classList.contains('hide')) {
             continue;
@@ -654,26 +622,17 @@ function positionPanelBelowPlaybackInfo(panel: HTMLElement): void {
         if (playbackInfoBounds.width <= 0 || playbackInfoBounds.height <= 0) {
             continue;
         }
-        playbackInfoBottom = Math.max(
-            playbackInfoBottom ?? 0,
-            playbackInfoBounds.bottom
-        );
+        playbackInfoBottom = Math.max(playbackInfoBottom ?? 0, playbackInfoBounds.bottom);
     }
 
     if (playbackInfoBottom === null) {
         panel.style.removeProperty(PANEL_TOP_PROPERTY);
         return;
     }
-    panel.style.setProperty(
-        PANEL_TOP_PROPERTY,
-        `${Math.ceil(playbackInfoBottom + PLAYBACK_INFO_GAP_PX)}px`
-    );
+    panel.style.setProperty(PANEL_TOP_PROPERTY, `${Math.ceil(playbackInfoBottom + PLAYBACK_INFO_GAP_PX)}px`);
 }
 
-function createPanelController(
-    player: WebGPUPlayer,
-    invokingElement: HTMLElement | null
-): ActivePanel {
+function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElement | null): ActivePanel {
     const panel = document.createElement('aside');
     panel.classList.add('webgpuSettingsPanel');
     if (layoutManager.tv) {
@@ -685,51 +644,20 @@ function createPanelController(
     const cleanupCallbacks: Array<() => void> = [];
     const renderStatus = requireElement<HTMLElement>(panel, '[data-render-status]');
     const audioStatus = requireElement<HTMLElement>(panel, '[data-audio-status]');
-    const audioOutputStatus = requireElement<HTMLElement>(
-        panel,
-        '[data-audio-output-status]'
-    );
-    const audioOutputSelect = requireElement<HTMLSelectElement>(
-        panel,
-        '[data-audio-output-select]'
-    );
-    const audioOutputPicker = requireElement<HTMLButtonElement>(
-        panel,
-        '[data-audio-output-picker]'
-    );
-    const audioOutputRedetect = requireElement<HTMLButtonElement>(
-        panel,
-        '[data-audio-output-redetect]'
-    );
-    const automaticInputPeakCheckbox = requireElement<HTMLInputElement>(
-        panel,
-        '[data-setting-checkbox="automaticInputPeakNits"]'
-    );
-    const forceStereoCheckbox = requireElement<HTMLInputElement>(
-        panel,
-        '[data-setting-checkbox="forceStereoDownmix"]'
-    );
-    const customDecodeCheckbox = requireElement<HTMLInputElement>(
-        panel,
-        '[data-setting-checkbox="enableCustomDecode"]'
-    );
-    const HDRToneMappingCheckbox = requireElement<HTMLInputElement>(
-        panel,
-        '[data-setting-checkbox="enableHDRToneMapping"]'
-    );
+    const audioOutputStatus = requireElement<HTMLElement>(panel, '[data-audio-output-status]');
+    const audioOutputSelect = requireElement<HTMLSelectElement>(panel, '[data-audio-output-select]');
+    const audioOutputPicker = requireElement<HTMLButtonElement>(panel, '[data-audio-output-picker]');
+    const audioOutputRedetect = requireElement<HTMLButtonElement>(panel, '[data-audio-output-redetect]');
+    const automaticInputPeakCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="automaticInputPeakNits"]');
+    const forceStereoCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="forceStereoDownmix"]');
+    const customDecodeCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
+    const HDRToneMappingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableHDRToneMapping"]');
     const playbackStatus = requireElement<HTMLElement>(panel, '[data-playback-status]');
-    const operatorSelect = requireElement<HTMLSelectElement>(
-        panel,
-        '[data-setting-select="operator"]'
-    );
-    const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(
-        panel,
-        '[data-setting-select="audioDownmixAlgorithm"]'
-    );
+    const operatorSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="operator"]');
+    const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
     let settings = loadWebGPUUserSettings();
     const audioOutputManager = getWebGPUAudioOutputManager();
-    let audioDownmixAlgorithm: CustomAudioDownmixAlgorithm =
-        webGPUAudioDownmixAlgorithm();
+    let audioDownmixAlgorithm: CustomAudioDownmixAlgorithm = webGPUAudioDownmixAlgorithm();
     let renderFrameRequest: number | null = null;
     let audioOutputSelectionRevision = 0;
     let panelActive = true;
@@ -739,9 +667,7 @@ function createPanelController(
         audioOutputManager.cancelAudioOutputSelectionRequest();
     };
 
-    const synchronizeAudioOutputControls = (
-        snapshot: WebGPUAudioOutputSnapshot
-    ): void => {
+    const synchronizeAudioOutputControls = (snapshot: WebGPUAudioOutputSnapshot): void => {
         if (!panelActive) {
             return;
         }
@@ -755,10 +681,7 @@ function createPanelController(
         let outputNumber = 1;
         for (const device of snapshot.devices) {
             const option = document.createElement('option');
-            option.textContent = device.label || globalize.translate(
-                'WebGPUUnnamedAudioOutput',
-                outputNumber
-            );
+            option.textContent = device.label || globalize.translate('WebGPUUnnamedAudioOutput', outputNumber);
             option.value = device.deviceId;
             audioOutputSelect.appendChild(option);
             outputNumber += 1;
@@ -778,9 +701,7 @@ function createPanelController(
         audioOutputPicker.title = snapshot.pickerAvailable ?
             globalize.translate('WebGPUAuthorizeAudioOutput') :
             globalize.translate('WebGPUAudioOutputPickerUnavailable');
-        const statusMessage = globalize.translate(
-            getAudioOutputMessageTranslationKey(snapshot.messageCode)
-        );
+        const statusMessage = globalize.translate(getAudioOutputMessageTranslationKey(snapshot.messageCode));
         setStatus(audioOutputStatus, snapshot.pickerAvailable ?
             statusMessage :
             globalize.translate(
@@ -793,14 +714,8 @@ function createPanelController(
     const synchronizeControls = (): void => {
         for (const configuration of NUMERIC_CONTROL_CONFIGURATIONS) {
             const value = getNumericSetting(settings, configuration.key).toString();
-            const slider = requireElement<HTMLInputElement>(
-                panel,
-                `[data-setting-slider="${configuration.key}"]`
-            );
-            const numberInput = requireElement<HTMLInputElement>(
-                panel,
-                `[data-setting-number="${configuration.key}"]`
-            );
+            const slider = requireElement<HTMLInputElement>(panel, `[data-setting-slider="${configuration.key}"]`);
+            const numberInput = requireElement<HTMLInputElement>(panel, `[data-setting-number="${configuration.key}"]`);
             slider.value = value;
             numberInput.value = value;
         }
@@ -812,14 +727,8 @@ function createPanelController(
         HDRToneMappingCheckbox.disabled = !settings.playback.enableCustomDecode;
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
         operatorSelect.value = settings.render.settings.toneMapping.operator;
-        const inputPeakSlider = requireElement<HTMLInputElement>(
-            panel,
-            '[data-setting-slider="inputPeakNits"]'
-        );
-        const inputPeakNumber = requireElement<HTMLInputElement>(
-            panel,
-            '[data-setting-number="inputPeakNits"]'
-        );
+        const inputPeakSlider = requireElement<HTMLInputElement>(panel, '[data-setting-slider="inputPeakNits"]');
+        const inputPeakNumber = requireElement<HTMLInputElement>(panel, '[data-setting-number="inputPeakNits"]');
         inputPeakSlider.disabled = settings.render.automaticInputPeakNits;
         inputPeakNumber.disabled = settings.render.automaticInputPeakNits;
     };
@@ -840,10 +749,7 @@ function createPanelController(
             settings,
             detectedInputPeakNits ?? currentRenderSettings.toneMapping.inputPeakNits
         );
-        if (player.updateRenderSettings(
-            configuredRenderSettings,
-            settings.render.automaticInputPeakNits
-        )) {
+        if (player.updateRenderSettings(configuredRenderSettings, settings.render.automaticInputPeakNits)) {
             setStatus(renderStatus, globalize.translate('WebGPURenderStatusApplied'));
             return;
         }
@@ -889,9 +795,7 @@ function createPanelController(
         audioOutputSelectionRevision = selectionRevision;
         const selectionPromise = audioOutputManager.requestAudioOutputSelection();
         void selectionPromise.then((selectedDeviceId): void => {
-            if (!panelActive
-                || audioOutputSelectionRevision !== selectionRevision
-                || !selectedDeviceId) {
+            if (!panelActive || audioOutputSelectionRevision !== selectionRevision || !selectedDeviceId) {
                 return;
             }
             commitAudioOutputDevice(selectedDeviceId);
@@ -911,9 +815,7 @@ function createPanelController(
         audioOutputRedetect.removeEventListener('click', onRedetectAudioOutput);
     });
 
-    const unsubscribeAudioOutput = audioOutputManager.subscribe(
-        synchronizeAudioOutputControls
-    );
+    const unsubscribeAudioOutput = audioOutputManager.subscribe(synchronizeAudioOutputControls);
     cleanupCallbacks.push(unsubscribeAudioOutput);
     if (audioOutputManager.getSnapshot().selectedDeviceId !== settings.audio.outputDeviceId) {
         void audioOutputManager.setSelectedDeviceId(settings.audio.outputDeviceId);
@@ -930,13 +832,8 @@ function createPanelController(
     // Force stereo and the algorithm switch active decoded audio in place when they change it.
     // formatStatus places the layout sentence in the full status, which translations may order freely.
     const applyAudioOutputLayout = (formatStatus: (layoutStatus: string) => string): void => {
-        const statusRevision = setAudioStatus(
-            formatStatus(globalize.translate('WebGPUAudioLayoutStatusApplying'))
-        );
-        void player.applyAudioOutputSettings(
-            settings.audio.forceStereoDownmix,
-            audioDownmixAlgorithm
-        ).then((appliedLive: boolean): void => {
+        const statusRevision = setAudioStatus(formatStatus(globalize.translate('WebGPUAudioLayoutStatusApplying')));
+        void player.applyAudioOutputSettings(settings.audio.forceStereoDownmix, audioDownmixAlgorithm).then((appliedLive: boolean): void => {
             if (!panelActive || statusRevision !== audioStatusRevision) {
                 return;
             }
@@ -977,14 +874,8 @@ function createPanelController(
         }
     };
 
-    const bindDefaultButton = (
-        settingKey: DefaultSettingKey,
-        onClick: () => void
-    ): void => {
-        const button = requireElement<HTMLButtonElement>(
-            panel,
-            `[data-default-setting="${settingKey}"]`
-        );
+    const bindDefaultButton = (settingKey: DefaultSettingKey, onClick: () => void): void => {
+        const button = requireElement<HTMLButtonElement>(panel, `[data-default-setting="${settingKey}"]`);
         button.addEventListener('click', onClick);
         cleanupCallbacks.push((): void => {
             button.removeEventListener('click', onClick);
@@ -992,24 +883,14 @@ function createPanelController(
     };
 
     for (const configuration of NUMERIC_CONTROL_CONFIGURATIONS) {
-        const slider = requireElement<HTMLInputElement>(
-            panel,
-            `[data-setting-slider="${configuration.key}"]`
-        );
-        const numberInput = requireElement<HTMLInputElement>(
-            panel,
-            `[data-setting-number="${configuration.key}"]`
-        );
+        const slider = requireElement<HTMLInputElement>(panel, `[data-setting-slider="${configuration.key}"]`);
+        const numberInput = requireElement<HTMLInputElement>(panel, `[data-setting-number="${configuration.key}"]`);
         const onSliderInput = (): void => {
             settings = updateNumericSetting(settings, configuration.key, Number(slider.value));
             commitSectionSettings(configuration.section);
         };
         const onNumberChange = (): void => {
-            settings = updateNumericSetting(
-                settings,
-                configuration.key,
-                Number(numberInput.value)
-            );
+            settings = updateNumericSetting(settings, configuration.key, Number(numberInput.value));
             commitSectionSettings(configuration.section);
         };
         slider.addEventListener('input', onSliderInput);
@@ -1020,11 +901,7 @@ function createPanelController(
         });
         bindDefaultButton(configuration.key, (): void => {
             const defaults = createDefaultWebGPUUserSettings();
-            settings = updateNumericSetting(
-                settings,
-                configuration.key,
-                getNumericSetting(defaults, configuration.key)
-            );
+            settings = updateNumericSetting(settings, configuration.key, getNumericSetting(defaults, configuration.key));
             commitSectionSettings(configuration.section);
         });
     }
@@ -1047,13 +924,11 @@ function createPanelController(
         HDRToneMappingCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
     });
     bindDefaultButton('enableCustomDecode', (): void => {
-        customDecodeCheckbox.checked =
-            createDefaultWebGPUUserSettings().playback.enableCustomDecode;
+        customDecodeCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableCustomDecode;
         onPlaybackPreferenceChange();
     });
     bindDefaultButton('enableHDRToneMapping', (): void => {
-        HDRToneMappingCheckbox.checked =
-            createDefaultWebGPUUserSettings().playback.enableHDRToneMapping;
+        HDRToneMappingCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableHDRToneMapping;
         onPlaybackPreferenceChange();
     });
 
@@ -1072,8 +947,7 @@ function createPanelController(
         automaticInputPeakCheckbox.removeEventListener('change', onAutomaticInputPeakChange);
     });
     bindDefaultButton('automaticInputPeakNits', (): void => {
-        automaticInputPeakCheckbox.checked =
-            createDefaultWebGPUUserSettings().render.automaticInputPeakNits;
+        automaticInputPeakCheckbox.checked = createDefaultWebGPUUserSettings().render.automaticInputPeakNits;
         onAutomaticInputPeakChange();
     });
 
@@ -1093,8 +967,7 @@ function createPanelController(
         forceStereoCheckbox.removeEventListener('change', onForceStereoChange);
     });
     bindDefaultButton('forceStereoDownmix', (): void => {
-        forceStereoCheckbox.checked =
-            createDefaultWebGPUUserSettings().audio.forceStereoDownmix;
+        forceStereoCheckbox.checked = createDefaultWebGPUUserSettings().audio.forceStereoDownmix;
         onForceStereoChange();
     });
 
@@ -1107,15 +980,9 @@ function createPanelController(
     const onAudioDownmixAlgorithmChange = (): void => {
         persistAudioDownmixAlgorithm(audioDownmixAlgorithmSelect.value);
     };
-    audioDownmixAlgorithmSelect.addEventListener(
-        'change',
-        onAudioDownmixAlgorithmChange
-    );
+    audioDownmixAlgorithmSelect.addEventListener('change', onAudioDownmixAlgorithmChange);
     cleanupCallbacks.push((): void => {
-        audioDownmixAlgorithmSelect.removeEventListener(
-            'change',
-            onAudioDownmixAlgorithmChange
-        );
+        audioDownmixAlgorithmSelect.removeEventListener('change', onAudioDownmixAlgorithmChange);
     });
     bindDefaultButton('audioDownmixAlgorithm', (): void => {
         persistAudioDownmixAlgorithm(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
@@ -1142,15 +1009,11 @@ function createPanelController(
         operatorSelect.removeEventListener('change', onOperatorChange);
     });
     bindDefaultButton('operator', (): void => {
-        operatorSelect.value =
-            createDefaultWebGPUUserSettings().render.settings.toneMapping.operator;
+        operatorSelect.value = createDefaultWebGPUUserSettings().render.settings.toneMapping.operator;
         onOperatorChange();
     });
 
-    const resetRenderButton = requireElement<HTMLButtonElement>(
-        panel,
-        '.webgpuSettingsResetRender'
-    );
+    const resetRenderButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetRender');
     const onResetRender = (): void => {
         settings = resetWebGPURenderSettings(settings);
         commitSectionSettings('render');
@@ -1160,10 +1023,7 @@ function createPanelController(
         resetRenderButton.removeEventListener('click', onResetRender);
     });
 
-    const resetAudioButton = requireElement<HTMLButtonElement>(
-        panel,
-        '.webgpuSettingsResetAudio'
-    );
+    const resetAudioButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAudio');
     const onResetAudio = (): void => {
         invalidatePendingAudioOutputSelection();
         settings = resetWebGPUAudioSettings(settings);
@@ -1270,9 +1130,7 @@ function createPanelController(
     let playbackInfoResizeObserver: ResizeObserver | null = null;
     if (typeof ResizeObserver === 'function') {
         playbackInfoResizeObserver = new ResizeObserver(updatePanelPosition);
-        const playbackInfoElements = document.querySelectorAll<HTMLElement>(
-            PLAYBACK_INFO_SELECTOR
-        );
+        const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
         for (const playbackInfoElement of playbackInfoElements) {
             playbackInfoResizeObserver.observe(playbackInfoElement);
         }
@@ -1301,9 +1159,7 @@ function createPanelController(
 /** Opens or focuses the one active plugin-owned playback settings panel. */
 export function showWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<void> {
     if (activePanel) {
-        const focusTarget = activePanel.element.querySelector<HTMLElement>(
-            '.webgpuSettingsClose'
-        );
+        const focusTarget = activePanel.element.querySelector<HTMLElement>('.webgpuSettingsClose');
         focusTarget?.focus();
         return activePanel.promise;
     }

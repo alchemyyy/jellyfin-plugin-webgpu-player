@@ -18,8 +18,7 @@ import { PlaybackManager, playbackManager } from 'addons/webGPUPlayer/host/playb
 import serverConnections from 'addons/webGPUPlayer/host/serverConnections';
 import toast from 'addons/webGPUPlayer/host/toast';
 
-// Translation files by locale, standing in for src/strings/<locale>.json; the bridge caches each locale, so every
-// test uses its own locales
+// Translation files by locale, standing in for src/strings/<locale>.json; the bridge caches each locale, so every test uses its own locales
 const translationFileState = vi.hoisted(() => ({
     files: new Map<string, Readonly<Record<string, string>>>(),
     requests: [] as string[]

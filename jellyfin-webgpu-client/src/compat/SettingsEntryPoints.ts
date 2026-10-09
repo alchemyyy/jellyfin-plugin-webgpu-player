@@ -11,8 +11,7 @@ import { loadAddonStrings } from '../host/globalize';
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
 import { PREFERRED_VIDEO_PLAYER_KEY } from '../shims/userSettings';
 
-// The stock host has no player settings menu seam and dropped the fork's preference control, so both
-// entry points are added to the host pages through the DOM when those pages show
+// The stock host has no player settings menu seam and dropped the fork's preference control, so both entry points are added to the host pages through the DOM when those pages show
 
 type SettingsMenuItem = Readonly<{
     id: string

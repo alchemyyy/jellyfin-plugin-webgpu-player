@@ -1,7 +1,7 @@
 // Builds the WebGPU player client add-on into ADDON_OUTPUT_DIRECTORY for the server plugin.
 // The add-on runs inside an unmodified Jellyfin Web host, loaded through the plugin manager's window path.
-// Host modules come from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR; npm packages and loaders come
-// only from this package's node_modules. Every folder comes from scripts/constants.js
+// Host modules come from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR; npm packages and loaders come only from this package's node_modules.
+// Every folder comes from scripts/constants.js
 const path = require('path');
 const { execFileSync } = require('child_process');
 const CopyPlugin = require('copy-webpack-plugin');
@@ -81,8 +81,8 @@ function describeModulePath(resourcePath) {
         resourcePath;
 }
 
-// Host modules that hold page state, keyed by resolved path. The plugin bag supplies the first group as
-// live bindings; the second group is reimplemented, because the host does not expose those instances
+// Host modules that hold page state, keyed by resolved path.
+// The plugin bag supplies the first group as live bindings; the second group is reimplemented, because the host does not expose those instances
 const HOST_MODULE_REPLACEMENTS = new Map([
     [ sourcePath('components/playback/playbackmanager.js'), addonPath('host/playbackManager.ts') ],
     [ sourcePath('lib/jellyfin-apiclient/ServerConnections.js'), addonPath('host/serverConnections.ts') ],
@@ -110,8 +110,8 @@ const HOST_LOADED_MODULE_PREFIXES = [
     path.normalize(path.join(NODE_MODULES_DIRECTORY, 'material-design-icons-iconfont')).toLowerCase() + path.sep
 ];
 
-// Host modules that must never reach the bundle, relative to the host source directory: host singletons, the host
-// router, and the stock HTML player whose fork the add-on carries privately
+// Host modules that must never reach the bundle, relative to the host source directory.
+// They are the host singletons, the host router, and the stock HTML player, whose fork the add-on carries privately
 const FORBIDDEN_HOST_MODULE_PATTERNS = [
     /^components\/playback\/playbackmanager\.js$/i,
     /^lib\/jellyfin-apiclient\/(ServerConnections|connectionManager)[^/]*$/i,
@@ -212,8 +212,7 @@ class AddonManifestPlugin {
                 { name: 'AddonManifestPlugin', stage: Compilation.PROCESS_ASSETS_STAGE_REPORT },
                 () => {
                     const entrypoint = compilation.entrypoints.get(ENTRY_NAME);
-                    const entryFile = Array.from(entrypoint.getEntrypointChunk().files)
-                        .find(file => file.endsWith('.js'));
+                    const entryFile = Array.from(entrypoint.getEntrypointChunk().files).find(file => file.endsWith('.js'));
                     if (!entryFile) {
                         compilation.errors.push(new Error('WebGPU player add-on entry produced no JavaScript file'));
                         return;
@@ -222,10 +221,7 @@ class AddonManifestPlugin {
                         entry: entryFile,
                         assetKey: WEBGPU_PLAYER_BUILD_INFO.assetKey
                     };
-                    compilation.emitAsset(
-                        MANIFEST_FILE_NAME,
-                        new sources.RawSource(JSON.stringify(manifest, null, 2) + '\n')
-                    );
+                    compilation.emitAsset(MANIFEST_FILE_NAME, new sources.RawSource(JSON.stringify(manifest, null, 2) + '\n'));
                 }
             );
         });
@@ -349,8 +345,7 @@ module.exports = {
             'hls.js': WEBGPU_PLAYER_HLS_DIRECTORY
         },
         extensions: [ '.tsx', '.ts', '.js' ],
-        // Absolute directories only, so nothing resolves from a node_modules next to the host source: npm packages
-        // come from this package, host modules (components/..., utils/...) from the host source
+        // Absolute directories only, so nothing resolves from a node_modules next to the host source: npm packages come from this package, host modules (components/..., utils/...) from the host source
         modules: [
             NODE_MODULES_DIRECTORY,
             HOST_SOURCE_DIRECTORY
@@ -403,7 +398,7 @@ module.exports = {
             },
             {
                 test: /\.(js|jsx|mjs)$/,
-                // Emit `new URL()` module assets such as the libbitsub worker glue verbatim
+                // Emit `new URL()` module assets such as the libbitsub worker glue verbatim.
                 // The worker imports that module directly and cannot resolve core-js imports injected by babel
                 dependency: { not: [ 'url' ] },
                 include: BABEL_NODE_MODULES.map(packageName => path.resolve(NODE_MODULES_DIRECTORY, packageName))

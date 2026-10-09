@@ -1,7 +1,6 @@
 import type { MediaSourceInfo } from '@jellyfin/sdk/lib/generated-client/models/media-source-info';
 
-// Replica of the stock PlaybackManager's module-private getOptimalMediaSource and supportsDirectPlay,
-// so the PlaybackInfo interceptor sees the source and direct-play flag PlaybackManager will pick
+// Replica of the stock PlaybackManager's module-private getOptimalMediaSource and supportsDirectPlay, so the PlaybackInfo interceptor sees the source and direct-play flag PlaybackManager will pick
 
 const FOLDER_RIP_VIDEO_TYPES = new Set([ 'BluRay', 'Dvd', 'HdDvd' ]);
 const HTTP_PROTOCOL = 'Http';
@@ -23,10 +22,7 @@ export type MediaSourceSelection = {
     mediaSource: MediaSourceInfo
 };
 
-async function isHostReachable(
-    mediaSource: MediaSourceInfo,
-    environment: DirectPlayEnvironment
-): Promise<boolean> {
+async function isHostReachable(mediaSource: MediaSourceInfo, environment: DirectPlayEnvironment): Promise<boolean> {
     if (mediaSource.IsRemote) {
         return true;
     }
@@ -45,10 +41,7 @@ async function isHostReachable(
 }
 
 /** Returns whether the stock PlaybackManager would play the source from its own path. */
-export async function supportsDirectPlay(
-    mediaSource: MediaSourceInfo,
-    environment: DirectPlayEnvironment
-): Promise<boolean> {
+export async function supportsDirectPlay(mediaSource: MediaSourceInfo, environment: DirectPlayEnvironment): Promise<boolean> {
     // Folder rip hacks, because the stream building engine does not support them yet
     const isFolderRip = FOLDER_RIP_VIDEO_TYPES.has(mediaSource.VideoType ?? '');
     if (!mediaSource.SupportsDirectPlay && !isFolderRip) {

@@ -185,15 +185,10 @@ function getStreams(mediaSource: MediaSourceInfo): MediaStream[] | null {
     return streams;
 }
 
-function selectAudioStream(
-    mediaSource: MediaSourceInfo,
-    audioStreams: readonly MediaStream[]
-): MediaStream | null | undefined {
+function selectAudioStream(mediaSource: MediaSourceInfo, audioStreams: readonly MediaStream[]): MediaStream | null | undefined {
     const requestedIndex = mediaSource.DefaultAudioStreamIndex;
     if (requestedIndex == null) {
-        const sortedAudioStreams = [ ...audioStreams ].sort((left, right) => (
-            Number(left.Index) - Number(right.Index)
-        ));
+        const sortedAudioStreams = [ ...audioStreams ].sort((left, right) => Number(left.Index) - Number(right.Index));
         return sortedAudioStreams[0] ?? null;
     }
     if (getSafeInteger(requestedIndex) === null) {
@@ -229,9 +224,7 @@ function parsePlaybackSource(options: unknown): ParsedPlaybackSource | null {
         return null;
     }
     const audioStream = selectAudioStream(mediaSource, audioStreams);
-    if (audioStream === undefined
-        || (audioStream !== null && getNonEmptyString(audioStream.Codec) === null)
-    ) {
+    if (audioStream === undefined || (audioStream !== null && getNonEmptyString(audioStream.Codec) === null)) {
         return null;
     }
 
@@ -260,10 +253,7 @@ function getReferenceFrameRate(stream: MediaStream): number | null {
     return null;
 }
 
-function getVideoNumericValue(
-    property: ProfileConditionValue,
-    source: ParsedPlaybackSource
-): number | null {
+function getVideoNumericValue(property: ProfileConditionValue, source: ParsedPlaybackSource): number | null {
     const stream = source.videoStream;
     switch (property) {
         case 'Height': return getSafeInteger(stream.Height);
@@ -281,10 +271,7 @@ function getVideoNumericValue(
     }
 }
 
-function getVideoBooleanValue(
-    property: ProfileConditionValue,
-    source: ParsedPlaybackSource
-): boolean | null {
+function getVideoBooleanValue(property: ProfileConditionValue, source: ParsedPlaybackSource): boolean | null {
     let value: unknown;
     switch (property) {
         case 'IsAnamorphic':
@@ -301,10 +288,7 @@ function getVideoBooleanValue(
     return typeof value === 'boolean' ? value : null;
 }
 
-function getVideoStringValue(
-    property: ProfileConditionValue,
-    source: ParsedPlaybackSource
-): string | null {
+function getVideoStringValue(property: ProfileConditionValue, source: ParsedPlaybackSource): string | null {
     switch (property) {
         case 'VideoCodecTag': return getNonEmptyString(source.videoStream.CodecTag);
         case 'VideoProfile': return getNonEmptyString(source.videoStream.Profile);
@@ -329,10 +313,7 @@ function getIsSecondaryAudio(source: ParsedPlaybackSource): boolean | null {
     return primaryAudioStream.Index !== selectedAudioStream.Index;
 }
 
-function getAudioConditionValue(
-    property: ProfileConditionValue,
-    source: ParsedPlaybackSource
-): ComparableConditionValue | null {
+function getAudioConditionValue(property: ProfileConditionValue, source: ParsedPlaybackSource): ComparableConditionValue | null {
     const stream = source.audioStream;
     if (!stream) {
         return null;
@@ -366,10 +347,7 @@ function getAudioConditionValue(
     return value === null ? null : { kind: 'number', value };
 }
 
-function getVideoConditionValue(
-    property: ProfileConditionValue,
-    source: ParsedPlaybackSource
-): ComparableConditionValue | null {
+function getVideoConditionValue(property: ProfileConditionValue, source: ParsedPlaybackSource): ComparableConditionValue | null {
     if (property === 'VideoRangeType') {
         const value = getNonEmptyString(source.videoStream.VideoRangeType);
         if (!value || !KNOWN_VIDEO_RANGE_TYPES.has(normalizeIdentifier(value))) {
@@ -443,15 +421,13 @@ function compareString(condition: ProfileCondition, currentValue: string): Condi
     const normalizedCurrentValue = normalizeIdentifier(currentValue);
     switch (condition.Condition) {
         case 'Equals':
-            return normalizedCurrentValue === normalizeIdentifier(expectedValue) ?
-                'matched' : 'not-matched';
+            return normalizedCurrentValue === normalizeIdentifier(expectedValue) ? 'matched' : 'not-matched';
         case 'EqualsAny':
             return expectedValue.split('|').some(value => (
                 normalizeIdentifier(value) === normalizedCurrentValue
             )) ? 'matched' : 'not-matched';
         case 'NotEquals':
-            return normalizedCurrentValue !== normalizeIdentifier(expectedValue) ?
-                'matched' : 'not-matched';
+            return normalizedCurrentValue !== normalizeIdentifier(expectedValue) ? 'matched' : 'not-matched';
         default:
             return 'unknown';
     }
@@ -471,8 +447,7 @@ function compareVideoRange(condition: ProfileCondition, currentValue: string): C
 
     const normalizedCurrentValue = normalizeIdentifier(currentValue);
     if (condition.Condition === 'NotEquals') {
-        return normalizedCurrentValue !== normalizeIdentifier(expectedValue) ?
-            'matched' : 'not-matched';
+        return normalizedCurrentValue !== normalizeIdentifier(expectedValue) ? 'matched' : 'not-matched';
     }
     if (condition.Condition !== 'Equals' && condition.Condition !== 'EqualsAny') {
         return 'unknown';
@@ -558,10 +533,7 @@ function matchingCodecProfileIsCompatible(
     return evaluateConditions(profile.Conditions, profileType, source) === 'matched';
 }
 
-function codecProfileIsCompatible(
-    profile: CodecProfile,
-    source: ParsedPlaybackSource
-): boolean {
+function codecProfileIsCompatible(profile: CodecProfile, source: ParsedPlaybackSource): boolean {
     let profileType: 'Video' | 'VideoAudio';
     let stream: MediaStream | null;
     switch (profile.Type) {
@@ -593,10 +565,7 @@ function codecProfileIsCompatible(
     return !targets || matchingCodecProfileIsCompatible(profile, profileType, source);
 }
 
-function codecProfilesAreCompatible(
-    profiles: DeviceProfile['CodecProfiles'],
-    source: ParsedPlaybackSource
-): boolean {
+function codecProfilesAreCompatible(profiles: DeviceProfile['CodecProfiles'], source: ParsedPlaybackSource): boolean {
     if (profiles == null) {
         return true;
     }
@@ -618,10 +587,7 @@ function codecProfilesAreCompatible(
     return true;
 }
 
-function containerProfilesAreCompatible(
-    profiles: DeviceProfile['ContainerProfiles'],
-    source: ParsedPlaybackSource
-): boolean {
+function containerProfilesAreCompatible(profiles: DeviceProfile['ContainerProfiles'], source: ParsedPlaybackSource): boolean {
     if (profiles == null) {
         return true;
     }
@@ -650,10 +616,7 @@ function containerProfilesAreCompatible(
     return true;
 }
 
-function hasMatchingDirectPlayProfile(
-    profiles: DeviceProfile['DirectPlayProfiles'],
-    source: ParsedPlaybackSource
-): boolean {
+function hasMatchingDirectPlayProfile(profiles: DeviceProfile['DirectPlayProfiles'], source: ParsedPlaybackSource): boolean {
     if (!Array.isArray(profiles)) {
         return false;
     }
@@ -689,10 +652,7 @@ function hasMatchingDirectPlayProfile(
 }
 
 /** Proves that the selected DirectPlay source satisfies the original HTML profile. */
-export function isSameSessionNativePlaybackCompatible(
-    options: unknown,
-    deviceProfile: DeviceProfile
-): boolean {
+export function isSameSessionNativePlaybackCompatible(options: unknown, deviceProfile: DeviceProfile): boolean {
     if (!isRecord(deviceProfile)) {
         return false;
     }

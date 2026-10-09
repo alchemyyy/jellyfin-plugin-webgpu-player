@@ -1,14 +1,12 @@
-// Ported unchanged from the fork's components/playback/PlaybackBitratePolicy; the PlaybackInfo
-// interceptor applies these rules because the stock PlaybackManager has no bitrate purpose seam
+// Ported unchanged from the fork's components/playback/PlaybackBitratePolicy.
+// The PlaybackInfo interceptor applies these rules because the stock PlaybackManager has no bitrate purpose seam
 
 export const PLAYBACK_SELECTION_BITRATE_PURPOSE = 'playback-selection';
 export const TRANSCODE_OUTPUT_BITRATE_PURPOSE = 'transcode-output';
 
 const TRANSCODE_PLAY_METHOD = 'Transcode';
 
-export type PlaybackBitratePurpose =
-    | typeof PLAYBACK_SELECTION_BITRATE_PURPOSE
-    | typeof TRANSCODE_OUTPUT_BITRATE_PURPOSE;
+export type PlaybackBitratePurpose = typeof PLAYBACK_SELECTION_BITRATE_PURPOSE | typeof TRANSCODE_OUTPUT_BITRATE_PURPOSE;
 
 export type PlaybackBitrateRequest = {
     fallbackBitrate: number | null | undefined
@@ -16,9 +14,7 @@ export type PlaybackBitrateRequest = {
 };
 
 type PlaybackBitratePlayer = {
-    getMaxStreamingBitrate?: (
-        request?: PlaybackBitrateRequest
-    ) => number | null | undefined
+    getMaxStreamingBitrate?: (request?: PlaybackBitrateRequest) => number | null | undefined
 };
 
 type PlaybackMediaSourceCandidate = {
@@ -27,7 +23,7 @@ type PlaybackMediaSourceCandidate = {
     enableDirectPlay?: boolean
 };
 
-/** Resolves the bitrate value for one explicitly identified use. */
+/** Returns the player's bitrate for the purpose, or the fallback bitrate when the player has no getMaxStreamingBitrate. */
 export function getPlayerMaxStreamingBitrate(
     player: PlaybackBitratePlayer | null | undefined,
     fallbackBitrate: number | null | undefined,
@@ -48,8 +44,7 @@ export function shouldKeepTranscode(
     playMethod: string | null | undefined,
     fallbackBitrate: number | null | undefined
 ): boolean {
-    return playMethod === TRANSCODE_PLAY_METHOD
-        && getPlayerMaxStreamingBitrate(player, fallbackBitrate) == null;
+    return playMethod === TRANSCODE_PLAY_METHOD && getPlayerMaxStreamingBitrate(player, fallbackBitrate) == null;
 }
 
 /** Returns true only after bitrate-free selection has fixed a transcode. */

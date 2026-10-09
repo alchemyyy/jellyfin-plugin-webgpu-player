@@ -1,13 +1,13 @@
 import browser from 'scripts/browser';
 
-// Shim for scripts/browserDeviceProfile: the HTML backend always gets its profile from appHost.getDeviceProfile,
-// which every supported host defines, so only canPlaySecondaryAudio keeps the host implementation
+// Shim for scripts/browserDeviceProfile: only canPlaySecondaryAudio keeps the host implementation.
+// The HTML backend always gets its profile from appHost.getDeviceProfile, which every supported host defines
 
 const MINIMUM_TIZEN_SECONDARY_AUDIO_VERSION = 5.5;
 const UNSUPPORTED_TIZEN_SECONDARY_AUDIO_VERSION = 8;
 const MINIMUM_WEBOS_SECONDARY_AUDIO_VERSION = 4.0;
 
-/** Checks whether the web engine supports secondary audio, exactly as the host does. */
+/** Checks whether the web engine supports secondary audio, as the host does. */
 export function canPlaySecondaryAudio(videoTestElement: HTMLVideoElement & { audioTracks?: unknown }): boolean {
     // An unknown version compares like undefined does in the host's comparisons
     const tizenVersion = browser.tizenVersion ?? 0;

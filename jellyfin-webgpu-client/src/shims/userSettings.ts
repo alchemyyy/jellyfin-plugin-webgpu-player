@@ -8,8 +8,7 @@ import {
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
 
 // Shim for scripts/settings/userSettings: the host instance is not in the plugin bag
-// NOTE: Every setting the add-on reads is local (enableOnServer false), which the host stores through
-// appSettings under '<userId>-<name>', so these reads match the host exactly
+// NOTE: Every setting the add-on reads is local (enableOnServer false), which the host stores through appSettings under '<userId>-<name>', so these reads match the host
 
 const SUBTITLE_APPEARANCE_KEY = 'localplayersubtitleappearance3';
 const AUDIO_NORMALIZATION_KEY = 'selectAudioNormalization';
@@ -32,8 +31,8 @@ function getCurrentUserId(): string | undefined {
 }
 
 /**
- * Local per-user settings with the host's storage keys. The host's enableOnServer argument is accepted
- * and ignored: server-synced display preferences are not reachable from the add-on.
+ * Local per-user settings with the host's storage keys.
+ * The host's enableOnServer argument is accepted and ignored: server-synced display preferences are not reachable from the add-on.
  */
 export class UserSettings {
     /** Reads a setting from local storage. */
@@ -72,9 +71,7 @@ export class UserSettings {
             this.set(PREFERRED_VIDEO_PLAYER_KEY, preference);
             return preference;
         }
-        return normalizeVideoPlayerPreference(
-            this.get(PREFERRED_VIDEO_PLAYER_KEY) ?? VideoPlayerPreference.Auto
-        );
+        return normalizeVideoPlayerPreference(this.get(PREFERRED_VIDEO_PLAYER_KEY) ?? VideoPlayerPreference.Auto);
     }
 
     /** Gets or sets the local WebGPU stereo downmix algorithm. */
@@ -84,9 +81,7 @@ export class UserSettings {
             this.set(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY, algorithm);
             return algorithm;
         }
-        return normalizeCustomAudioDownmixAlgorithm(
-            this.get(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY)
-        );
+        return normalizeCustomAudioDownmixAlgorithm(this.get(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY));
     }
 }
 

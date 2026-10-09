@@ -19,23 +19,17 @@ export function notify(): ReturnType<InputManagerModule['notify']> {
 }
 
 /** Subscribes to host input commands. */
-export function on(
-    ...parameters: Parameters<InputManagerModule['on']>
-): ReturnType<InputManagerModule['on']> {
+export function on(...parameters: Parameters<InputManagerModule['on']>): ReturnType<InputManagerModule['on']> {
     return inputManager.on(...parameters);
 }
 
 /** Unsubscribes from host input commands. */
-export function off(
-    ...parameters: Parameters<InputManagerModule['off']>
-): ReturnType<InputManagerModule['off']> {
+export function off(...parameters: Parameters<InputManagerModule['off']>): ReturnType<InputManagerModule['off']> {
     return inputManager.off(...parameters);
 }
 
 /** Dispatches a host input command. */
-export function handleCommand(
-    ...parameters: Parameters<InputManagerModule['handleCommand']>
-): ReturnType<InputManagerModule['handleCommand']> {
+export function handleCommand(...parameters: Parameters<InputManagerModule['handleCommand']>): ReturnType<InputManagerModule['handleCommand']> {
     return inputManager.handleCommand(...parameters);
 }
 

@@ -4,9 +4,11 @@ import { defineConfig, type Plugin } from 'vite';
 import constants from './scripts/constants';
 import jellyfinWeb from './scripts/jellyfin-web';
 
-// Module specifiers resolve as in webpack.config.js: the add-on's absolute specifiers, the engine, and the hls.js
-// fork through aliases; npm packages from this package's node_modules; host modules (components/..., utils/...)
-// from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR. Every folder comes from scripts/constants.js
+// Module specifiers resolve as in webpack.config.js:
+// - the add-on's absolute specifiers, the engine, and the hls.js fork, through aliases;
+// - npm packages, from this package's node_modules;
+// - host modules (components/..., utils/...), from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR.
+// Every folder comes from scripts/constants.js
 
 const HOST_SOURCE_PATH = jellyfinWeb.resolveJellyfinWebSourceDirectory().split(path.sep).join('/');
 // Resolving from a file of this package finds npm packages in this package's node_modules
@@ -39,8 +41,8 @@ function hostModuleResolution(): Plugin {
 
 export default defineConfig({
     plugins: [ hostModuleResolution() ],
-    // Vite serves only this package by default; the test files are entry points outside it, so nothing imports them
-    // from an allowed file (host modules are imported, which is what lets them load)
+    // Vite serves only this package by default.
+    // The test files are entry points outside it that no allowed file imports, so they need an allow entry; host modules load because allowed files import them
     server: {
         fs: {
             allow: [ constants.CLIENT_DIRECTORY, TESTS_DIRECTORY ]

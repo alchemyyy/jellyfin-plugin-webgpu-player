@@ -1,7 +1,6 @@
 // Type-checks the add-on and the engine sources with tsconfig.json, like `tsc --noEmit`.
-// Host modules are part of the program, so the add-on is checked against the real host types, but files inside
-// JELLYFIN_WEB_DIR are not checked: the host is a read-only input whose own dependencies (React, MUI, TanStack
-// Query) the add-on neither installs nor bundles
+// Host modules are part of the program, so the add-on is checked against the real host types, but files inside JELLYFIN_WEB_DIR are not checked.
+// The host is a read-only input whose own dependencies (React, MUI, TanStack Query) the add-on neither installs nor bundles
 const path = require('path');
 const ts = require('typescript');
 const { CLIENT_DIRECTORY } = require('./constants');

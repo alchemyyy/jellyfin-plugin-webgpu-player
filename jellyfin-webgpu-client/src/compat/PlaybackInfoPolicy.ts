@@ -74,8 +74,9 @@ function setRequestedBitrate(body: PlaybackInfoRequestBody, bitrate: number | nu
 
 /**
  * Rewrites one PlaybackInfo body with the fork's rules:
- * selection omits bitrate, a stream change during a transcode keeps transcoding at the
- * transcode-output bitrate, and a stream-copy veto disables video copy.
+ * - selection omits bitrate;
+ * - a stream change during a transcode keeps transcoding at the transcode-output bitrate;
+ * - a stream-copy veto disables video copy.
  */
 export function applyPlaybackInfoRequestPolicy(
     body: PlaybackInfoRequestBody,
@@ -86,8 +87,8 @@ export function applyPlaybackInfoRequestPolicy(
         nextBody.AllowVideoStreamCopy = false;
     }
 
-    // The stock PlaybackManager sends the cap it would use: the detected bitrate on first play, and on stream
-    // changes the requested bitrate or the cap getMaxStreamingBitrate() returns, the fork's fallback bitrate
+    // The body carries the cap the stock PlaybackManager would use, which is the fork's fallback bitrate.
+    // On first play that is the detected bitrate; on stream changes it is the requested bitrate or the cap getMaxStreamingBitrate() returns
     const fallbackBitrate = getRequestedBitrate(body);
     switch (context.purpose) {
         case PlaybackInfoNegotiationPurpose.Selection: {
@@ -105,15 +106,8 @@ export function applyPlaybackInfoRequestPolicy(
             return { body: nextBody, transcodeSizing };
         }
         case PlaybackInfoNegotiationPurpose.StreamChange: {
-            const keepTranscode = shouldKeepTranscode(
-                context.player,
-                context.currentPlayMethod,
-                fallbackBitrate
-            );
-            const transcodeOutputRequest = (
-                body.EnableDirectPlay === false
-                && body.EnableDirectStream === false
-            ) || keepTranscode;
+            const keepTranscode = shouldKeepTranscode(context.player, context.currentPlayMethod, fallbackBitrate);
+            const transcodeOutputRequest = (body.EnableDirectPlay === false && body.EnableDirectStream === false) || keepTranscode;
             if (keepTranscode) {
                 nextBody.EnableDirectPlay = false;
                 nextBody.EnableDirectStream = false;
@@ -131,10 +125,7 @@ export function applyPlaybackInfoRequestPolicy(
 }
 
 /** Returns whether the selected source needs the fork's second, transcode-sizing request. */
-export function needsTranscodeSizingRequest(
-    sizing: TranscodeSizingRequest,
-    selection: MediaSourceSelection
-): boolean {
+export function needsTranscodeSizingRequest(sizing: TranscodeSizingRequest, selection: MediaSourceSelection): boolean {
     return !selection.mediaSource.RequiresOpening
         && shouldUsePostSelectionTranscodeBitrate(
             sizing.selectionBitrate,

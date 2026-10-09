@@ -305,8 +305,8 @@ export class HtmlVideoPlayer {
      */
     #videoDialog;
     /**
-     * Player identity owned by PlaybackManager. This differs from `this` when
-     * HtmlVideoPlayer is composed inside another local player.
+     * Player identity owned by PlaybackManager.
+     * This differs from `this` when HtmlVideoPlayer is composed inside another local player.
      *
      * @type {object}
      */
@@ -579,10 +579,7 @@ export class HtmlVideoPlayer {
      * @private
      */
     #markPendingPlaySource(playSessionGeneration, mediaElement) {
-        if (
-            this.#pendingPlay?.generation === playSessionGeneration
-            && this.#isPlaySessionCurrent(playSessionGeneration, mediaElement)
-        ) {
+        if (this.#pendingPlay?.generation === playSessionGeneration && this.#isPlaySessionCurrent(playSessionGeneration, mediaElement)) {
             this.#pendingPlay.mediaElement = mediaElement;
         }
     }
@@ -702,10 +699,7 @@ export class HtmlVideoPlayer {
      * @private
      */
     #isSubtitleRenderCurrent(subtitleRender, videoElement) {
-        if (
-            subtitleRender.sessionGeneration !== this.#subtitleSessionGeneration
-            || videoElement !== this.#mediaElement
-        ) {
+        if (subtitleRender.sessionGeneration !== this.#subtitleSessionGeneration || videoElement !== this.#mediaElement) {
             return false;
         }
 
@@ -745,10 +739,7 @@ export class HtmlVideoPlayer {
      * @private
      */
     decrementFetchQueue(sessionGeneration) {
-        if (
-            sessionGeneration !== this.#subtitleSessionGeneration
-            || this.#fetchQueueGeneration !== sessionGeneration
-        ) {
+        if (sessionGeneration !== this.#subtitleSessionGeneration || this.#fetchQueueGeneration !== sessionGeneration) {
             return;
         }
 
@@ -910,11 +901,11 @@ export class HtmlVideoPlayer {
     }
 
     /**
-     * Creates the normal video, subtitle, and OSD surface without assigning a
-     * native media source. A composed player can then own demux and decode.
+     * Creates the normal video, subtitle, and OSD surface without assigning a native media source.
+     * A composed player can then own demux and decode.
      *
      * @param {any} options
-     * @returns {Promise<{ container: HTMLDivElement, video: HTMLVideoElement } | string | null>}
+     * @returns {Promise<{ container: HTMLDivElement, video: HTMLVideoElement } | symbol | null>}
      */
     async prepareCustomPlayback(options) {
         this.#invalidatePlaySession();
@@ -1141,8 +1132,7 @@ export class HtmlVideoPlayer {
                         rejectSource,
                         {
                             hlsRuntime: HLSRuntime,
-                            isCurrent: () => this.#isPlaySessionCurrent(playSessionGeneration, elem)
-                                && this._hlsPlayer === hls,
+                            isCurrent: () => this.#isPlaySessionCurrent(playSessionGeneration, elem) && this._hlsPlayer === hls,
                             onEstablishedError: rejectSource
                         }
                     );
@@ -1734,10 +1724,7 @@ export class HtmlVideoPlayer {
              * Putting this in a timeout fixes it completely.
              */
             setTimeout(() => {
-                if (
-                    subtitleSessionGeneration !== this.#subtitleSessionGeneration
-                    || videoElement !== this.#mediaElement
-                ) {
+                if (subtitleSessionGeneration !== this.#subtitleSessionGeneration || videoElement !== this.#mediaElement) {
                     return;
                 }
 
@@ -1747,8 +1734,7 @@ export class HtmlVideoPlayer {
     }
 
     /**
-     * Activates the existing Jellyfin playback UI for a source decoded by a
-     * composed player rather than by the owned video element.
+     * Activates the existing Jellyfin playback UI for a source decoded by a composed player rather than by the owned video element.
      *
      * @param {boolean} emitUnpause
      * @returns {boolean}
@@ -1824,16 +1810,11 @@ export class HtmlVideoPlayer {
         return true;
     }
 
-    /** Returns the exact custom-clock time expected by specialized renderers. */
+    /** Returns the subtitle time in seconds for specialized renderers: the custom clock plus the transcoding and subtitle offsets. */
     #getCustomSubtitleTimeSeconds(timeMilliseconds = (this.#currentTime || 0) * MILLISECONDS_PER_SECOND) {
-        const transcodingOffsetSeconds = (this._currentPlayOptions?.transcodingOffsetTicks || 0)
-            / TICKS_PER_SECOND;
-        const subtitleOffsetSeconds = Number.isFinite(this.#currentTrackOffset) ?
-            this.#currentTrackOffset :
-            0;
-        return timeMilliseconds / MILLISECONDS_PER_SECOND
-            + transcodingOffsetSeconds
-            + subtitleOffsetSeconds;
+        const transcodingOffsetSeconds = (this._currentPlayOptions?.transcodingOffsetTicks || 0) / TICKS_PER_SECOND;
+        const subtitleOffsetSeconds = Number.isFinite(this.#currentTrackOffset) ? this.#currentTrackOffset : 0;
+        return timeMilliseconds / MILLISECONDS_PER_SECOND + transcodingOffsetSeconds + subtitleOffsetSeconds;
     }
 
     /**
@@ -1869,12 +1850,8 @@ export class HtmlVideoPlayer {
 
         const containerRectangle = container.getBoundingClientRect();
         const videoRectangle = videoElement.getBoundingClientRect();
-        const containerScaleX = container.clientWidth > 0 ?
-            containerRectangle.width / container.clientWidth :
-            1;
-        const containerScaleY = container.clientHeight > 0 ?
-            containerRectangle.height / container.clientHeight :
-            1;
+        const containerScaleX = container.clientWidth > 0 ? containerRectangle.width / container.clientWidth : 1;
+        const containerScaleY = container.clientHeight > 0 ? containerRectangle.height / container.clientHeight : 1;
         const normalizedScaleX = containerScaleX > 0 ? containerScaleX : 1;
         const normalizedScaleY = containerScaleY > 0 ? containerScaleY : 1;
         const fallbackWidth = videoElement.clientWidth || container.clientWidth;
@@ -1908,29 +1885,18 @@ export class HtmlVideoPlayer {
         }
 
         if (this.#currentAssCanvas) {
-            const geometry = this.#synchronizeCustomSubtitleCanvas(
-                this.#currentAssCanvas,
-                this.#mediaElement
-            );
+            const geometry = this.#synchronizeCustomSubtitleCanvas(this.#currentAssCanvas, this.#mediaElement);
             if (geometry && this.#currentAssRenderer?.resize) {
                 const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
-                const width = Math.max(
-                    MINIMUM_SUBTITLE_CANVAS_DIMENSION,
-                    Math.round(geometry.width * pixelRatio)
-                );
-                const height = Math.max(
-                    MINIMUM_SUBTITLE_CANVAS_DIMENSION,
-                    Math.round(geometry.height * pixelRatio)
-                );
+                const width = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.width * pixelRatio));
+                const height = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.height * pixelRatio));
                 this.#currentAssRenderer.resize(width, height, 0, 0);
             }
         }
     }
 
     /** Advances ASS/SSA and bitmap renderers from the source-less custom clock. */
-    #renderCustomSpecializedSubtitles(
-        timeMilliseconds = (this.#currentTime || 0) * MILLISECONDS_PER_SECOND
-    ) {
+    #renderCustomSpecializedSubtitles(timeMilliseconds = (this.#currentTime || 0) * MILLISECONDS_PER_SECOND) {
         if (!this.#customPlaybackActive) {
             return;
         }
@@ -1941,10 +1907,7 @@ export class HtmlVideoPlayer {
             this.#currentAssRenderer.setCurrentTime(timeSeconds);
         }
         if (this.#currentBitmapSubRenderer) {
-            this.#currentBitmapSubRenderer.timeOffset = this.#getBitmapSubtitleTimeOffset(
-                this.#mediaElement,
-                timeMilliseconds
-            );
+            this.#currentBitmapSubRenderer.timeOffset = this.#getBitmapSubtitleTimeOffset(this.#mediaElement, timeMilliseconds);
         }
     }
 
@@ -1954,10 +1917,7 @@ export class HtmlVideoPlayer {
             return;
         }
 
-        this.#currentAssRenderer.setIsPaused(
-            this.#customPlaybackPaused,
-            this.#getCustomSubtitleTimeSeconds()
-        );
+        this.#currentAssRenderer.setIsPaused(this.#customPlaybackPaused, this.#getCustomSubtitleTimeSeconds());
     }
 
     /**
@@ -1991,10 +1951,7 @@ export class HtmlVideoPlayer {
             const subtitleSessionGeneration = this.#subtitleSessionGeneration;
             const videoElement = this.#mediaElement;
             appRouter.showVideoOsd().then(() => {
-                if (
-                    subtitleSessionGeneration !== this.#subtitleSessionGeneration
-                    || videoElement !== this.#mediaElement
-                ) {
+                if (subtitleSessionGeneration !== this.#subtitleSessionGeneration || videoElement !== this.#mediaElement) {
                     return;
                 }
 
@@ -2298,9 +2255,7 @@ export class HtmlVideoPlayer {
             return;
         }
 
-        const customCanvas = this.#customPlaybackActive ?
-            this.#createCustomSubtitleCanvas(videoElement) :
-            null;
+        const customCanvas = this.#customPlaybackActive ? this.#createCustomSubtitleCanvas(videoElement) : null;
         const rendererOptions = customCanvas ? {
             ...options,
             canvas: customCanvas,
@@ -2426,20 +2381,10 @@ export class HtmlVideoPlayer {
                             });
                             availableFonts.push(fontUrl);
                         });
-                        this.#installAssRenderer(
-                            SubtitlesOctopus,
-                            options,
-                            videoElement,
-                            subtitleRender
-                        );
+                        this.#installAssRenderer(SubtitlesOctopus, options, videoElement, subtitleRender);
                     });
                 } else {
-                    this.#installAssRenderer(
-                        SubtitlesOctopus,
-                        options,
-                        videoElement,
-                        subtitleRender
-                    );
+                    this.#installAssRenderer(SubtitlesOctopus, options, videoElement, subtitleRender);
                 }
             });
         });
@@ -2897,11 +2842,7 @@ export class HtmlVideoPlayer {
                     }
 
                     // don't animate on smart tv's, too slow
-                    if (
-                        !this.#customPlaybackActive
-                        && !browser.slow
-                        && browser.supportsCssAnimation()
-                    ) {
+                    if (!this.#customPlaybackActive && !browser.slow && browser.supportsCssAnimation()) {
                         return zoomIn(playerDlg).then(() => {
                             return this.#isPlaySessionCurrent(playSessionGeneration, videoElement) ? videoElement : null;
                         });

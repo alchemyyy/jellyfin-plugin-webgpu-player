@@ -1,5 +1,5 @@
-// Writes tsconfig.host.json, the part of tsconfig.json that depends on JELLYFIN_WEB_DIR: the module specifier paths
-// and the host's ambient declaration files. The npm scripts run this before every TypeScript-aware tool
+// Writes tsconfig.host.json, the part of tsconfig.json that depends on JELLYFIN_WEB_DIR: the module specifier paths and the host's ambient declaration files.
+// The npm scripts run this before every TypeScript-aware tool
 const fs = require('fs');
 const path = require('path');
 const {

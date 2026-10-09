@@ -27,9 +27,7 @@ const pendingTranslations = new Map<string, Promise<void>>();
 function getLocale(): string {
     // Unbound until construction, so code evaluated earlier sees the source locale
     const locale: unknown = (globalize as GlobalizeModule | undefined)?.getCurrentLocale();
-    return typeof locale === 'string' && locale.length > 0 ?
-        locale.replace(/_/g, '-').toLowerCase() :
-        SOURCE_LOCALE;
+    return typeof locale === 'string' && locale.length > 0 ? locale.replace(/_/g, '-').toLowerCase() : SOURCE_LOCALE;
 }
 
 /** Loads a locale's translation: its own file, else its base language's file, as the host's loader does. */
@@ -113,15 +111,11 @@ export function translateHtml(html: string | { default: string }, module?: strin
     return globalize.translateHtml(expanded, module);
 }
 
-export function loadStrings(
-    ...parameters: Parameters<GlobalizeModule['loadStrings']>
-): ReturnType<GlobalizeModule['loadStrings']> {
+export function loadStrings(...parameters: Parameters<GlobalizeModule['loadStrings']>): ReturnType<GlobalizeModule['loadStrings']> {
     return globalize.loadStrings(...parameters);
 }
 
-export function defaultModule(
-    ...parameters: Parameters<GlobalizeModule['defaultModule']>
-): ReturnType<GlobalizeModule['defaultModule']> {
+export function defaultModule(...parameters: Parameters<GlobalizeModule['defaultModule']>): ReturnType<GlobalizeModule['defaultModule']> {
     return globalize.defaultModule(...parameters);
 }
 
@@ -133,9 +127,7 @@ export function getCurrentDateTimeLocale(): ReturnType<GlobalizeModule['getCurre
     return globalize.getCurrentDateTimeLocale();
 }
 
-export function register(
-    ...parameters: Parameters<GlobalizeModule['register']>
-): ReturnType<GlobalizeModule['register']> {
+export function register(...parameters: Parameters<GlobalizeModule['register']>): ReturnType<GlobalizeModule['register']> {
     return globalize.register(...parameters);
 }
 
@@ -147,9 +139,7 @@ export function getIsRTL(): ReturnType<GlobalizeModule['getIsRTL']> {
     return globalize.getIsRTL();
 }
 
-export function getIsElementRTL(
-    ...parameters: Parameters<GlobalizeModule['getIsElementRTL']>
-): ReturnType<GlobalizeModule['getIsElementRTL']> {
+export function getIsElementRTL(...parameters: Parameters<GlobalizeModule['getIsElementRTL']>): ReturnType<GlobalizeModule['getIsElementRTL']> {
     return globalize.getIsElementRTL(...parameters);
 }
 

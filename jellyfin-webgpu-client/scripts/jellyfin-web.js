@@ -8,8 +8,7 @@ const JELLYFIN_WEB_DIRECTORY_VARIABLE = 'JELLYFIN_WEB_DIR';
 const SOURCE_DIRECTORY_NAME = 'src';
 
 /**
- * Resolves JELLYFIN_WEB_DIR, an absolute path or one relative to the client package, and checks that it holds
- * a Jellyfin Web source tree.
+ * Resolves JELLYFIN_WEB_DIR, an absolute path or one relative to the client package, and checks that it holds a Jellyfin Web source tree.
  */
 function resolveJellyfinWebDirectory() {
     const configuredDirectory = process.env[JELLYFIN_WEB_DIRECTORY_VARIABLE] || DEFAULT_JELLYFIN_WEB_DIRECTORY;

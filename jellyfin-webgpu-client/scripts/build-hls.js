@@ -1,6 +1,5 @@
 // Builds the vendored hls.js fork when its dist is missing; webpack aliases hls.js to it.
-// Only the rollup JavaScript bundles: the fork's type build fails inside this package, because TypeScript's ancestor
-// @types lookup finds conflicting declarations in this package's node_modules
+// Only the rollup JavaScript bundles: the fork's type build fails inside this package, because TypeScript's ancestor @types lookup finds conflicting declarations in this package's node_modules
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');

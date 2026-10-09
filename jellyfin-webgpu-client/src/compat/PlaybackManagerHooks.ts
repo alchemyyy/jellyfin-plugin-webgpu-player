@@ -1,5 +1,5 @@
-// The fork's PlaybackManager cancelled pending local starts at every new playback request. The stock one
-// has no request generations, so these wrappers cancel a pending WebGPU start before the request runs
+// The fork's PlaybackManager cancelled pending local starts at every new playback request.
+// The stock one has no request generations, so these wrappers cancel a pending WebGPU start before the request runs
 
 /** PlaybackManager entry points that begin a new playback request or end the current one */
 export const SUPERSEDING_PLAYBACK_MANAGER_METHODS = [
@@ -25,10 +25,7 @@ type MethodFunction = (this: unknown, ...methodArguments: unknown[]) => unknown;
 const hookedPlaybackManagers = new WeakSet<object>();
 
 /** Wraps the superseding PlaybackManager methods once; returns false when they were already wrapped. */
-export function installPlaybackManagerHooks(
-    playbackManager: object,
-    callbacks: PlaybackManagerHookCallbacks
-): boolean {
+export function installPlaybackManagerHooks(playbackManager: object, callbacks: PlaybackManagerHookCallbacks): boolean {
     if (hookedPlaybackManagers.has(playbackManager)) {
         return false;
     }

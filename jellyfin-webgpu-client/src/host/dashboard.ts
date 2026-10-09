@@ -14,16 +14,12 @@ export function bindDashboard(value: DashboardModule): void {
 }
 
 /** Runs a handler for a page event on the page with the given id. */
-export function pageIdOn(
-    ...parameters: Parameters<DashboardModule['pageIdOn']>
-): ReturnType<DashboardModule['pageIdOn']> {
+export function pageIdOn(...parameters: Parameters<DashboardModule['pageIdOn']>): ReturnType<DashboardModule['pageIdOn']> {
     return dashboard.pageIdOn(...parameters);
 }
 
 /** Runs a handler for a page event on pages with the given class. */
-export function pageClassOn(
-    ...parameters: Parameters<DashboardModule['pageClassOn']>
-): ReturnType<DashboardModule['pageClassOn']> {
+export function pageClassOn(...parameters: Parameters<DashboardModule['pageClassOn']>): ReturnType<DashboardModule['pageClassOn']> {
     return dashboard.pageClassOn(...parameters);
 }
 
