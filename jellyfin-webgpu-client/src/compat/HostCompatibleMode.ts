@@ -7,6 +7,7 @@ import { installSettingsEntryPoints, type SettingsEntryPlayer } from './Settings
 /** Player members the host-compatible hooks use */
 export type HostCompatiblePlayer = SettingsEntryPlayer & {
     cancelPendingPlayForNewRequest: () => boolean
+    isRequestStartPending: () => boolean
 };
 
 const hostCompatiblePlayers = new Set<HostCompatiblePlayer>();
@@ -20,6 +21,16 @@ function cancelPendingPlays(): boolean {
     return cancelled;
 }
 
+/** Returns whether no add-on player has completed or lost a start for the latest request. */
+function isRequestStartPending(): boolean {
+    for (const player of hostCompatiblePlayers) {
+        if (!player.isRequestStartPending()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function hideLoading(): void {
     loading.hide();
 }
@@ -27,6 +38,6 @@ function hideLoading(): void {
 /** Installs the PlaybackManager hooks and settings entry points once; call after the host bridge is bound. */
 export function installHostCompatibleMode(player: HostCompatiblePlayer): void {
     hostCompatiblePlayers.add(player);
-    installPlaybackManagerHooks(playbackManager, { cancelPendingPlays, hideLoading });
+    installPlaybackManagerHooks(playbackManager, { cancelPendingPlays, hideLoading, isRequestStartPending });
     installSettingsEntryPoints(player);
 }

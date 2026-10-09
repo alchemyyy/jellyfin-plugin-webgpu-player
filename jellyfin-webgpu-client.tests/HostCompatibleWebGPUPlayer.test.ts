@@ -276,4 +276,32 @@ describe('HostCompatibleWebGPUPlayer', () => {
             expect(player.cancelPendingPlayCount).toBe(2);
         });
     });
+
+    describe('isRequestStartPending', () => {
+        it('reports a request that has yet to start, or is still starting, as pending', () => {
+            const player = createPlayer();
+            player.playResult = createDeferred().promise;
+
+            player.cancelPendingPlayForNewRequest();
+            expect(player.isRequestStartPending()).toBe(true);
+
+            void player.play(STREAM_INFO);
+            player.pendingPlay = true;
+            expect(player.isRequestStartPending()).toBe(true);
+        });
+
+        it('stops reporting a request once its start is no longer pending', () => {
+            const player = createPlayer();
+            player.playResult = createDeferred().promise;
+            player.cancelPendingPlayForNewRequest();
+            void player.play(STREAM_INFO);
+
+            // The start completed, or a stream change, stop, or destroy superseded it without a new request
+            player.pendingPlay = false;
+            expect(player.isRequestStartPending()).toBe(false);
+
+            player.cancelPendingPlayForNewRequest();
+            expect(player.isRequestStartPending()).toBe(true);
+        });
+    });
 });

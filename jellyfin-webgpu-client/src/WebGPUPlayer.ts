@@ -87,6 +87,7 @@ import {
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import {
     type CustomDecodeCapabilities,
+    hasProbedCustomDecodeSelection,
     probeCustomDecodeCapabilities
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 import { getAudioNormalizationLinearGain } from 'webgpu-player/audio/AudioNormalization';
@@ -204,6 +205,19 @@ function isRawOnlyHDRPresentation(options: unknown): boolean {
     return RAW_ONLY_HDR_VIDEO_CODECS.has(codec)
         || ([ 'H265', 'HEVC' ].includes(codec)
             && getHEVCRangeExtensionStreamDefinitionFromMetadata(videoStream) !== null);
+}
+
+/** Returns the media source a play request carries when it lists its streams, or null. */
+function getPlaybackMediaSourceWithStreams(options: unknown): object | null {
+    if (!options || typeof options !== 'object') {
+        return null;
+    }
+    const mediaSource = (options as { mediaSource?: unknown }).mediaSource;
+    if (!mediaSource || typeof mediaSource !== 'object') {
+        return null;
+    }
+    const mediaStreams = (mediaSource as { MediaStreams?: unknown }).MediaStreams;
+    return Array.isArray(mediaStreams) && mediaStreams.length > 0 ? mediaSource : null;
 }
 
 type OptionalItemCompatibility = {
@@ -1051,8 +1065,9 @@ export default class WebGPUPlayer {
             getCustomSubtitleCapabilities(profile as DeviceProfile, runtimeAvailability) :
             null;
 
+        // The item scopes the video probes to its streams; every audio probe runs
         const [ capabilities, nativeMediaAudioCapabilities ] = await Promise.all([
-            probeCustomDecodeCapabilities(),
+            probeCustomDecodeCapabilities(item),
             isRetry ? Promise.resolve(null) : probeCachedNativeMediaAudioCapabilities()
         ]);
         const HDRDeviceProfileOptions = await this.getHDRDeviceProfileOptions(item, isRetry);
@@ -2669,6 +2684,21 @@ export default class WebGPUPlayer {
         );
     }
 
+    /**
+     * Returns capabilities covering the played source's probes.
+     * The negotiated result serves its own item, so a source whose video it did not probe is probed now.
+     * A source without stream metadata cannot scope probes, so it keeps the negotiated result.
+     */
+    private getCustomDecodeCapabilitiesForOptions(options: unknown): Promise<CustomDecodeCapabilities> {
+        const negotiatedCapabilities = this.lastCustomDecodeCapabilities;
+        const mediaSource = getPlaybackMediaSourceWithStreams(options);
+        if (negotiatedCapabilities
+            && (mediaSource === null || hasProbedCustomDecodeSelection(negotiatedCapabilities, mediaSource))) {
+            return Promise.resolve(negotiatedCapabilities);
+        }
+        return probeCustomDecodeCapabilities(mediaSource ?? undefined);
+    }
+
     private async getCustomPlaybackEligibilityForOptions(
         options: unknown,
         backendGeneration: number
@@ -2683,7 +2713,7 @@ export default class WebGPUPlayer {
         const runtimeAvailability = getCustomPlaybackRuntimeAvailability();
         this.lastCustomPlaybackRuntimeAvailability = runtimeAvailability;
         const [ capabilities, nativeMediaAudioCapabilities ] = await Promise.all([
-            this.lastCustomDecodeCapabilities ?? probeCustomDecodeCapabilities(),
+            this.getCustomDecodeCapabilitiesForOptions(options),
             this.lastNativeMediaAudioCapabilities ?? probeCachedNativeMediaAudioCapabilities()
         ]);
         if (!this.isRequestedSessionCurrent(backendGeneration)) {

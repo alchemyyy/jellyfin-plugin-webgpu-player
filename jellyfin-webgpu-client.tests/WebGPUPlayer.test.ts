@@ -805,6 +805,14 @@ import WebGPUPlayer, {
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
 import { getCustomPlaybackEligibility } from 'webgpu-player/capability/CustomPlaybackEligibility';
+import {
+    CUSTOM_DECODE_AUDIO_PROBES,
+    CUSTOM_DECODE_VIDEO_PROBES,
+    probeCustomDecodeCapabilities,
+    type CustomDecodeCapabilities,
+    type CustomDecodeProbe,
+    type CustomDecodeProbeState
+} from 'webgpu-player/capability/CustomDecodeCapabilities';
 
 type MockFunction = ReturnType<typeof vi.fn>;
 
@@ -2010,6 +2018,20 @@ describe('WebGPUPlayer HTML delegation', () => {
             nativeMediaAudioCapabilities: null
         });
         expect(player.getNativeMediaAudioCapabilities()).toBeNull();
+    });
+
+    it('scopes the capability probes to the negotiated item', async () => {
+        const player = new WebGPUPlayer();
+        const item = {
+            Id: 'scoped-item',
+            MediaSources: [ { MediaStreams: [ { Codec: 'hevc', Type: 'Video' } ] } ]
+        };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        vi.mocked(probeCustomDecodeCapabilities).mockClear();
+
+        await player.getDeviceProfile(item, { isRetry: false });
+
+        expect(probeCustomDecodeCapabilities).toHaveBeenCalledExactlyOnceWith(item);
     });
 
     it('widens custom profile HDR ranges only when raw HDR presentation is enabled', async () => {
@@ -3435,6 +3457,48 @@ describe('WebGPUPlayer HTML delegation', () => {
             allowRawHDR: true,
             authorizedRawHDRRouteKeys: [ RAW_PQ_ROUTE_KEY ]
         });
+    });
+
+    it('probes a played source whose video probes the negotiated item did not run', async () => {
+        const player = new WebGPUPlayer();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        const audioProbes: ReadonlySet<CustomDecodeProbe> = new Set<CustomDecodeProbe>(CUSTOM_DECODE_AUDIO_PROBES);
+        const probeStates = {} as Record<CustomDecodeProbe, CustomDecodeProbeState>;
+        for (const probe of [ ...CUSTOM_DECODE_AUDIO_PROBES, ...CUSTOM_DECODE_VIDEO_PROBES ]) {
+            probeStates[probe] = audioProbes.has(probe) ? 'probed' : 'not-probed';
+        }
+        const audioOnlyCapabilities = {
+            audio: {},
+            probeStates,
+            telemetry: { reason: 'complete' },
+            video: {}
+        } as unknown as CustomDecodeCapabilities;
+        vi.mocked(probeCustomDecodeCapabilities).mockResolvedValueOnce(audioOnlyCapabilities);
+        await player.getDeviceProfile({ Id: 'audio-only-item' }, { isRetry: false });
+        vi.mocked(probeCustomDecodeCapabilities).mockClear();
+        vi.mocked(getCustomPlaybackEligibility).mockClear();
+        const options = createVideoStreamPlayOptions(AV1_HDR10_STREAM);
+
+        await player.play(options);
+
+        expect(probeCustomDecodeCapabilities).toHaveBeenCalledExactlyOnceWith(options.mediaSource);
+        expect(vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[1]).not.toBe(audioOnlyCapabilities);
+    });
+
+    it('reuses the negotiated capabilities when they cover the played source', async () => {
+        const player = new WebGPUPlayer();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        await player.getDeviceProfile({ Id: 'item' }, { isRetry: false });
+        const negotiatedCapabilities = player.getCustomDecodeCapabilities();
+        vi.mocked(probeCustomDecodeCapabilities).mockClear();
+        vi.mocked(getCustomPlaybackEligibility).mockClear();
+
+        await player.play(createVideoStreamPlayOptions(AV1_HDR10_STREAM));
+
+        expect(probeCustomDecodeCapabilities).not.toHaveBeenCalled();
+        expect(vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[1]).toBe(negotiatedCapabilities);
     });
 
     it('supersedes a play whose session stops during the raw-only HDR wait at eligibility', async () => {

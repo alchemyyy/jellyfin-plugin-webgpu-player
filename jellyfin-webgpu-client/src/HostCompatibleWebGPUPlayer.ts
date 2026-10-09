@@ -54,6 +54,8 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     // Advances whenever a start, stop, or new PlaybackManager request makes earlier starts stale
     private hostRequestRevision = 0;
+    // Whether a start began since PlaybackManager's latest request
+    private startedSinceHostRequest = false;
 
     /** Keeps the fork's purpose semantics; a purpose-less call returns the cap PlaybackManager stored. */
     getMaxStreamingBitrate(request?: StreamingBitrateRequest): number | null {
@@ -89,6 +91,7 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
     play(options: unknown): Promise<unknown> {
         const playPromise = super.play(options);
         this.hostRequestRevision += 1;
+        this.startedSinceHostRequest = true;
         const requestRevision = this.hostRequestRevision;
         return playPromise.then(
             (result: unknown): unknown => (
@@ -122,8 +125,17 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
     cancelPendingPlayForNewRequest(): boolean {
         const hadPendingPlay = this.hasPendingPlay();
         this.hostRequestRevision += 1;
+        this.startedSinceHostRequest = false;
         this.cancelPendingPlay();
         return hadPendingPlay;
+    }
+
+    /**
+     * Returns whether PlaybackManager's latest request has yet to start here, or is still starting here.
+     * The hooks cannot read this from PlaybackManager's promise, which never settles for a start that a stream change, stop, or destroy supersedes.
+     */
+    isRequestStartPending(): boolean {
+        return !this.startedSinceHostRequest || this.hasPendingPlay();
     }
 
     private abandonSupersededPlay(options: unknown): Promise<never> {

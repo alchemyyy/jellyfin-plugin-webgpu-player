@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 type HookCallbacks = {
     cancelPendingPlays: () => boolean
     hideLoading: () => void
+    isRequestStartPending: () => boolean
 };
 
 const testState = vi.hoisted(() => ({
@@ -23,10 +24,11 @@ vi.mock('addons/webGPUPlayer/compat/SettingsEntryPoints', () => ({
 
 import { installHostCompatibleMode, type HostCompatiblePlayer } from 'addons/webGPUPlayer/compat/HostCompatibleMode';
 
-function createPlayer(pending: boolean): HostCompatiblePlayer {
+function createPlayer(pending: boolean, requestStartPending = true): HostCompatiblePlayer {
     return {
         cancelPendingPlayForNewRequest: vi.fn(() => pending),
-        getSettingsMenuItems: () => []
+        getSettingsMenuItems: () => [],
+        isRequestStartPending: vi.fn(() => requestStartPending)
     };
 }
 
@@ -49,5 +51,18 @@ describe('installHostCompatibleMode', () => {
 
         callbacks.hideLoading();
         expect(testState.hide).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports the latest request as starting only while every add-on player does', () => {
+        const startingPlayer = createPlayer(true);
+        const startedPlayer = createPlayer(false, false);
+
+        installHostCompatibleMode(startingPlayer);
+        const callbacks = testState.installHooks.mock.calls[0][1] as HookCallbacks;
+        expect(callbacks.isRequestStartPending()).toBe(true);
+
+        installHostCompatibleMode(startedPlayer);
+        expect(callbacks.isRequestStartPending()).toBe(false);
+        expect(startedPlayer.isRequestStartPending).toHaveBeenCalledTimes(1);
     });
 });
