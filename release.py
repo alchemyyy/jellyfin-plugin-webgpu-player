@@ -13,10 +13,10 @@ version on the assembly.
     uv run release.py release-notes v1.3.0.0 --repository alchemyyy/jellyfin-plugin-webgpu-player
 
 set-version writes the version into both files and the changelog into build.yaml; build the plugin after it. package
-zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image, copies the
-image beside the zip, and inserts or replaces that version in a plugin repository manifest whose imageUrl names that
-copy. They land in bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow
-writes the committed manifest.json instead, with the GitHub release as the download source.
+zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image, and inserts
+or replaces that version in a plugin repository manifest whose imageUrl names the image committed on main. Both land in
+bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow writes the committed
+manifest.json instead, with the GitHub release as the download source.
 
 release-notes writes the GitHub release body: the install steps, the merged pull requests, and the commits since the
 previous release tag. It reads the history from git and the pull requests through the GitHub CLI.
@@ -48,6 +48,8 @@ PUBLISH_DIRECTORY: Path = REPOSITORY_DIRECTORY / "bin" / "Jellyfin.Plugin.WebGPU
 DEFAULT_OUTPUT_DIRECTORY: Path = REPOSITORY_DIRECTORY / "bin" / "package"
 # The catalog and plugin page image; the source SVG sits beside it
 IMAGE_FILE: Path = REPOSITORY_DIRECTORY / "images" / "jellyfin-plugin-webgpu-player-banner.png"
+# The repository whose main branch serves the image to the catalog, unless package names another
+DEFAULT_REPOSITORY: str = "alchemyyy/jellyfin-plugin-webgpu-player"
 MANIFEST_FILE_NAME: str = "manifest.json"
 METADATA_FILE_NAME: str = "meta.json"
 PACKAGE_SLUG: str = "webgpu-player"
@@ -271,7 +273,7 @@ def update_manifest(manifest_file: Path, metadata: dict, source_url: str, checks
     manifest_file.write_text(json.dumps(packages, indent=4) + "\n", encoding="utf-8", newline="\n")
 
 
-def package(source_url_base: str, output_directory: Path, manifest_file: Path) -> None:
+def package(source_url_base: str, output_directory: Path, manifest_file: Path, repository: str) -> None:
     """Packages the published plugin and records it in the manifest."""
     configuration: dict = read_build_configuration()
     check_build_properties_version(configuration["version"])
@@ -282,14 +284,11 @@ def package(source_url_base: str, output_directory: Path, manifest_file: Path) -
     package_file: Path = output_directory / package_file_name
     checksum: str = write_package(configuration, metadata, package_file)
 
-    # The image is served beside the zip: from the release assets, or from the local test repository
-    image_file: Path = output_directory / IMAGE_FILE.name
-    image_file.write_bytes(IMAGE_FILE.read_bytes())
-
     source_url: str = f"{source_url_base.rstrip('/')}/{package_file_name}"
-    image_url: str = f"{source_url_base.rstrip('/')}/{IMAGE_FILE.name}"
+    # The catalog fetches the image committed on main, as it fetches manifest.json, so a release carries no image asset
+    image_url: str = f"{GITHUB_RAW_URL}/{repository}/main/{IMAGE_FILE.relative_to(REPOSITORY_DIRECTORY).as_posix()}"
     update_manifest(manifest_file, metadata, source_url, checksum, image_url)
-    print(f"Packaged {package_file} (MD5 {checksum}) and {image_file}")
+    print(f"Packaged {package_file} (MD5 {checksum})")
     print(f"Recorded {metadata['version']} in {manifest_file}, downloaded from {source_url}")
 
 
@@ -468,6 +467,11 @@ def main() -> None:
         type=Path,
         help=f"The manifest to update (default: {MANIFEST_FILE_NAME} in the output directory).",
     )
+    package_parser.add_argument(
+        "--repository",
+        default=DEFAULT_REPOSITORY,
+        help="The GitHub repository as owner/name, whose main branch serves the plugin image (default: %(default)s).",
+    )
 
     release_notes_parser: argparse.ArgumentParser = commands.add_parser(
         "release-notes", help="Write the GitHub release body with the pull requests and commits since the last release.",
@@ -491,7 +495,7 @@ def main() -> None:
         case "package":
             output_directory: Path = arguments.output_directory.resolve()
             manifest_file: Path = (arguments.manifest or output_directory / MANIFEST_FILE_NAME).resolve()
-            package(arguments.source_url_base, output_directory, manifest_file)
+            package(arguments.source_url_base, output_directory, manifest_file, arguments.repository)
         case "release-notes":
             release_notes(arguments.tag, arguments.repository, arguments.changelog, arguments.target, arguments.output_file)
 

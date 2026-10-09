@@ -146,7 +146,8 @@ jobs:
           uv run release.py package \
             --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
             --output-directory "$RUNNER_TEMP/package" \
-            --manifest manifest.json
+            --manifest manifest.json \
+            --repository "$GITHUB_REPOSITORY"
 
       # Before the release commit, so HEAD is the commit that was built
       - name: Write the release notes
@@ -172,8 +173,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git push origin "refs/tags/$TAG"
-          # The plugin image goes up beside the zip, where manifest.json's imageUrl points
-          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip "$RUNNER_TEMP"/package/*.png "$SOURCE_ARCHIVES_DIRECTORY"/*.tar.gz \
+          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip "$SOURCE_ARCHIVES_DIRECTORY"/*.tar.gz \
             --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
 
       # Commits pushed to main during the build go under the release commit; the tag keeps the commit that was built

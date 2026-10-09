@@ -95,7 +95,7 @@ These apply only while File Transformation does the rewriting.
 | `jellyfin-webgpu-client/vendor/webgpu-player-hls/` | Submodule: the hls.js fork (`alchemyyy/hls.js`, branch `fix/cals2`) |
 | `Jellyfin.Plugin.WebGPUPlayer.Tests/` | xUnit tests |
 | `docs/` | The plugin's documentation, an mdBook; `docs/book/` is the built book |
-| `images/` | The plugin banner (the source SVG, and the PNG that the package and the repository manifest's `imageUrl` carry), and the plugin logo, the source of the book's favicon |
+| `images/` | The plugin banner (the source SVG, and the PNG that the package carries and the repository manifest's `imageUrl` names on `main`), and the plugin logo, the source of the book's favicon |
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
 | `release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
