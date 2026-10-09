@@ -2,6 +2,7 @@ import escapeHtml from 'escape-html';
 
 import layoutManager from 'components/layoutManager';
 import globalize from 'lib/globalize';
+import { handleCommand } from 'scripts/inputManager';
 
 import type { AddonStringKey } from '../host/globalize';
 import { webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
@@ -88,9 +89,26 @@ type ActivePanel = {
     promise: Promise<void>
 };
 
+// Whether the panel asked the host to show its playback info, which the panel hides again on close:
+// not asked, asked but not showing yet, or showing since
+type PlaybackInfoRequest = 'none' | 'pending' | 'shown';
+
+const HIDDEN_CLASS = 'hide';
 const PLAYBACK_INFO_GAP_PX = 8;
-const PLAYBACK_INFO_SELECTOR = '.playerStats';
+const PLAYBACK_INFO_CLASS = 'playerStats';
+const PLAYBACK_INFO_SELECTOR = `.${PLAYBACK_INFO_CLASS}`;
+// The stylesheet places playback info with this class at the offset property, from the panel's start edge
+const PLAYBACK_INFO_BESIDE_CLASS = 'webgpuSettingsPlaybackInfo';
+const PLAYBACK_INFO_OFFSET_PROPERTY = '--webgpu-playback-info-offset';
+// Playback info moves beside the panel when the space there, in the panel's ems, fits it legibly
+const PLAYBACK_INFO_MINIMUM_SPACE_EM = 22;
+// The video OSD's input command that shows or hides the host's playback info
+const TOGGLE_PLAYBACK_INFO_COMMAND = 'togglestats';
+// The video OSD's bottom controls: the title, the timeline, and the buttons
+const OSD_CONTROLS_SELECTOR = '.videoOsdBottom-maincontrols .osdControls';
+const OSD_CONTROLS_GAP_PX = 8;
 const PANEL_TOP_PROPERTY = '--webgpu-settings-top';
+const PANEL_MAXIMUM_HEIGHT_PROPERTY = '--webgpu-settings-max-height';
 
 const NUMERIC_CONTROL_CONFIGURATIONS: NumericControlConfiguration[] = [];
 NUMERIC_CONTROL_CONFIGURATIONS.push(
@@ -611,25 +629,89 @@ function getMissingSelectedOutputLabel(snapshot: WebGPUAudioOutputSnapshot): str
     }
 }
 
-function positionPanelBelowPlaybackInfo(panel: HTMLElement): void {
-    let playbackInfoBottom: number | null = null;
+/** Returns the host's playback info overlay while it shows, else null. */
+function findShownPlaybackInfo(): HTMLElement | null {
     const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
     for (const playbackInfoElement of playbackInfoElements) {
-        if (playbackInfoElement.classList.contains('hide')) {
-            continue;
+        if (!playbackInfoElement.classList.contains(HIDDEN_CLASS)) {
+            return playbackInfoElement;
         }
-        const playbackInfoBounds = playbackInfoElement.getBoundingClientRect();
-        if (playbackInfoBounds.width <= 0 || playbackInfoBounds.height <= 0) {
-            continue;
-        }
-        playbackInfoBottom = Math.max(playbackInfoBottom ?? 0, playbackInfoBounds.bottom);
     }
+    return null;
+}
 
-    if (playbackInfoBottom === null) {
+/** Returns playback info to the host's position. */
+function restorePlaybackInfoPosition(playbackInfoElement: HTMLElement): void {
+    // A forced toggle writes the class attribute only on a change, so the panel's class observer settles
+    playbackInfoElement.classList.toggle(PLAYBACK_INFO_BESIDE_CLASS, false);
+    playbackInfoElement.style.removeProperty(PLAYBACK_INFO_OFFSET_PROPERTY);
+}
+
+/** Places playback info beside the panel when the viewport has room there, else the panel below playback info. */
+function positionPanelAndPlaybackInfo(panel: HTMLElement): void {
+    const shownPlaybackInfo: HTMLElement | null = findShownPlaybackInfo();
+    const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
+    for (const playbackInfoElement of playbackInfoElements) {
+        if (playbackInfoElement !== shownPlaybackInfo) {
+            restorePlaybackInfoPosition(playbackInfoElement);
+        }
+    }
+    if (!shownPlaybackInfo) {
         panel.style.removeProperty(PANEL_TOP_PROPERTY);
         return;
     }
-    panel.style.setProperty(PANEL_TOP_PROPERTY, `${Math.ceil(playbackInfoBottom + PLAYBACK_INFO_GAP_PX)}px`);
+
+    const panelBounds: DOMRect = panel.getBoundingClientRect();
+    const panelStyle: CSSStyleDeclaration = getComputedStyle(panel);
+    const viewportWidth: number = document.documentElement.clientWidth;
+    const isRightToLeft: boolean = panelStyle.direction === 'rtl';
+    // The panel sits at the start edge, so the space beside it reaches the end edge
+    const spaceBesidePanel: number = isRightToLeft ?
+        panelBounds.left :
+        viewportWidth - panelBounds.right;
+    const minimumSpace: number = PLAYBACK_INFO_MINIMUM_SPACE_EM * parseFloat(panelStyle.fontSize);
+    if (spaceBesidePanel >= minimumSpace) {
+        const panelEndOffset: number = isRightToLeft ?
+            viewportWidth - panelBounds.left :
+            panelBounds.right;
+        shownPlaybackInfo.style.setProperty(PLAYBACK_INFO_OFFSET_PROPERTY, `${Math.ceil(panelEndOffset + PLAYBACK_INFO_GAP_PX)}px`);
+        shownPlaybackInfo.classList.toggle(PLAYBACK_INFO_BESIDE_CLASS, true);
+        panel.style.removeProperty(PANEL_TOP_PROPERTY);
+        return;
+    }
+
+    // Without room beside the panel, playback info keeps the host's position and the panel moves below it
+    restorePlaybackInfoPosition(shownPlaybackInfo);
+    const playbackInfoBounds: DOMRect = shownPlaybackInfo.getBoundingClientRect();
+    if (playbackInfoBounds.width <= 0 || playbackInfoBounds.height <= 0) {
+        panel.style.removeProperty(PANEL_TOP_PROPERTY);
+        return;
+    }
+    panel.style.setProperty(PANEL_TOP_PROPERTY, `${Math.ceil(playbackInfoBounds.bottom + PLAYBACK_INFO_GAP_PX)}px`);
+}
+
+/** Keeps the panel's bottom edge above the video OSD controls, given their top edge in viewport coordinates. */
+function limitPanelHeight(panel: HTMLElement, OSDControlsTop: number): void {
+    const panelTop: number = panel.getBoundingClientRect().top;
+    const maximumHeight: number = Math.max(0, Math.floor(OSDControlsTop - OSD_CONTROLS_GAP_PX - panelTop));
+    panel.style.setProperty(PANEL_MAXIMUM_HEIGHT_PROPERTY, `${maximumHeight}px`);
+}
+
+/** Hides the playback info the panel asked the host to show, unless the user already closed it. */
+function hideRequestedPlaybackInfo(playbackInfoRequest: PlaybackInfoRequest): void {
+    switch (playbackInfoRequest) {
+        case 'none':
+            return;
+        case 'pending':
+            // The host toggles in request order once its overlay module loads, so this toggle undoes the pending one
+            handleCommand(TOGGLE_PLAYBACK_INFO_COMMAND);
+            return;
+        case 'shown':
+            if (findShownPlaybackInfo()) {
+                handleCommand(TOGGLE_PLAYBACK_INFO_COMMAND);
+            }
+            return;
+    }
 }
 
 function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElement | null): ActivePanel {
@@ -1119,28 +1201,86 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         panel.removeEventListener('wheel', onPanelWheel);
     });
 
-    const updatePanelPosition = (): void => {
-        positionPanelBelowPlaybackInfo(panel);
+    const playbackPage = document.getElementById('videoOsdPage');
+    const OSDControls = playbackPage?.querySelector<HTMLElement>(OSD_CONTROLS_SELECTOR) ?? null;
+    // The OSD controls hide when the pointer idles.
+    // They stay anchored to the viewport's bottom edge, so the panel keeps the height they reserve there, measured while they showed
+    let OSDControlsReservedHeight: number | null = null;
+    let playbackInfoRequest: PlaybackInfoRequest = 'none';
+
+    const updatePanelLayout = (): void => {
+        positionPanelAndPlaybackInfo(panel);
+        const viewportHeight: number = document.documentElement.clientHeight;
+        const OSDControlsBounds: DOMRect | undefined = OSDControls?.getBoundingClientRect();
+        if (OSDControlsBounds && OSDControlsBounds.height > 0) {
+            OSDControlsReservedHeight = viewportHeight - OSDControlsBounds.top;
+        }
+        if (OSDControlsReservedHeight !== null) {
+            limitPanelHeight(panel, viewportHeight - OSDControlsReservedHeight);
+        }
+        if (playbackInfoRequest === 'pending' && findShownPlaybackInfo()) {
+            playbackInfoRequest = 'shown';
+        }
     };
-    window.addEventListener('resize', updatePanelPosition);
+    window.addEventListener('resize', updatePanelLayout);
     cleanupCallbacks.push((): void => {
-        window.removeEventListener('resize', updatePanelPosition);
+        window.removeEventListener('resize', updatePanelLayout);
     });
 
-    let playbackInfoResizeObserver: ResizeObserver | null = null;
+    // Playback info resizes as its stats update, and the OSD controls as they wrap, hide, and show
+    let layoutResizeObserver: ResizeObserver | null = null;
     if (typeof ResizeObserver === 'function') {
-        playbackInfoResizeObserver = new ResizeObserver(updatePanelPosition);
-        const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
-        for (const playbackInfoElement of playbackInfoElements) {
-            playbackInfoResizeObserver.observe(playbackInfoElement);
+        layoutResizeObserver = new ResizeObserver(updatePanelLayout);
+        if (OSDControls) {
+            layoutResizeObserver.observe(OSDControls);
         }
-        cleanupCallbacks.push((): void => {
-            playbackInfoResizeObserver?.disconnect();
-            playbackInfoResizeObserver = null;
-        });
     }
+    const observePlaybackInfo = (
+        observer: MutationObserver,
+        playbackInfoElement: HTMLElement
+    ): void => {
+        observer.observe(playbackInfoElement, {
+            attributeFilter: [ 'class' ],
+            attributes: true
+        });
+        layoutResizeObserver?.observe(playbackInfoElement);
+    };
+    // The host adds playback info to the body on its first toggle, then shows and hides it by class
+    const playbackInfoObserver = new MutationObserver((
+        mutations: MutationRecord[],
+        observer: MutationObserver
+    ): void => {
+        for (const mutation of mutations) {
+            for (const addedNode of mutation.addedNodes) {
+                if (addedNode instanceof HTMLElement
+                    && addedNode.classList.contains(PLAYBACK_INFO_CLASS)) {
+                    observePlaybackInfo(observer, addedNode);
+                }
+            }
+        }
+        updatePanelLayout();
+    });
+    playbackInfoObserver.observe(document.body, { childList: true });
+    const playbackInfoElements = document.querySelectorAll<HTMLElement>(
+        PLAYBACK_INFO_SELECTOR
+    );
+    for (const playbackInfoElement of playbackInfoElements) {
+        observePlaybackInfo(playbackInfoObserver, playbackInfoElement);
+    }
+    cleanupCallbacks.push((): void => {
+        // Disconnected first, so restoring playback info does not lay the closed panel out again
+        playbackInfoObserver.disconnect();
+        layoutResizeObserver?.disconnect();
+        layoutResizeObserver = null;
+        const currentPlaybackInfoElements = document.querySelectorAll<HTMLElement>(
+            PLAYBACK_INFO_SELECTOR
+        );
+        for (const playbackInfoElement of currentPlaybackInfoElements) {
+            restorePlaybackInfoPosition(playbackInfoElement);
+        }
+        hideRequestedPlaybackInfo(playbackInfoRequest);
+    });
 
-    const playbackPage = document.getElementById('videoOsdPage');
     if (playbackPage) {
         playbackPage.addEventListener('viewbeforehide', closePanel);
         cleanupCallbacks.push((): void => {
@@ -1150,13 +1290,18 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
 
     document.body.appendChild(panel);
     scheduleSelectLabelFallback(panel);
-    updatePanelPosition();
+    updatePanelLayout();
     closeButton.focus();
+    // Playback info opens beside the panel and closes with it, unless it was already showing
+    if (!findShownPlaybackInfo()) {
+        playbackInfoRequest = 'pending';
+        handleCommand(TOGGLE_PLAYBACK_INFO_COMMAND);
+    }
 
     return { close: closePanel, element: panel, promise };
 }
 
-/** Opens or focuses the one active plugin-owned playback settings panel. */
+/** Opens or focuses the one active plugin-owned playback settings panel, with the host's playback info beside it. */
 export function showWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<void> {
     if (activePanel) {
         const focusTarget = activePanel.element.querySelector<HTMLElement>('.webgpuSettingsClose');

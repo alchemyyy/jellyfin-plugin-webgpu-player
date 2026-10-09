@@ -23,6 +23,11 @@ const storageMockState = vi.hoisted(() => ({
     value: null as string | null
 }));
 
+const hostCommandMockState = vi.hoisted(() => ({
+    // Playback info toggles the video OSD runs once its dynamic import of the overlay module resolves
+    pendingPlaybackInfoToggles: [] as Array<() => void>
+}));
+
 const audioOutputManagerMockState = vi.hoisted(() => {
     const listeners = new Set<(snapshot: AudioOutputSnapshotMock) => void>();
     return {
@@ -161,6 +166,26 @@ vi.mock('webgpu-player/audio/output/WebGPUAudioOutputManager', () => ({
     })
 }));
 
+// The video OSD answers togglestats by creating the playback info overlay, and later by toggling its hide class
+vi.mock('scripts/inputManager', () => ({
+    handleCommand: vi.fn((command: string): void => {
+        if (command !== 'togglestats') {
+            return;
+        }
+        hostCommandMockState.pendingPlaybackInfoToggles.push((): void => {
+            const playbackInfo = document.querySelector<HTMLElement>('.playerStats');
+            if (!playbackInfo) {
+                const createdPlaybackInfo = document.createElement('div');
+                createdPlaybackInfo.classList.add('playerStats');
+                document.body.appendChild(createdPlaybackInfo);
+                return;
+            }
+            playbackInfo.classList.toggle('hide');
+        });
+    })
+}));
+
+import { handleCommand } from 'scripts/inputManager';
 import {
     showWebGPUPlaybackSettingsPanel,
     toggleWebGPUPlaybackSettingsPanel
@@ -170,6 +195,21 @@ type AnimationFrameHarness = {
     callbacks: Map<number, FrameRequestCallback>
     nextIdentifier: number
 };
+
+// The viewport size and the bounds the placement tests report for the panel, playback info, and the OSD controls
+type PlacementHarness = {
+    OSDControlsBounds: DOMRect
+    panelLeft: number
+    playbackInfoBounds: DOMRect
+    viewportHeight: number
+    viewportWidth: number
+};
+
+// The panel's size and default top at a 16px font
+const PLACEMENT_PANEL_DEFAULT_TOP = 80;
+const PLACEMENT_PANEL_HEIGHT = 600;
+const PLACEMENT_PANEL_WIDTH = 672;
+const PLACEMENT_STYLE_ATTRIBUTE = 'data-placement-harness';
 
 function requirePanelElement<ElementType extends Element>(
     panel: HTMLElement,
@@ -206,11 +246,87 @@ function flushMicrotasks(): Promise<void> {
     });
 }
 
+/** Runs the host's pending playback info toggles in request order, then lets the panel's observers react */
+async function runHostPlaybackInfoToggles(): Promise<void> {
+    const toggles = hostCommandMockState.pendingPlaybackInfoToggles.splice(0);
+    for (const toggle of toggles) {
+        toggle();
+    }
+    await flushMicrotasks();
+}
+
+/** Builds element bounds from the top-left corner and the size */
+function createBounds(left: number, top: number, width: number, height: number): DOMRect {
+    return {
+        bottom: top + height,
+        height,
+        left,
+        right: left + width,
+        top,
+        width,
+        x: left,
+        y: top
+    } as DOMRect;
+}
+
+/**
+ * Adds the video OSD page with its bottom controls, sets the panel's font size, and reports the harness's viewport size and bounds, with the panel's top following its top property.
+ */
+function installPlacementHarness(harness: PlacementHarness): void {
+    const playbackPage = document.createElement('div');
+    playbackPage.id = 'videoOsdPage';
+    playbackPage.innerHTML = '<div class="videoOsdBottom videoOsdBottom-maincontrols">'
+        + '<div class="osdControls"></div></div>';
+    document.body.appendChild(playbackPage);
+    const panelFontStyle = document.createElement('style');
+    panelFontStyle.setAttribute(PLACEMENT_STYLE_ATTRIBUTE, '');
+    panelFontStyle.textContent = '.webgpuSettingsPanel { font-size: 16px; }';
+    document.head.appendChild(panelFontStyle);
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(
+        (): number => harness.viewportHeight
+    );
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(
+        (): number => harness.viewportWidth
+    );
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
+        function (this: Element): DOMRect {
+            if (this.classList.contains('osdControls')) {
+                return harness.OSDControlsBounds;
+            }
+            if (this.classList.contains('playerStats')) {
+                return harness.playbackInfoBounds;
+            }
+            if (this instanceof HTMLElement && this.classList.contains('webgpuSettingsPanel')) {
+                const panelTop = parseFloat(this.style.getPropertyValue('--webgpu-settings-top'));
+                return createBounds(
+                    harness.panelLeft,
+                    Number.isNaN(panelTop) ? PLACEMENT_PANEL_DEFAULT_TOP : panelTop,
+                    PLACEMENT_PANEL_WIDTH,
+                    PLACEMENT_PANEL_HEIGHT
+                );
+            }
+            return createBounds(0, 0, 0, 0);
+        }
+    );
+}
+
+/** Builds a player whose render and audio calls succeed, for the placement tests */
+function createPlacementTestPlayer(): WebGPUPlayer {
+    return {
+        applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),
+        getDetectedInputPeakNits: vi.fn(() => 1_000),
+        getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
+        updateAudioDownmixSettings: vi.fn(() => true),
+        updateRenderSettings: vi.fn(() => true)
+    } as unknown as WebGPUPlayer;
+}
+
 describe('WebGPUPlaybackSettingsPanel', () => {
     let animationFrames: AnimationFrameHarness;
 
     beforeEach(() => {
         vi.clearAllMocks();
+        hostCommandMockState.pendingPlaybackInfoToggles.length = 0;
         audioOutputManagerMockState.cancelCount = 0;
         audioOutputManagerMockState.pickerRevision = 0;
         audioOutputManagerMockState.redetectCount = 0;
@@ -258,6 +374,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        document.documentElement.removeAttribute('dir');
+        for (const placementStyle of document.head.querySelectorAll(`[${PLACEMENT_STYLE_ATTRIBUTE}]`)) {
+            placementStyle.remove();
+        }
     });
 
     it('reuses one non-modal panel below playback info and restores individual defaults', async () => {
@@ -573,6 +693,165 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         } finally {
             document.removeEventListener('wheel', documentWheelListener);
         }
+    });
+
+    it('ends above the OSD controls and opens playback info beside it until the panel closes', async () => {
+        const harness: PlacementHarness = {
+            OSDControlsBounds: createBounds(0, 900, 1920, 150),
+            panelLeft: 24,
+            playbackInfoBounds: createBounds(704, 80, 400, 300),
+            viewportHeight: 1080,
+            viewportWidth: 1920
+        };
+        installPlacementHarness(harness);
+        const player = createPlacementTestPlayer();
+
+        const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        expect(handleCommand).toHaveBeenCalledTimes(1);
+        expect(handleCommand).toHaveBeenLastCalledWith('togglestats');
+        // 900 - 8 - 80
+        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('812px');
+
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(true);
+        // The panel's right edge, 24 + 672, plus the gap
+        expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('704px');
+        expect(panel.style.getPropertyValue('--webgpu-settings-top')).toBe('');
+
+        // Hidden OSD controls measure empty, so the panel keeps the 180px they reserve at the bottom edge
+        harness.OSDControlsBounds = createBounds(0, 0, 0, 0);
+        harness.viewportHeight = 900;
+        window.dispatchEvent(new Event('resize'));
+        // 900 - 180 - 8 - 80
+        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('632px');
+        harness.OSDControlsBounds = createBounds(0, 700, 1920, 200);
+        window.dispatchEvent(new Event('resize'));
+        // 700 - 8 - 80
+        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('612px');
+
+        await toggleWebGPUPlaybackSettingsPanel(player);
+        await panelPromise;
+        expect(handleCommand).toHaveBeenCalledTimes(2);
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
+        expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('');
+        await runHostPlaybackInfoToggles();
+        expect(playbackInfo.classList.contains('hide')).toBe(true);
+    });
+
+    it('places playback info beside the panel from the right edge in a right-to-left layout', async () => {
+        document.documentElement.setAttribute('dir', 'rtl');
+        installPlacementHarness({
+            OSDControlsBounds: createBounds(0, 900, 1920, 150),
+            panelLeft: 1920 - 24 - PLACEMENT_PANEL_WIDTH,
+            playbackInfoBounds: createBounds(816, 80, 400, 300),
+            viewportHeight: 1080,
+            viewportWidth: 1920
+        });
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(true);
+        // The panel's left edge is 24 + 672 from the right edge, plus the gap
+        expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('704px');
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('moves the panel below playback info when the viewport has no room beside it', async () => {
+        // 900 - (24 + 672) leaves 204px beside the panel, short of 22em at 16px
+        installPlacementHarness({
+            OSDControlsBounds: createBounds(0, 700, 900, 150),
+            panelLeft: 24,
+            playbackInfoBounds: createBounds(24, 80, 400, 300),
+            viewportHeight: 850,
+            viewportWidth: 900
+        });
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
+        // 80 + 300 + 8, then 700 - 8 - 388
+        expect(panel.style.getPropertyValue('--webgpu-settings-top')).toBe('388px');
+        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('304px');
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('leaves playback info that was already showing open after the panel closes', async () => {
+        installPlacementHarness({
+            OSDControlsBounds: createBounds(0, 900, 1920, 150),
+            panelLeft: 24,
+            playbackInfoBounds: createBounds(704, 80, 400, 300),
+            viewportHeight: 1080,
+            viewportWidth: 1920
+        });
+        const playbackInfo = document.createElement('div');
+        playbackInfo.classList.add('playerStats');
+        document.body.appendChild(playbackInfo);
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        expect(handleCommand).not.toHaveBeenCalled();
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(true);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+        expect(handleCommand).not.toHaveBeenCalled();
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
+        expect(playbackInfo.classList.contains('hide')).toBe(false);
+    });
+
+    it('keeps playback info closed after the user closes it while the panel is open', async () => {
+        installPlacementHarness({
+            OSDControlsBounds: createBounds(0, 900, 1920, 150),
+            panelLeft: 24,
+            playbackInfoBounds: createBounds(704, 80, 400, 300),
+            viewportHeight: 1080,
+            viewportWidth: 1920
+        });
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        // The overlay's close button hides it without a command
+        playbackInfo.classList.add('hide');
+        await flushMicrotasks();
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+        expect(handleCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('undoes its playback info request when the panel closes before the host shows it', async () => {
+        installPlacementHarness({
+            OSDControlsBounds: createBounds(0, 900, 1920, 150),
+            panelLeft: 24,
+            playbackInfoBounds: createBounds(704, 80, 400, 300),
+            viewportHeight: 1080,
+            viewportWidth: 1920
+        });
+        const player = createPlacementTestPlayer();
+
+        const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
+        await toggleWebGPUPlaybackSettingsPanel(player);
+        await panelPromise;
+        expect(handleCommand).toHaveBeenCalledTimes(2);
+
+        // The host runs both toggles once its overlay module loads: the first shows playback info, the second hides it
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        expect(playbackInfo.classList.contains('hide')).toBe(true);
+        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
     });
 
     it('applies gains, force stereo, and the downmix algorithm live', async () => {

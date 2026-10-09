@@ -1,11 +1,14 @@
 .webgpuSettingsPanel {
     --webgpu-settings-top: 5em;
+    // The panel replaces this with the space above the video OSD controls once it measures them
+    --webgpu-settings-max-height: calc(100vh - var(--webgpu-settings-top) - 1.5em);
 
     position: fixed;
     top: var(--webgpu-settings-top);
     display: flex;
     width: min(42em, calc(100% - 3em));
-    max-height: calc(100vh - var(--webgpu-settings-top) - 1.5em);
+    // The floor keeps a viewport too short for the panel from collapsing it
+    max-height: max(10em, var(--webgpu-settings-max-height));
     overflow: hidden;
     flex-direction: column;
     background: rgba(28, 28, 28, 0.8);
@@ -203,10 +206,24 @@
     }
 }
 
+// The host's playback info overlay beside the panel, at the offset the panel sets from its start edge
+.playerStats.webgpuSettingsPlaybackInfo {
+    max-width: calc(100% - var(--webgpu-playback-info-offset) - 1.5em);
+
+    [dir="ltr"] & {
+        left: var(--webgpu-playback-info-offset);
+    }
+
+    [dir="rtl"] & {
+        right: var(--webgpu-playback-info-offset);
+    }
+}
+
 @media all and (max-width: 40em) {
     .webgpuSettingsPanel {
+        --webgpu-settings-max-height: calc(100vh - var(--webgpu-settings-top) - 0.5em);
+
         width: calc(100% - 1em);
-        max-height: calc(100vh - var(--webgpu-settings-top) - 0.5em);
 
         [dir="ltr"] & {
             left: 0.5em;
