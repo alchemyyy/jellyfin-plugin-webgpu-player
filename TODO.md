@@ -10,9 +10,15 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   8-bit range-extension SDR needs the same keys.
 - MP4 Dolby Vision Profile 10.0, the `dav1` sample entry.
   FFmpeg, and so Jellyfin's probe, maps `dav1` to no codec, so the server never offers such a file for direct play.
-  A one-line mapping in FFmpeg or jellyfin-ffmpeg fixes it.
+  A one-line mapping in FFmpeg or jellyfin-ffmpeg fixes it; no jellyfin-ffmpeg patch maps it yet.
   Submitting that patch upstream is a public action and needs the project owner's decision.
-  Matroska Profile 10.0 already plays.
+  The engine maps `dav1` itself, and Matroska Profile 10.0 already plays.
+- Dolby Vision Profile 10 at 8 bits or outside the Main profile.
+  It has no RPU route, because raw AV1 is qualified at 10 bits only; a declared SDR base still plays.
+  Closing it needs raw AV1 qualification, raw keys, and authorization vectors for those formats.
+- AV1 HDR and Dolby Vision have no native route.
+  Nothing neutralizes an AV1 sequence header's color, so HDR AV1 and Profile 10 always reconstruct from software-decoded raw I420P10, which costs CPU at 4K.
+  Closing it needs AV1 color neutralization like the HEVC one, with its own external authorization, so hardware VideoFrames can present.
 - MPEG-2 and VC-1 streams whose picture grows mid-stream.
   The decoder opens at the container's coded size and refuses a later, larger picture, so the item falls back.
   A broadcast transport stream that switches resolution produces such a picture.
@@ -64,6 +70,19 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 - Single-layer RPUs that reuse a dual-layer RPU's mapping.
   The bridge does not carry the reused mapping's layer and NLQ flags over.
   Only a malformed stream mixes them, so this is robustness work, not a playback gap.
+- RPUs the parser still rejects.
+  A header from which no profile is inferred is rejected; FFmpeg uses the container's profile instead, which would close it.
+  A linear interpolation piece next to an MMR piece is rejected by necessity: an MMR piece maps all three components, so the linear piece has no scalar value to rise from or end on.
+  The RPU format extension, missing sequence information, and display metadata compression above method 1 are rejected as FFmpeg rejects them.
+- Linear interpolation next to a polynomial piece is a guess.
+  Each linear piece codes its rise from the previous pivot's value (annex A.2.4.2 of US 10,701,399 B2), but the annex never defines that value for a polynomial piece.
+  The bridge uses the polynomial's value at its start pivot, and ends a linear piece before a polynomial continuously with it.
+  No sample with such a mix is known; FFmpeg rejects linear interpolation outright.
+  A real sample would confirm or correct it.
+- RPU parser choices more permissive than FFmpeg, each a small change to reverse:
+  - A truncated L1 block is skipped rather than rejecting the RPU.
+  - An L1 block in the wrong section is skipped rather than kept as all zeros.
+  - There is no limit on block count; input size bounds it.
 - Anamorphic AV1.
   Playback is already correct; stripping Jellyfin's `IsAnamorphic` flag is worth doing only if it ever blocks a route.
 - Report the Mediabunny defects the engine contains upstream.
@@ -74,3 +93,5 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 
 - Raw-only HDR items still wait for the external HDR probe.
   The external route's keys shape the HEVC transcode ranges, so the wait stays even for an item that plays only through raw planes.
+- A Profile 10 Matroska stream without a CCID plays only through its RPU route.
+  Jellyfin labels it by transfer, so it negotiates through the static HDR ranges, but it declares no base layer to fall back to.
