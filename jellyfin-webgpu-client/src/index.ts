@@ -5,6 +5,7 @@ import 'webgpu-player/style.scss';
 import { installHostCompatibleMode } from './compat/HostCompatibleMode';
 import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
 import HostCompatibleWebGPUPlayer from './HostCompatibleWebGPUPlayer';
+import { installTimingTraceControl } from './TimingTraceControl';
 import { getWebGPUHDRToneMappingEnabled } from './WebGPUPlaybackPreferences';
 
 // Add-on entry loaded by the server plugin's bootstrap through Jellyfin Web's window plugin path.
@@ -29,6 +30,8 @@ configureEngineAssets({
 configureEngineFeatureFlags({
     isHDRToneMappingEnabled: getWebGPUHDRToneMappingEnabled
 });
+// Installed at load, so a trace requested through storage covers the page's first play
+installTimingTraceControl({ engineAssetKey: __WEBGPU_PLAYER_ASSET_KEY__ });
 
 /**
  * Plugin constructor for Jellyfin Web's plugin manager.

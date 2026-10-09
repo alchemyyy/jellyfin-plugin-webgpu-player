@@ -1,3 +1,5 @@
+import type { TimingTraceControl } from '../TimingTraceControl';
+
 /** Runtime configuration written by the server plugin's bootstrap script before the add-on loads */
 type WebGPUPlayerAddonConfiguration = {
     // Absolute URL path of the add-on asset route, ending with a slash
@@ -13,5 +15,7 @@ export declare global {
 
     interface Window {
         WebGPUPlayerConfig?: WebGPUPlayerAddonConfiguration
+        // Installed by TimingTraceControl.ts for the console and for automation
+        WebGPUPlayerTimingTrace?: TimingTraceControl
     }
 }

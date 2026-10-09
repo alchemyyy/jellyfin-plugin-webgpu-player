@@ -24,6 +24,7 @@ import {
     refreshWebGPUPlaybackPreferences
 } from './WebGPUPlaybackPreferences';
 import { HTMLPlayerDelegate } from './HTMLPlayerDelegate';
+import { setTimingTraceMetadataProvider, type TimingTraceMetadata } from './TimingTraceControl';
 import {
     jellyfinTicksToMicroseconds,
     microsecondsToJellyfinTicks,
@@ -705,6 +706,32 @@ function getNormalizedPlayMethod(options: unknown): string | null {
     return normalizeStreamType((options as PlaybackOptionsRecord).playMethod);
 }
 
+function getOptionalRecord(value: unknown): PlaybackOptionsRecord {
+    return value && typeof value === 'object' ? value as PlaybackOptionsRecord : {};
+}
+
+/** Names the played item and source for a timing trace, from the options Jellyfin Web passed to play(). */
+function getTimingTracePlaybackSource(options: unknown): TimingTraceMetadata | null {
+    if (!options || typeof options !== 'object') {
+        return null;
+    }
+    const playbackOptions = options as PlaybackOptionsRecord;
+    const item = getOptionalRecord(playbackOptions.item);
+    const mediaSource = getOptionalRecord(playbackOptions.mediaSource);
+    return {
+        container: mediaSource.Container ?? null,
+        itemId: item.Id ?? null,
+        itemName: item.Name ?? null,
+        mediaSourceId: mediaSource.Id ?? null,
+        playMethod: playbackOptions.playMethod ?? null,
+        startPositionTicks: playbackOptions.playerStartPositionTicks ?? null
+    };
+}
+
+function formatRoundedMilliseconds(microseconds: Microseconds): number {
+    return Math.round(microsecondsToMilliseconds(microseconds));
+}
+
 function supportsCustomSubtitleCanvas(): boolean {
     if (typeof document === 'undefined') {
         return false;
@@ -958,6 +985,17 @@ export default class WebGPUPlayer {
         if (typeof document !== 'undefined') {
             document.addEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
+        setTimingTraceMetadataProvider((): TimingTraceMetadata => this.getTimingTraceMetadata());
+    }
+
+    /** Describes the current playback for a timing trace export. */
+    private getTimingTraceMetadata(): TimingTraceMetadata {
+        return {
+            controller: this.getActiveCustomPlaybackController()?.getTelemetry() ?? null,
+            eligibility: this.lastCustomPlaybackEligibility,
+            playbackSource: getTimingTracePlaybackSource(this.currentPlaybackOptions),
+            presentation: this.presenter.getTelemetry()
+        };
     }
 
     get isFetching(): boolean {
@@ -1688,6 +1726,7 @@ export default class WebGPUPlayer {
         const customPlaybackController = this.getActiveCustomPlaybackController();
         if (customPlaybackController) {
             const customTelemetry = customPlaybackController.getTelemetry();
+            const presentationTiming = customTelemetry.presentationTiming;
             const presentationTelemetry = this.presenter.getTelemetry();
             const eligibility = this.lastCustomPlaybackEligibility;
             return loadAddonStrings().then(() => {
@@ -1721,8 +1760,21 @@ export default class WebGPUPlayer {
                                 value: `${customTelemetry.videoDecode.receivedFrameCount} / ${presentationTelemetry.presentedFrameCount}`
                             },
                             {
+                                // Every frame never shown: older due frames skipped, and frames discarded as stale
                                 label: globalize.translate('WebGPUStatsDroppedQueuedFrames'),
-                                value: `${customTelemetry.videoDecode.droppedFrameCount} / ${customTelemetry.videoDecode.queuedFrameCount}`
+                                value: `${customTelemetry.videoDecode.droppedFrameCount + customTelemetry.discardedStaleVideoFrameCount} / ${customTelemetry.videoDecode.queuedFrameCount}`
+                            },
+                            {
+                                label: globalize.translate('WebGPUStatsStaleFramesDiscarded'),
+                                value: `${customTelemetry.discardedStaleVideoFrameCount}`
+                            },
+                            {
+                                label: globalize.translate('WebGPUStatsLateFramesWorstLag'),
+                                value: `${presentationTiming.lateFrameCount} / ${formatRoundedMilliseconds(presentationTiming.worstFrameLagMicroseconds)} ${globalize.translate('WebGPUMillisecondsUnit')}`
+                            },
+                            {
+                                label: globalize.translate('WebGPUStatsClockResetsLargestJump'),
+                                value: `${presentationTiming.clockResetCount} / ${formatRoundedMilliseconds(presentationTiming.largestClockJumpMicroseconds)} ${globalize.translate('WebGPUMillisecondsUnit')}`
                             },
                             {
                                 label: globalize.translate('WebGPUStatsVideoResyncsSuspensions'),

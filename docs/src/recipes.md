@@ -16,6 +16,17 @@ Each assumes a checkout built as in [The client add-on](add-on.md#build-and-chec
 
 Check: the engine's checks from its root, and the add-on checks from [The client add-on](add-on.md#build-and-check).
 
+## Capture a timing trace
+
+1. In the browser console, run `localStorage.setItem('webgpuPlayerTimingTrace', '1')` and reload, so the trace runs from the first play.
+   `window.WebGPUPlayerTimingTrace.start()` also works, but a decode worker started before it sends no events.
+2. Play the passage that misbehaves.
+3. Run `await window.WebGPUPlayerTimingTrace.download()`, which saves `webgpu-player-timing-<start time>.json`.
+   `export()` returns the same object to automation instead.
+4. Run `localStorage.removeItem('webgpuPlayerTimingTrace')` when done, because a running trace keeps up to 200,000 events in memory.
+
+The engine's "Capture a timing trace" recipe in [Recipes](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/recipes.html#capture-a-timing-trace) describes the events.
+
 ## Take an engine change
 
 1. Commit the change in the engine repository and push it.

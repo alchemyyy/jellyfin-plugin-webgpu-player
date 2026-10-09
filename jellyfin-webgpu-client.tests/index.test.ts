@@ -12,7 +12,8 @@ const testState = vi.hoisted(() => ({
     getWebGPUHDRToneMappingEnabled: vi.fn(() => Promise.resolve(true)),
     installHostCompatibleMode: vi.fn((): void => {
         testState.events.push('install');
-    })
+    }),
+    installTimingTraceControl: vi.fn()
 }));
 
 vi.mock('webgpu-player/EngineAssets', () => ({ configureEngineAssets: testState.configureEngineAssets }));
@@ -26,6 +27,9 @@ vi.mock('addons/webGPUPlayer/WebGPUPlaybackPreferences', () => ({
 vi.mock('addons/webGPUPlayer/host/HostBridge', () => ({ bindHostBridge: testState.bindHostBridge }));
 vi.mock('addons/webGPUPlayer/compat/HostCompatibleMode', () => ({
     installHostCompatibleMode: testState.installHostCompatibleMode
+}));
+vi.mock('addons/webGPUPlayer/TimingTraceControl', () => ({
+    installTimingTraceControl: testState.installTimingTraceControl
 }));
 // The player itself is covered by its own suites
 vi.mock('addons/webGPUPlayer/HostCompatibleWebGPUPlayer', () => ({
@@ -75,6 +79,8 @@ describe('WebGPU player add-on entry', () => {
             isHDRToneMappingEnabled: testState.getWebGPUHDRToneMappingEnabled
         });
         expect(testState.getWebGPUHDRToneMappingEnabled).not.toHaveBeenCalled();
+        // The timing trace control is installed at load, so a trace requested through storage covers the first play
+        expect(testState.installTimingTraceControl).toHaveBeenCalledWith({ engineAssetKey: 'asset-key' });
         expect(testState.bindHostBridge).not.toHaveBeenCalled();
         expect(testState.events).toEqual([]);
     });

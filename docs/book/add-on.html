@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-3725b65b.js";
+            window.path_to_searchindex_js = "searchindex-5aa0509e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04e99d7c.js"></script>
@@ -282,7 +282,8 @@ It reports only the add-on’s and the engine’s diagnostics, because the host�
 Remove it alone (<code>cmd /c rmdir</code>) before deleting <code>node_modules</code> with a tool that follows junctions, or the engine checkout is deleted with it.</li>
 <li>After the hls.js submodule moves, delete <code>vendor/webgpu-player-hls/dist</code>; the build rebuilds it only when it is missing.</li>
 <li>The external playback tester, which is in neither repository, parses the <code>getStats()</code> labels <code>Playback pipeline</code>, <code>Decoded / presented frames</code>, and <code>Dropped / queued frames</code>.
-They come from the <code>WebGPUStats*</code> strings in <code>jellyfin-webgpu-client/src/strings/en-us.json</code>, so renaming them, or running a translated UI, breaks its playback proof.</li>
+They come from the <code>WebGPUStats*</code> strings in <code>jellyfin-webgpu-client/src/strings/en-us.json</code>, so renaming them, or running a translated UI, breaks its playback proof.
+<code>Dropped / queued frames</code> counts the frames the session skipped and the stale frames the controller discarded; late frames, the worst lag, and clock resets have rows of their own.</li>
 <li>File Transformation passes Jellyfin’s 304 responses through untransformed, so a browser that cached the stock files before the install needs one hard refresh.</li>
 </ul>
 

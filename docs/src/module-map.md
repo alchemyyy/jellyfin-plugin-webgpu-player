@@ -5,7 +5,8 @@ Each source file's tests are at the same relative path under `jellyfin-webgpu-cl
 The plugin's `README.md` maps the server plugin, and the engine's [Module map](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/module-map.html) maps the engine.
 
 - `index.ts`: the add-on entry.
-  It configures the engine's assets and feature flags, binds the host bridge, installs the host-compatible mode, and returns the player.
+  It configures the engine's assets and feature flags, installs the timing trace control, binds the host bridge, installs the host-compatible mode, and returns the player.
+- `TimingTraceControl.ts`: `window.WebGPUPlayerTimingTrace`, which starts, stops, exports, and downloads the engine's timing trace with the build, GPU adapter, screen, and playback metadata, and starts it at load when local storage asks.
 - `WebGPUPlayer.ts`: the Jellyfin-facing player: profile augmentation, the stream-copy veto, eligibility, the rAF loop, fallback, renegotiation, and generations.
 - `HostCompatibleWebGPUPlayer.ts`: adapts `WebGPUPlayer` to the stock PlaybackManager: purpose-less bitrate requests, the player preference, marked profiles, and superseded starts that never settle.
 - `HTMLPlayerDelegate.ts`: owns one HTML player and forwards its events for the current generation only.

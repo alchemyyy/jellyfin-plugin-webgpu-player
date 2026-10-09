@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-3725b65b.js";
+            window.path_to_searchindex_js = "searchindex-5aa0509e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04e99d7c.js"></script>
@@ -192,6 +192,16 @@ Add the row, its expected route, and its fallbacks to <code>jellyfin-webgpu-clie
 <li>Update <a href="direct-play-support.html">Direct play support</a>, and <a href="negotiation.html">Negotiation</a> if what the profile advertises changed.</li>
 </ol>
 <p>Check: the engine’s checks from its root, and the add-on checks from <a href="add-on.html#build-and-check">The client add-on</a>.</p>
+<h2 id="capture-a-timing-trace"><a class="header" href="#capture-a-timing-trace">Capture a timing trace</a></h2>
+<ol>
+<li>In the browser console, run <code>localStorage.setItem('webgpuPlayerTimingTrace', '1')</code> and reload, so the trace runs from the first play.
+<code>window.WebGPUPlayerTimingTrace.start()</code> also works, but a decode worker started before it sends no events.</li>
+<li>Play the passage that misbehaves.</li>
+<li>Run <code>await window.WebGPUPlayerTimingTrace.download()</code>, which saves <code>webgpu-player-timing-&lt;start time&gt;.json</code>.
+<code>export()</code> returns the same object to automation instead.</li>
+<li>Run <code>localStorage.removeItem('webgpuPlayerTimingTrace')</code> when done, because a running trace keeps up to 200,000 events in memory.</li>
+</ol>
+<p>The engine’s “Capture a timing trace” recipe in <a href="../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/recipes.html#capture-a-timing-trace">Recipes</a> describes the events.</p>
 <h2 id="take-an-engine-change"><a class="header" href="#take-an-engine-change">Take an engine change</a></h2>
 <ol>
 <li>Commit the change in the engine repository and push it.</li>

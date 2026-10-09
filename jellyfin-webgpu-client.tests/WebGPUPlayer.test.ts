@@ -51,6 +51,15 @@ const htmlPlayerMockState = vi.hoisted(() => ({
     instances: [] as object[],
     owners: [] as object[]
 }));
+// Presentation timing the mocked controller reports, which the stats overlay shows
+const presentationTimingMockState = vi.hoisted(() => ({
+    clockResetCount: 3,
+    droppedFrameCount: 0,
+    largestClockJumpMicroseconds: 42_000,
+    lateFrameCount: 4,
+    staleFrameCount: 2,
+    worstFrameLagMicroseconds: 100_400
+}));
 const presenterMockState = vi.hoisted(() => ({
     authorizedExternalHDRRouteKeys: [] as string[],
     authorizedRawHDRRouteKeys: [] as string[],
@@ -466,19 +475,26 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
             audioPath: 'disabled',
             clock: {},
             currentTimeMicroseconds: this.currentTimeMicroseconds,
+            discardedStaleVideoFrameCount: presentationTimingMockState.staleFrameCount,
             durationMicroseconds: this.durationMicroseconds,
             fallbackCount: 0,
             fallbackReason: null,
             lastErrorMessage: null,
             muted: this.isMuted,
             playCount: 1,
+            presentationTiming: {
+                clockResetCount: presentationTimingMockState.clockResetCount,
+                largestClockJumpMicroseconds: presentationTimingMockState.largestClockJumpMicroseconds,
+                lateFrameCount: presentationTimingMockState.lateFrameCount,
+                worstFrameLagMicroseconds: presentationTimingMockState.worstFrameLagMicroseconds
+            },
             staleEventCount: 0,
             startupDurationMicroseconds: 10_000,
             state: 'idle',
             videoDecode: {
                 activeGeneration: null,
                 audioCodec: null,
-                droppedFrameCount: 0,
+                droppedFrameCount: presentationTimingMockState.droppedFrameCount,
                 failureKind: null,
                 firstFrameMediaTimeMicroseconds: null,
                 lastAudioMediaTimeMicroseconds: null,
@@ -5615,6 +5631,13 @@ describe('WebGPUPlayer HTML delegation', () => {
             value: 'WebCodecs decoder / Video frames'
         });
         expect(stats.categories[0].stats).toContainEqual({ label: 'State', value: 'Idle' });
+        // Stale discards count as dropped too, and the timing rows round to whole milliseconds
+        expect(stats.categories[1].stats).toEqual(expect.arrayContaining([
+            { label: 'Dropped / queued frames', value: '2 / 0' },
+            { label: 'Stale frames discarded', value: '2' },
+            { label: 'Late frames / worst lag', value: '4 / 100 ms' },
+            { label: 'Clock resets / largest jump', value: '3 / 42 ms' }
+        ]));
         expect(backend.getStats).not.toHaveBeenCalled();
         expect(player.updateRenderSettings(settings)).toBe(true);
         expect(presenter.updateRenderSettings).toHaveBeenCalledWith(settings, 1, true);
