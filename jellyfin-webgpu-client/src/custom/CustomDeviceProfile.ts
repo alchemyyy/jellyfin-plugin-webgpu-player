@@ -123,7 +123,7 @@ type AuthorizedHDRRoutes = {
     nativeHDRVideoRangeTypes: readonly string[]
     /** The stock-profile ceilings of the raw codecs other than HEVC that have a route beyond native SDR decode. */
     rawCodecProfilePlans: ReadonlyMap<CustomVideoCodec, AuthorizedCodecProfilePlan>
-    rawHEVCHDRVideoRangeTypes: readonly string[]
+    rawHDRRouteVideoRangeTypes: readonly string[]
     rawHDRVideoRangeTypes: readonly string[]
     rawAuthorizationRouteKeys: readonly RawHDRAuthorizationRouteKey[]
 };
@@ -136,8 +136,7 @@ type MeasuredVideoRouteOptions = {
     nativeHDRVideoRangeTypes: readonly string[]
     rawAV1DolbyVisionVideoRangeTypes: readonly string[]
     rawDolbyVisionVideoRangeTypes: readonly string[]
-    rawHEVCHDRVideoRangeTypes: readonly string[]
-    rawHDRVideoRangeTypes: readonly string[]
+    rawHDRRouteVideoRangeTypes: readonly string[]
     rawAuthorizationRouteKeys: readonly RawHDRAuthorizationRouteKey[]
 };
 
@@ -287,7 +286,8 @@ function getAuthorizedRawHDRVideoRangeTypes(routeKeys: readonly RawHDRAuthorizat
     return rangeTypes;
 }
 
-function getAuthorizedRawHEVCHDRVideoRangeTypes(rawHDRVideoRangeTypes: readonly string[]): string[] {
+/** Returns the ranges every raw HDR route advertises: HDR10Plus joins HDR10, because raw PQ presents the static HDR10 base that HDR10+ always carries. */
+function getRawHDRRouteVideoRangeTypes(rawHDRVideoRangeTypes: readonly string[]): string[] {
     const rangeTypes: string[] = [ ...rawHDRVideoRangeTypes ];
     if (rangeTypes.includes('HDR10') && !rangeTypes.includes(HDR10_PLUS_VIDEO_RANGE_TYPE)) {
         rangeTypes.push(HDR10_PLUS_VIDEO_RANGE_TYPE);
@@ -1679,7 +1679,7 @@ function createRawHDRMeasuredVideoRoute(
     };
 }
 
-/** Returns the ranges of a codec's raw HDR route: HEVC adds HDR10+ and its Dolby Vision ranges, AV1 Profile 10's. */
+/** Returns the ranges of a codec's raw HDR route: the static ranges with HDR10+, then HEVC's Dolby Vision ranges or AV1 Profile 10's. */
 function getRawVideoRangeTypes(
     codec: CustomVideoCodec,
     options: MeasuredVideoRouteOptions
@@ -1687,16 +1687,16 @@ function getRawVideoRangeTypes(
     switch (codec) {
         case 'hevc':
             return [ ...new Set([
-                ...options.rawHEVCHDRVideoRangeTypes,
+                ...options.rawHDRRouteVideoRangeTypes,
                 ...options.rawDolbyVisionVideoRangeTypes
             ]) ];
         case 'av1':
             return [ ...new Set([
-                ...options.rawHDRVideoRangeTypes,
+                ...options.rawHDRRouteVideoRangeTypes,
                 ...options.rawAV1DolbyVisionVideoRangeTypes
             ]) ];
         default:
-            return options.rawHDRVideoRangeTypes;
+            return options.rawHDRRouteVideoRangeTypes;
     }
 }
 
@@ -2053,7 +2053,7 @@ function getAuthorizedHEVCRangeTypes(
 ): readonly string[] {
     const rangeTypes = new Set<string>();
     if (rawHEVCSupported) {
-        for (const rangeType of authorizedRoutes.rawHEVCHDRVideoRangeTypes) {
+        for (const rangeType of authorizedRoutes.rawHDRRouteVideoRangeTypes) {
             rangeTypes.add(rangeType);
         }
     }
@@ -2086,7 +2086,7 @@ function createAuthorizedHEVCProfilePlan(
         capabilities,
         authorizedRoutes.allowNativeHDR
     );
-    const rawRouteAuthorized = authorizedRoutes.rawHEVCHDRVideoRangeTypes.length > 0
+    const rawRouteAuthorized = authorizedRoutes.rawHDRRouteVideoRangeTypes.length > 0
         || authorizedRoutes.allowRawDolbyVision;
     // A plan replaces the shared raw ranges for HEVC, so it carries every authorized raw range itself, even one the other raw codecs share, such as HLG alone
     const rawHEVCSupported = rawRouteAuthorized
@@ -2883,7 +2883,7 @@ export function augmentDeviceProfileForCustomDecode(
             || options.allowRawHDR === true && !routeKey.endsWith(':sdr')
         )
     );
-    const rawHEVCHDRVideoRangeTypes = getAuthorizedRawHEVCHDRVideoRangeTypes(rawHDRVideoRangeTypes);
+    const rawHDRRouteVideoRangeTypes = getRawHDRRouteVideoRangeTypes(rawHDRVideoRangeTypes);
     const availableRawDolbyVisionVideoRangeTypes = getDolbyVisionVideoRangeTypes(
         capabilities,
         options.allowDolbyVision === true,
@@ -2928,8 +2928,7 @@ export function augmentDeviceProfileForCustomDecode(
             options.allowDolbyVision === true
         ),
         rawDolbyVisionVideoRangeTypes,
-        rawHEVCHDRVideoRangeTypes,
-        rawHDRVideoRangeTypes,
+        rawHDRRouteVideoRangeTypes,
         rawAuthorizationRouteKeys
     };
     const rawRouteVideoCodecs = getRawRouteVideoCodecs(capabilities, measuredVideoRouteOptions);
@@ -3022,7 +3021,7 @@ export function augmentDeviceProfileForCustomDecode(
                 dolbyVisionVideoRangeTypes,
                 nativeHDRVideoRangeTypes,
                 rawCodecProfilePlans: createRawCodecProfilePlans(capabilities, measuredVideoRouteOptions),
-                rawHEVCHDRVideoRangeTypes,
+                rawHDRRouteVideoRangeTypes,
                 rawHDRVideoRangeTypes,
                 rawAuthorizationRouteKeys
             }

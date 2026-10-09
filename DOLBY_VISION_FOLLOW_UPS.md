@@ -42,9 +42,3 @@ The engine book's "HEVC and Dolby Vision support" chapter (`jellyfin-webgpu-clie
   - An L1 block in the wrong section is skipped rather than kept as all zeros.
   - There is no limit on block count.
     Input size bounds it.
-
-## Found along the way, outside Dolby Vision
-
-- AV1 and VP9 HDR10+: never advertised and never read.
-  Items 3 to 5 of the engine's `HDR10_PLUS_FOLLOW_UPS.md` cover it.
-  The AV1 decode path, OBU walker, and metadata window it needs already exist.

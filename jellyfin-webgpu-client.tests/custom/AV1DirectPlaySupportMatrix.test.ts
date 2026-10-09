@@ -399,9 +399,9 @@ const AV1_VIDEO_RANGE_MATRIX: readonly AV1DirectPlayMatrixRow[] = [
         videoStream: createHDRAV1Stream('HLG', 'hlg')
     },
     {
-        deviceProfileAdvertised: false,
-        directPlaySupported: false,
-        // HDR10+ is read only from HEVC, so no AV1 route advertises it although raw PQ presents its base
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        // Raw PQ presents the static HDR10 base that HDR10+ always carries
         expectedRoute: RAW_HDR_ROUTE,
         label: 'HDR10Plus Main 10-bit',
         runtimeEligible: true,
@@ -534,6 +534,12 @@ const AV1_ROUTE_FALLBACK_MATRIX: readonly AV1RouteFallbackRow[] = [
         label: 'HLG Main 10-bit',
         nativeDecodeRoute: null,
         videoStream: createHDRAV1Stream('HLG', 'hlg')
+    },
+    {
+        declaredBaseRoute: RAW_HDR_ROUTE,
+        label: 'HDR10Plus Main 10-bit',
+        nativeDecodeRoute: null,
+        videoStream: createHDRAV1Stream('HDR10Plus', 'pq', { Hdr10PlusPresentFlag: true })
     },
     {
         declaredBaseRoute: null,

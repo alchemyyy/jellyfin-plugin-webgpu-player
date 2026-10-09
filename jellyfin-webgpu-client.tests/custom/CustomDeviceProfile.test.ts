@@ -2071,12 +2071,12 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Conditions: expect.arrayContaining([
                 expect.objectContaining({
                     Property: 'VideoRangeType',
-                    Value: 'SDR|HDR10|HLG'
+                    Value: 'SDR|HDR10|HLG|HDR10Plus'
                 })
             ]),
             Container: 'mp4,m4v,mov,mkv,webm'
         }));
-        // VP9 splits into exact profile and range pairs, where HDR10+ is only a rejection rule
+        // VP9 splits into exact profile and range pairs, where HDR10+ follows HDR10 onto the raw route
         expect(result.profile.CodecProfiles?.some(profile => (
             profile.Codec === 'vp9'
             && !isRejectedRouteProfile(profile)
@@ -2084,7 +2084,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 condition.Property === 'VideoRangeType'
                 && condition.Value?.includes('HDR10Plus')
             ))
-        ))).toBe(false);
+        ))).toBe(true);
         expect(result.profile.CodecProfiles?.some(profile => (
             profile.Codec === 'hevc'
             && profile.Container === 'mj2,webm'
@@ -2135,7 +2135,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Codec: 'vp9',
             Conditions: expect.arrayContaining([ expect.objectContaining({
                 Property: 'VideoRangeType',
-                Value: 'SDR|HDR10|HLG'
+                Value: 'SDR|HDR10|HLG|HDR10Plus'
             }) ]),
             Container: 'mp4,m4v,mov,mkv,webm'
         }));
@@ -3626,6 +3626,69 @@ const PROFILE_10_VIDEO_RANGE_TYPES = [
     'DOVIInvalid'
 ] as const;
 
+// Jellyfin Web's stock ranges follow the display: HDR10, HDR10+, and HLG on an HDR display, SDR alone otherwise
+const HDR_DISPLAY_STOCK_VIDEO_RANGE_TYPES = 'SDR|HDR10|HDR10Plus|HLG';
+const SDR_DISPLAY_STOCK_VIDEO_RANGE_TYPES = 'SDR';
+const PQ_STREAM_COLOR = {
+    ColorPrimaries: 'bt2020',
+    ColorSpace: 'bt2020nc',
+    ColorTransfer: 'smpte2084',
+    VideoRange: 'HDR'
+} as const;
+const HLG_STREAM_COLOR = {
+    ...PQ_STREAM_COLOR,
+    ColorTransfer: 'arib-std-b67'
+} as const;
+
+// Raw VP9 HDR rows: HDR10+ plays its static HDR10 base wherever raw PQ is authorized
+const RAW_VP9_HDR_ROUTE_MATRIX = [
+    {
+        advertised: true,
+        bitDepth: 10,
+        color: PQ_STREAM_COLOR,
+        label: 'HDR10 Profile 2 at 10 bits',
+        profile: 'Profile 2',
+        rangeType: 'HDR10',
+        routeKeys: RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys
+    },
+    {
+        advertised: true,
+        bitDepth: 10,
+        color: PQ_STREAM_COLOR,
+        label: 'HDR10Plus Profile 2 at 10 bits',
+        profile: 'Profile 2',
+        rangeType: 'HDR10Plus',
+        routeKeys: RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys
+    },
+    {
+        advertised: true,
+        bitDepth: 10,
+        color: HLG_STREAM_COLOR,
+        label: 'HLG Profile 2 at 10 bits',
+        profile: 'Profile 2',
+        rangeType: 'HLG',
+        routeKeys: RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys
+    },
+    {
+        advertised: false,
+        bitDepth: 8,
+        color: PQ_STREAM_COLOR,
+        label: 'HDR10Plus Profile 0 at 8 bits',
+        profile: 'Profile 0',
+        rangeType: 'HDR10Plus',
+        routeKeys: RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys
+    },
+    {
+        advertised: false,
+        bitDepth: 10,
+        color: PQ_STREAM_COLOR,
+        label: 'HDR10Plus Profile 2 without the raw PQ key',
+        profile: 'Profile 2',
+        rangeType: 'HDR10Plus',
+        routeKeys: [ RAW_HLG_ROUTE_KEY ]
+    }
+] as const;
+
 /** Returns whether a profile direct-plays a Matroska source of one video stream and stereo AAC. */
 function isDirectPlayAdvertised(profile: DeviceProfile, videoStream: Readonly<Record<string, unknown>>): boolean {
     return isSameSessionNativePlaybackCompatible({
@@ -3859,7 +3922,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         expect(widenedProfile?.Conditions).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 Property: 'VideoRangeType',
-                Value: 'SDR|HDR10|HLG|DOVI|DOVIWithHDR10|DOVIWithHLG|DOVIWithSDR|DOVIWithHDR10Plus|DOVIInvalid'
+                Value: 'SDR|HDR10|HLG|HDR10Plus|DOVI|DOVIWithHDR10|DOVIWithHLG|DOVIWithSDR|DOVIWithHDR10Plus|DOVIInvalid'
             }),
             expect.objectContaining({ Property: 'VideoBitDepth', Value: '10' }),
             expect.objectContaining({ Property: 'VideoProfile', Value: 'main' })
@@ -3981,7 +4044,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         expect(withoutRawSDR.profile.CodecProfiles).toContainEqual(expect.objectContaining({
             Codec: 'av1',
             Conditions: expect.arrayContaining([
-                expect.objectContaining({ Property: 'VideoRangeType', Value: 'SDR|HDR10|HLG' }),
+                expect.objectContaining({ Property: 'VideoRangeType', Value: 'SDR|HDR10|HLG|HDR10Plus' }),
                 expect.objectContaining({ Property: 'VideoBitDepth', Value: '10' })
             ])
         }));
@@ -4000,6 +4063,27 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
             })
         )).toBe(true);
     });
+
+    // The server ANDs every matching codec profile, so the stock ranges of an SDR display must widen too
+    it.each(RAW_VP9_HDR_ROUTE_MATRIX)(
+        '$label: advertises the raw VP9 route under the stock profiles of HDR and SDR displays alike',
+        ({ advertised, bitDepth, color, profile, rangeType, routeKeys }) => {
+            for (const stockVideoRangeTypes of [ HDR_DISPLAY_STOCK_VIDEO_RANGE_TYPES, SDR_DISPLAY_STOCK_VIDEO_RANGE_TYPES ]) {
+                const original = createBaseProfile();
+                original.CodecProfiles = [ createStockVideoCodecProfile('vp9', stockVideoRangeTypes) ];
+                const result = augmentDeviceProfileForCustomDecode(
+                    original,
+                    createCapabilities({ supportedVideoCodecs: [ 'vp9' ], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'vp9' ] }),
+                    { allowRawHDR: true, authorizedRawHDRRouteKeys: routeKeys }
+                );
+
+                expect(
+                    isDirectPlayAdvertised(result.profile, createVideoStream('vp9', profile, bitDepth, rangeType, color)),
+                    stockVideoRangeTypes
+                ).toBe(advertised);
+            }
+        }
+    );
 
     it('advertises a Profile 10 item labeled by transfer through its own exact route', () => {
         const mediaStream = createProfile10Stream(null, 'HDR10');
