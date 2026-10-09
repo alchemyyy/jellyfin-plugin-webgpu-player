@@ -74,7 +74,7 @@ public sealed class FileTransformationRegistrar(ILogger<FileTransformationRegist
         // NOTE: index.html goes first, because config.json must never name a window factory that index.html does not define
         if (!TryRegisterCallback(registerMethod, IndexHTMLTransformationId, IndexHTMLFileName, nameof(TransformationCallbacks.TransformIndexHTML)))
         {
-            logger.LogWarning("File Transformation rejected the WebGPU Player callbacks; its own middleware rewrites Jellyfin Web");
+            logger.LogWarning("File Transformation rejected the WebGPU Player callbacks; WebGPU Player rewrites Jellyfin Web with its own middleware");
             return WebClientRewriteMode.Middleware;
         }
 
@@ -87,7 +87,7 @@ public sealed class FileTransformationRegistrar(ILogger<FileTransformationRegist
         // The middleware may take over only once File Transformation stops rewriting index.html
         if (TryRemoveCallback(registerMethod, IndexHTMLTransformationId))
         {
-            logger.LogWarning("File Transformation rejected the WebGPU Player config.json callback; its own middleware rewrites Jellyfin Web");
+            logger.LogWarning("File Transformation rejected the WebGPU Player config.json callback; WebGPU Player rewrites Jellyfin Web with its own middleware");
             return WebClientRewriteMode.Middleware;
         }
 
