@@ -164,7 +164,8 @@ jobs:
               "$manifest_url" "$PLUGIN_NAME"
             printf 'The tarballs are the corresponding source of the LGPL decoders built into the plugin.\n'
           } > "$notes_file"
-          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip "$SOURCE_ARCHIVES_DIRECTORY"/*.tar.gz \
+          # The plugin image goes up beside the zip, where manifest.json's imageUrl points
+          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip "$RUNNER_TEMP"/package/*.png "$SOURCE_ARCHIVES_DIRECTORY"/*.tar.gz \
             --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$notes_file"
 
       # Commits pushed to main during the build go under the release commit; the tag keeps the commit that was built

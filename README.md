@@ -1,5 +1,7 @@
 # jellyfin-plugin-webgpu-player
 
+![WebGPU Player](images/jellyfin-plugin-webgpu-player-banner.png)
+
 A Jellyfin server plugin that adds the WebGPU Player to an unmodified Jellyfin
 Web client. The player is the WebGPU/WebCodecs engine
 ([alchemyyy/WebGPU-Player](https://github.com/alchemyyy/WebGPU-Player)) plus
@@ -11,6 +13,10 @@ The
 plugin is optional. When it is installed, the plugin rewrites Jellyfin Web
 through it, alongside other plugins that use it. Without it, the plugin's own
 middleware does the same rewrites.
+
+The client add-on and its Jellyfin integration are documented in the mdBook in
+[docs/](docs/src/SUMMARY.md); the engine has its own book in
+`jellyfin-webgpu-client/vendor/webgpu-player/docs/`.
 
 ## Design
 
@@ -88,6 +94,8 @@ These apply only while File Transformation does the rewriting.
 | `jellyfin-webgpu-client/vendor/webgpu-player/` | Submodule: the engine ([alchemyyy/WebGPU-Player](https://github.com/alchemyyy/WebGPU-Player)), an npm workspace of `jellyfin-webgpu-client/` |
 | `jellyfin-webgpu-client/vendor/webgpu-player-hls/` | Submodule: the hls.js fork (`alchemyyy/hls.js`, branch `fix/cals2`) |
 | `Jellyfin.Plugin.WebGPUPlayer.Tests/` | xUnit tests |
+| `docs/` | The plugin's documentation, an mdBook; `docs/book/` is the built book |
+| `images/` | The plugin banner (the source SVG, and the PNG that the package and the repository manifest's `imageUrl` carry), and the plugin logo, the source of the book's favicon |
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
 | `release.py` | Sets the version, and packages the published plugin with a `meta.json` into a plugin repository manifest |
@@ -120,7 +128,7 @@ Only for specific tasks:
   (`2026-03-01-git-862338fe31-full_build-www.gyan.dev`), to generate or check
   the engine's codec vectors.
 - MKVToolNix, for the engine's Dolby Vision smoke media scripts.
-- mdBook 0.5.4, to build the engine's documentation.
+- mdBook 0.5.4, to build the plugin's and the engine's documentation.
 - Chrome, Edge, or Firefox with WebGPU and WebCodecs, over HTTPS or
   `localhost`, and a Jellyfin server, 12.1 or later, to run it. Firefox on
   Windows decodes HEVC in software only, which is below real time at 4K. The

@@ -1,0 +1,6 @@
+/* The engine book's theme, shared rather than copied */
+/* NOTE: URLs resolve from the built stylesheet in docs/book/theme/, so three levels up is the plugin root */
+@import url("../../../jellyfin-webgpu-client/vendor/webgpu-player/docs/theme/content.css");
+@import url("../../../jellyfin-webgpu-client/vendor/webgpu-player/docs/theme/sidebar.css");
+@import url("../../../jellyfin-webgpu-client/vendor/webgpu-player/docs/theme/navigation.css");
+@import url("../../../jellyfin-webgpu-client/vendor/webgpu-player/docs/theme/diagrams.css");

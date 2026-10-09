@@ -1,7 +1,7 @@
 # Dolby Vision Follow-Ups
 
 Open items left after Profile 10 (AV1) support and the remaining Dolby Vision gaps were closed on 2026-10-08.
-The engine book's "HEVC and Dolby Vision support" chapter (`jellyfin-webgpu-client/vendor/webgpu-player/docs/src/codec-support.md`) lists every supported variant and route.
+The engine book's "HEVC and Dolby Vision support" chapter (`jellyfin-webgpu-client/vendor/webgpu-player/docs/src/codec-support.md`) lists every variant the engine plays and its routes, and the plugin book's "Direct play support" chapter (`docs/src/direct-play-support.md`) adds what Jellyfin negotiates for each.
 
 ## Behaviour changes to be aware of
 

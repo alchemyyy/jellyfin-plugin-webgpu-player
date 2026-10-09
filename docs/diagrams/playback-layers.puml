@@ -1,0 +1,37 @@
+@startuml
+!include ../../jellyfin-webgpu-client/vendor/webgpu-player/docs/diagrams/diagram-theme.puml
+skinparam nodesep 25
+skinparam ranksep 45
+
+rectangle "Jellyfin Web (stock)" $BOX_HOST {
+  rectangle "**PlaybackManager**\ngetDeviceProfile -> PlaybackInfo -> play();\n'playbackstart' when play() resolves" as playbackManager
+  rectangle "**Axios instance**\nthe server's API client" as axios
+}
+
+rectangle "Add-on" $BOX_MAIN {
+  rectangle "**HostCompatibleWebGPUPlayer**\nplayer preference, marked profiles,\nsuperseded starts" as compatPlayer
+  rectangle "**WebGPUPlayer**\nprofile augmentation, eligibility,\nrAF loop, fallback, generations" as player
+  rectangle "**compat/**\nPlaybackInfo interceptor,\nPlaybackManager hooks" as compat
+  rectangle "**HTMLPlayerDelegate**\nforwards the current\ngeneration's events" as delegate
+  rectangle "**HtmlVideoPlayer**\nthe add-on's copy: HTML backend,\nevent and UI shell; hls.js" as htmlPlayer
+}
+
+rectangle "Engine" $BOX_WORKER {
+  rectangle "**Capability probes**\nand GPU authorizations" as probes
+  rectangle "**WebGPUPresenter**" as presenter
+  rectangle "**CustomPlaybackController**\nand the custom pipeline" as controller
+  rectangle "**WebGPUAudioOutputManager**" as sinkManager
+}
+
+playbackManager -down-> compatPlayer : the only player\nit sees
+compatPlayer -down-> player
+compat .up.> playbackManager : wraps play, nextTrack,\nprevious, stop
+compat .up.> axios : intercepts PlaybackInfo
+player -down-> delegate
+delegate -down-> htmlPlayer
+player -down-> probes : getDeviceProfile
+player -down-> controller : (b) eligible direct-play VOD
+player -down-> presenter : rAF frames
+htmlPlayer -right-> presenter : (a) known-SDR rVFC frames
+player -down-> sinkManager
+@enduml

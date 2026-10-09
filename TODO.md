@@ -57,7 +57,7 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   A cache hit resolves `getDeviceProfile` at once; a background reprobe then refreshes the entry.
   DTS and TrueHD verdicts carry a measured real-time factor that depends on machine load, so their revalidation runs only with no playback active.
   Revalidation is background work with the same contention as warming, so it belongs on the gated scheduler above, or after a playback session ends until that scheduler exists.
-  The engine book's `negotiation.md` "Probes and caching" and `decisions.md` change with it.
+  The engine book's `routes.md` "Probes and caching" and `decisions.md` change with it.
 
 ## Robustness
 

@@ -1,0 +1,15 @@
+[book]
+title = "WebGPU Player for Jellyfin"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "coal"
+additional-css = ["theme/engine-theme.css"]
+additional-js = ["theme/engine-theme.js"]
+git-repository-url = "https://github.com/alchemyyy/jellyfin-plugin-webgpu-player"

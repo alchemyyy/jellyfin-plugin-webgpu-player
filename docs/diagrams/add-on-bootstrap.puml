@@ -1,0 +1,29 @@
+@startuml
+!include ../../jellyfin-webgpu-client/vendor/webgpu-player/docs/diagrams/diagram-theme.puml
+
+box "Jellyfin server" $BOX_HOST
+participant "Server plugin" as plugin
+participant "File Transformation\nor plugin middleware" as rewriter
+end box
+box "Browser" $BOX_MAIN
+participant "Jellyfin Web" as web
+participant "Plugin manager" as pluginManager
+participant "Add-on index.ts" as addon
+participant "Engine" as engine
+end box
+
+== Server start ==
+plugin -> rewriter : choose exactly one rewriter;\nFile Transformation when installed
+== Page load ==
+web -> rewriter : GET index.html, config.json
+rewriter --> web : index.html + bootstrap script\n(window.WebGPUPlayerConfig, window.WebGPUPlayer factory)
+rewriter --> web : config.json with WebGPUPlayer\nappended to plugins
+web -> pluginManager : load plugins
+pluginManager -> addon : window plugin path:\nfactory imports the add-on entry
+addon -> plugin : GET <BaseUrl>/WebGPUPlayer/assets/<path>
+plugin --> addon : add-on build and the engine's libraries/
+addon -> engine : configureEngineAssets\n(add-on route + libraries/, the build's asset key)
+addon -> engine : configureEngineFeatureFlags\n(isHDRToneMappingEnabled reads the user's preference)
+addon -> addon : bind the host bridge;\ninstall the host-compatible mode
+addon --> pluginManager : HostCompatibleWebGPUPlayer\n(id webgpuplayer, priority 0)
+@enduml

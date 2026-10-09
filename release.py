@@ -12,10 +12,10 @@ version on the assembly.
     uv run release.py package --source-url-base http://192.168.1.10:8000
 
 set-version writes the version into both files and the changelog into build.yaml; build the plugin after it. package
-zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json, and inserts or replaces that
-version in a plugin repository manifest. Both land in bin/package/ by default, a repository to serve over HTTP for test
-installs. The release workflow writes the committed manifest.json instead, with the GitHub release as the download
-source.
+zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image, copies the
+image beside the zip, and inserts or replaces that version in a plugin repository manifest whose imageUrl names that
+copy. They land in bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow
+writes the committed manifest.json instead, with the GitHub release as the download source.
 """
 
 import argparse
@@ -39,6 +39,8 @@ BUILD_CONFIGURATION_FILE: Path = REPOSITORY_DIRECTORY / "build.yaml"
 BUILD_PROPERTIES_FILE: Path = REPOSITORY_DIRECTORY / "Directory.Build.props"
 PUBLISH_DIRECTORY: Path = REPOSITORY_DIRECTORY / "bin" / "Jellyfin.Plugin.WebGPUPlayer" / "Release" / "publish"
 DEFAULT_OUTPUT_DIRECTORY: Path = REPOSITORY_DIRECTORY / "bin" / "package"
+# The catalog and plugin page image; the source SVG sits beside it
+IMAGE_FILE: Path = REPOSITORY_DIRECTORY / "images" / "jellyfin-plugin-webgpu-player-banner.png"
 MANIFEST_FILE_NAME: str = "manifest.json"
 METADATA_FILE_NAME: str = "meta.json"
 PACKAGE_SLUG: str = "webgpu-player"
@@ -174,6 +176,8 @@ def build_metadata(configuration: dict, timestamp: str) -> dict:
         "changelog": configuration["changelog"].strip(),
         "targetAbi": configuration["targetAbi"],
         "timestamp": timestamp,
+        # Relative to the plugin folder, for a plugin installed from the zip alone
+        "imagePath": IMAGE_FILE.name,
     }
 
 
@@ -186,11 +190,13 @@ def write_package(configuration: dict, metadata: dict, package_file: Path) -> st
             if not artifact_file.is_file():
                 fail(f"No {artifact_name} in {PUBLISH_DIRECTORY}; run ./build.sh --publish first")
             package_archive.write(artifact_file, artifact_name)
+        # NOTE: Jellyfin downloads a repository's imageUrl only when no file of that name is in the plugin folder
+        package_archive.write(IMAGE_FILE, IMAGE_FILE.name)
         package_archive.writestr(METADATA_FILE_NAME, json.dumps(metadata, indent=4, sort_keys=True) + "\n")
     return hashlib.md5(package_file.read_bytes()).hexdigest()
 
 
-def update_manifest(manifest_file: Path, metadata: dict, source_url: str, checksum: str) -> None:
+def update_manifest(manifest_file: Path, metadata: dict, source_url: str, checksum: str, image_url: str) -> None:
     """Inserts or replaces this version in the manifest, keeping the other versions, newest first."""
     manifest: list[dict] = []
     if manifest_file.is_file():
@@ -220,6 +226,8 @@ def update_manifest(manifest_file: Path, metadata: dict, source_url: str, checks
         "overview": metadata["overview"],
         "owner": metadata["owner"],
         "category": metadata["category"],
+        # Jellyfin rewrites an installed plugin's meta.json from the catalog, taking its image from here only
+        "imageUrl": image_url,
         "versions": versions,
     }
     packages: list[dict] = [entry for entry in manifest if entry.get("guid") != metadata["guid"]]
@@ -239,9 +247,14 @@ def package(source_url_base: str, output_directory: Path, manifest_file: Path) -
     package_file: Path = output_directory / package_file_name
     checksum: str = write_package(configuration, metadata, package_file)
 
+    # The image is served beside the zip: from the release assets, or from the local test repository
+    image_file: Path = output_directory / IMAGE_FILE.name
+    image_file.write_bytes(IMAGE_FILE.read_bytes())
+
     source_url: str = f"{source_url_base.rstrip('/')}/{package_file_name}"
-    update_manifest(manifest_file, metadata, source_url, checksum)
-    print(f"Packaged {package_file} (MD5 {checksum})")
+    image_url: str = f"{source_url_base.rstrip('/')}/{IMAGE_FILE.name}"
+    update_manifest(manifest_file, metadata, source_url, checksum, image_url)
+    print(f"Packaged {package_file} (MD5 {checksum}) and {image_file}")
     print(f"Recorded {metadata['version']} in {manifest_file}, downloaded from {source_url}")
 
 
