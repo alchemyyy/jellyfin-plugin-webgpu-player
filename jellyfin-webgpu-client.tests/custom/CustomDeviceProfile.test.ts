@@ -26,6 +26,7 @@ import {
     augmentDeviceProfileForCustomDecode,
     createBitrateIndependentDeviceProfile
 } from 'addons/webGPUPlayer/custom/CustomDeviceProfile';
+import { isSameSessionNativePlaybackCompatible } from 'addons/webGPUPlayer/custom/NativeDirectPlayCompatibility';
 import { CUSTOM_CONTAINER_CODEC_RULES } from 'webgpu-player/capability/CustomContainerCodecSupport';
 import {
     H264_JELLYFIN_PROFILE_NAMES,
@@ -34,6 +35,12 @@ import {
     H264_PROFILES,
     type H264ProfileCapabilities
 } from 'webgpu-player/capability/H264ProfileCapabilities';
+import {
+    HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS,
+    HEVC_RANGE_EXTENSION_VARIANTS,
+    type HEVCRangeExtensionCapability,
+    type HEVCRangeExtensionVariant
+} from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 import type {
     NativeMediaAudioCapabilities,
     NativeMediaAudioChannelCount,
@@ -42,13 +49,19 @@ import type {
     NativeMediaAudioLayoutCapability
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 
+const RAW_PQ_ROUTE_KEY = 'I420P10:bt2020-ncl:bt2020:limited:pq';
+const RAW_HLG_ROUTE_KEY = 'I420P10:bt2020-ncl:bt2020:limited:hlg';
+
 const RAW_HDR_PROFILE_OPTIONS = {
     allowRawHDR: true,
     authorizedRawHDRRouteKeys: [
-        'I420P10:bt2020-ncl:bt2020:limited:pq',
-        'I420P10:bt2020-ncl:bt2020:limited:hlg'
+        RAW_PQ_ROUTE_KEY,
+        RAW_HLG_ROUTE_KEY
     ] as const
 };
+
+const ULTRA_HD_8K_WIDTH = 7_680;
+const ULTRA_HD_8K_HEIGHT = 4_320;
 
 function createCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
     codec: Codec,
@@ -604,6 +617,13 @@ function acceptsMeasuredAudioRoute(
     return applicableProfiles.length > 0;
 }
 
+// An exact route whose only depth is 0 rejects its profile and range pair
+function isRejectedRouteProfile(codecProfile: CodecProfile): boolean {
+    return codecProfile.Conditions?.some(condition => (
+        condition.Property === 'VideoBitDepth' && condition.Value === '0'
+    )) === true;
+}
+
 function getAppliedTranscodeAudioSampleRates(
     codecProfiles: readonly CodecProfile[],
     targetCodec: CustomAudioCodec,
@@ -814,12 +834,38 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             ))
         ));
         expect(hevcProfile).toBeDefined();
+        // The bundled decoder has no frame-size cap, and no stock native runtime condition carries over
         expect(hevcProfile?.Conditions?.some(condition => (
             condition.Property === 'Width'
             || condition.Property === 'Height'
             || condition.Property === 'VideoLevel'
             || condition.Property === 'VideoFramerate'
         ))).toBe(false);
+    });
+
+    it('advertises the bundled HEVC routes at any frame size', () => {
+        // Without native HEVC, Main and the raw Main 10 planes both decode through the bundled decoder
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities([], [ 'aac' ], [ 'hevc' ])),
+            {
+                allowRawHDR: true,
+                authorizedRawHDRRouteKeys: [ RAW_PQ_ROUTE_KEY ]
+            }
+        );
+        const eightKOverrides = { Height: ULTRA_HD_8K_HEIGHT, Width: ULTRA_HD_8K_WIDTH };
+
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createVideoStream('hevc', 'Main', 8, 'SDR', eightKOverrides)
+        )).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('hevc', 'Main 10', 10, 'HDR10', {
+            ...eightKOverrides,
+            ColorPrimaries: 'bt2020',
+            ColorSpace: 'bt2020nc',
+            ColorTransfer: 'smpte2084',
+            VideoRange: 'HDR'
+        }))).toBe(true);
     });
 
     it('removes all bitrate inputs from WebGPU playback negotiation', () => {
@@ -2238,8 +2284,10 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             ]),
             Container: 'mp4,m4v,mov,mkv,webm'
         }));
+        // VP9 splits into exact profile and range pairs, where HDR10+ is only a rejection rule
         expect(result.profile.CodecProfiles?.some(profile => (
             profile.Codec === 'vp9'
+            && !isRejectedRouteProfile(profile)
             && profile.Conditions?.some(condition => (
                 condition.Property === 'VideoRangeType'
                 && condition.Value?.includes('HDR10Plus')
@@ -2394,20 +2442,22 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             RAW_HDR_PROFILE_OPTIONS
         );
 
-        const rawHDRProfile = result.profile.CodecProfiles?.find(profile => (
+        // Native and raw VP9 routes split into exact profile and range pairs, one per raw HDR range
+        const rawHDRProfiles = result.profile.CodecProfiles?.filter(profile => (
             profile.Codec === 'vp9'
+            && !isRejectedRouteProfile(profile)
             && profile.Conditions?.some(condition => (
                 condition.Property === 'VideoRangeType'
-                && condition.Value === 'HDR10|HLG'
+                && (condition.Value === 'HDR10' || condition.Value === 'HLG')
             ))
-        ));
-        expect(rawHDRProfile).toBeDefined();
-        expect(rawHDRProfile?.Conditions?.some(condition => (
+        )) ?? [];
+        expect(rawHDRProfiles).toHaveLength(2);
+        expect(rawHDRProfiles.some(rawHDRProfile => rawHDRProfile.Conditions?.some(condition => (
             condition.Property === 'Width'
             || condition.Property === 'Height'
             || condition.Property === 'VideoLevel'
             || condition.Property === 'VideoFramerate'
-        ))).toBe(false);
+        )))).toBe(false);
     });
 
     it('rejects unsupported native raw HDR qualification evidence', () => {
@@ -2493,7 +2543,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             {
                 allowRawHDR: true,
                 authorizedRawHDRRouteKeys: [
-                    'I420P10:bt2020-ncl:bt2020:limited:pq'
+                    RAW_PQ_ROUTE_KEY
                 ]
             }
         );
@@ -2676,7 +2726,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     'external-hevc-main10-bt709-limited:hlg-v1'
                 ],
                 authorizedRawHDRRouteKeys: [
-                    'I420P10:bt2020-ncl:bt2020:limited:pq'
+                    RAW_PQ_ROUTE_KEY
                 ]
             }
         );
@@ -3816,5 +3866,597 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             reason: 'no-compatible-combinations',
             widenedHDRCodecProfileCount: 0
         });
+    });
+});
+
+const RAW_SDR_ROUTE_KEYS = [
+    'I420P10:bt709:bt709:limited:sdr',
+    'I420P10:bt709:bt709:full:sdr'
+] as const;
+
+const PROFILE_10_VIDEO_RANGE_TYPES = [
+    'DOVI',
+    'DOVIWithHDR10',
+    'DOVIWithHLG',
+    'DOVIWithSDR',
+    'DOVIWithHDR10Plus',
+    'DOVIInvalid'
+] as const;
+
+/** Returns whether a profile direct-plays a Matroska source of one video stream and stereo AAC. */
+function isDirectPlayAdvertised(
+    profile: DeviceProfile,
+    videoStream: Readonly<Record<string, unknown>>
+): boolean {
+    return isSameSessionNativePlaybackCompatible({
+        mediaSource: {
+            Container: 'mkv',
+            DefaultAudioStreamIndex: 1,
+            MediaStreams: [
+                videoStream,
+                {
+                    Channels: 2,
+                    Codec: 'aac',
+                    Index: 1,
+                    SampleRate: 48_000,
+                    Type: 'Audio'
+                }
+            ],
+            SupportsDirectPlay: true
+        },
+        playMethod: 'DirectPlay',
+        url: '/Videos/item/stream.mkv'
+    }, profile);
+}
+
+function createVideoStream(
+    codec: string,
+    profile: string,
+    bitDepth: number,
+    videoRangeType: string,
+    overrides: Readonly<Record<string, unknown>> = {}
+): Readonly<Record<string, unknown>> {
+    return {
+        BitDepth: bitDepth,
+        Codec: codec,
+        ColorPrimaries: 'bt709',
+        ColorRange: 'tv',
+        ColorSpace: 'bt709',
+        ColorTransfer: 'bt709',
+        Height: 2_160,
+        Index: 0,
+        IsInterlaced: false,
+        Profile: profile,
+        Type: 'Video',
+        VideoRange: 'SDR',
+        VideoRangeType: videoRangeType,
+        Width: 3_840,
+        ...overrides
+    };
+}
+
+/** Creates an AV1 Profile 10 stream over a PQ base; a null compatibility ID omits the field, as Matroska can. */
+function createProfile10Stream(
+    compatibilityID: number | null,
+    videoRangeType: string,
+    overrides: Readonly<Record<string, unknown>> = {}
+): Readonly<Record<string, unknown>> {
+    return createVideoStream('av1', 'Main', 10, videoRangeType, {
+        BlPresentFlag: true,
+        ColorPrimaries: 'bt2020',
+        ColorSpace: 'bt2020nc',
+        ColorTransfer: 'smpte2084',
+        DvProfile: 10,
+        ElPresentFlag: false,
+        RpuPresentFlag: true,
+        VideoRange: 'HDR',
+        ...(compatibilityID === null ? {} : { DvBlSignalCompatibilityId: compatibilityID }),
+        ...overrides
+    });
+}
+
+function createStockVideoCodecProfile(codec: string, videoRangeTypes: string): CodecProfile {
+    return {
+        Codec: codec,
+        Conditions: [ {
+            Condition: 'EqualsAny',
+            IsRequired: false,
+            Property: 'VideoRangeType',
+            Value: videoRangeTypes
+        } ],
+        Type: 'Video'
+    };
+}
+
+/** Returns the base profile with the stock hevc profile of a browser whose own playback is SDR only. */
+function createBaseProfileWithStockHEVC(videoProfiles: string): DeviceProfile {
+    const profile = createBaseProfile();
+    profile.CodecProfiles = [ {
+        Codec: 'hevc',
+        Conditions: [
+            {
+                Condition: 'EqualsAny',
+                IsRequired: false,
+                Property: 'VideoProfile',
+                Value: videoProfiles
+            },
+            {
+                Condition: 'EqualsAny',
+                IsRequired: false,
+                Property: 'VideoRangeType',
+                Value: 'SDR'
+            }
+        ],
+        Type: 'Video'
+    } ];
+    return profile;
+}
+
+/** Returns every profile/range pair a codec's exact routes scope with ApplyConditions. */
+function getMeasuredRoutePairs(profile: DeviceProfile, codec: string): string[] {
+    const pairs: string[] = [];
+    for (const codecProfile of profile.CodecProfiles ?? []) {
+        if (codecProfile.Codec !== codec || !codecProfile.ApplyConditions) {
+            continue;
+        }
+        const profileCondition = codecProfile.ApplyConditions.find(condition => (
+            condition.Property === 'VideoProfile'
+        ));
+        const rangeCondition = codecProfile.ApplyConditions.find(condition => (
+            condition.Property === 'VideoRangeType'
+        ));
+        pairs.push(`${profileCondition?.Value ?? ''}|${rangeCondition?.Value ?? ''}`);
+    }
+    return pairs;
+}
+
+/** Adds unqualified range-extension evidence, which makes HEVC split into exact pairs as the probes always do. */
+function withUnqualifiedHEVCRangeExtensions(
+    capabilities: CustomDecodeCapabilities
+): CustomDecodeCapabilities {
+    const hevcRangeExtensions = {} as Record<HEVCRangeExtensionVariant, HEVCRangeExtensionCapability>;
+    for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
+        const definition = HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant];
+        hevcRangeExtensions[variant] = {
+            bitDepth: definition.bitDepth,
+            chromaFormat: definition.chromaFormat,
+            codec: 'hevc',
+            codecString: definition.config.codec,
+            format: definition.format,
+            jellyfinProfile: definition.jellyfinProfile,
+            pixelFormat: definition.pixelFormat,
+            reason: 'output-copy-unsupported',
+            status: 'unsupported',
+            variant
+        };
+    }
+    return { ...capabilities, hevcRangeExtensions };
+}
+
+function createCapabilitiesWithoutBundledMain10(
+    supportedVideoCodecs: readonly CustomVideoCodec[],
+    supportedRawHDRVideoCodecs: readonly CustomRawHDRVideoCodec[]
+): CustomDecodeCapabilities {
+    const capabilities = createCapabilities(supportedVideoCodecs, [ 'aac' ], supportedRawHDRVideoCodecs);
+    const bundledHEVC = createBundledHEVCCapabilities();
+    capabilities.bundledHEVC = {
+        qualifications: {
+            ...bundledHEVC.qualifications,
+            'main10-1080p': {
+                ...bundledHEVC.qualifications['main10-1080p'],
+                reason: 'output-mismatch',
+                status: 'unsupported'
+            },
+            'main10-4k': {
+                ...bundledHEVC.qualifications['main10-4k'],
+                reason: 'output-mismatch',
+                status: 'unsupported'
+            }
+        },
+        reason: 'partial'
+    };
+    return capabilities;
+}
+
+describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes', () => {
+    it('advertises every Profile 10 range on the 10-bit raw AV1 route and never an EL range', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities([ 'av1' ], [ 'aac' ], [ 'av1' ]),
+            { allowDolbyVision: true, allowRawHDR: false }
+        );
+
+        for (const rangeType of PROFILE_10_VIDEO_RANGE_TYPES) {
+            expect(isDirectPlayAdvertised(result.profile, createProfile10Stream(1, rangeType))).toBe(true);
+            expect(isDirectPlayAdvertised(
+                result.profile,
+                createProfile10Stream(1, rangeType, { BitDepth: 8 })
+            )).toBe(false);
+        }
+        // Profile 10 carries a single-layer RPU, so the EL labels stay rejection rules
+        for (const rangeType of [ 'DOVIWithEL', 'DOVIWithELHDR10Plus' ]) {
+            expect(isDirectPlayAdvertised(result.profile, createProfile10Stream(6, rangeType))).toBe(false);
+        }
+    });
+
+    it('lets Profile 10 alone make AV1 a supported codec', () => {
+        const capabilities = createCapabilities([], [ 'aac' ], [ 'av1' ]);
+
+        const withDolbyVision = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            { allowDolbyVision: true, allowRawHDR: false }
+        );
+        const withoutDolbyVision = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            { allowRawHDR: false }
+        );
+
+        expect(withDolbyVision.telemetry.supportedVideoCodecs).toEqual([ 'av1' ]);
+        expect(withDolbyVision.profile.DirectPlayProfiles).toContainEqual(expect.objectContaining({
+            Container: 'mkv',
+            VideoCodec: 'av1'
+        }));
+        expect(withoutDolbyVision.telemetry.supportedVideoCodecs).toEqual([]);
+    });
+
+    it('gates the Profile 10 ranges on raw AV1 decode and the RPU authorization', () => {
+        const withoutRawAV1 = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities([ 'av1' ], [ 'aac' ]),
+            { allowDolbyVision: true, allowRawHDR: false }
+        );
+        const withoutAuthorization = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities([ 'av1' ], [ 'aac' ], [ 'av1' ]),
+            { allowRawHDR: false }
+        );
+
+        for (const result of [ withoutRawAV1, withoutAuthorization ]) {
+            expect(isDirectPlayAdvertised(
+                result.profile,
+                createProfile10Stream(1, 'DOVIWithHDR10')
+            )).toBe(false);
+        }
+    });
+
+    it('widens a stock av1 profile limited to static ranges with the Profile 10 ranges', () => {
+        const original = createBaseProfile();
+        original.CodecProfiles = [ createStockVideoCodecProfile('av1', 'SDR|HDR10|HDR10Plus|HLG') ];
+
+        const result = augmentDeviceProfileForCustomDecode(
+            original,
+            createCapabilities([ 'av1' ], [ 'aac' ], [ 'av1' ]),
+            { ...RAW_HDR_PROFILE_OPTIONS, allowDolbyVision: true }
+        );
+        const widenedProfile = result.profile.CodecProfiles?.find(profile => (
+            profile.Codec === 'av1'
+            && profile.Container === 'mp4,m4v,mov,mkv,webm'
+            && profile.ApplyConditions === undefined
+        ));
+
+        expect(widenedProfile?.Conditions).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                Property: 'VideoRangeType',
+                Value: 'SDR|HDR10|HLG|DOVI|DOVIWithHDR10|DOVIWithHLG|DOVIWithSDR|DOVIWithHDR10Plus|DOVIInvalid'
+            }),
+            expect.objectContaining({ Property: 'VideoBitDepth', Value: '10' }),
+            expect.objectContaining({ Property: 'VideoProfile', Value: 'main' })
+        ]));
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createProfile10Stream(4, 'DOVIWithHLG', { ColorTransfer: 'arib-std-b67' })
+        )).toBe(true);
+        expect(result.telemetry.widenedHDRCodecProfileCount).toBe(1);
+    });
+
+    it('splits AV1 and VP9 routes into exact pairs, so 8-bit and 10-bit SDR both pass', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities([ 'av1', 'vp9' ], [ 'aac' ], [ 'av1', 'vp9' ]),
+            {
+                allowDolbyVision: true,
+                allowRawHDR: true,
+                allowRawSDR: true,
+                authorizedRawHDRRouteKeys: [
+                    ...RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys,
+                    ...RAW_SDR_ROUTE_KEYS
+                ]
+            }
+        );
+
+        for (const codec of [ 'av1', 'vp9' ]) {
+            const pairs = getMeasuredRoutePairs(result.profile, codec);
+            expect(pairs.length).toBeGreaterThan(0);
+            expect(new Set(pairs).size).toBe(pairs.length);
+        }
+        // Native 8-bit and raw 10-bit SDR share AV1 Main and merge into one exact route
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Main', 8, 'SDR'))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Main', 10, 'SDR'))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('vp9', 'Profile 0', 8, 'SDR'))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('vp9', 'Profile 2', 10, 'SDR'))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('vp9', 'Profile 2', 8, 'SDR'))).toBe(false);
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createVideoStream('vp9', 'Profile 0', 10, 'HDR10')
+        )).toBe(false);
+    });
+
+    it.each([
+        { allowRawSDR: true, label: 'both BT.709 keys', routeKeys: RAW_SDR_ROUTE_KEYS, supported: true },
+        {
+            allowRawSDR: true,
+            label: 'only the limited-range key',
+            routeKeys: [ 'I420P10:bt709:bt709:limited:sdr' ] as const,
+            supported: false
+        },
+        { allowRawSDR: false, label: 'the raw SDR flag withheld', routeKeys: RAW_SDR_ROUTE_KEYS, supported: false }
+    ])('advertises 10-bit SDR for AV1, VP9, and raw HEVC Main 10 with $label', ({
+        allowRawSDR,
+        routeKeys,
+        supported
+    }) => {
+        // HEVC decodes only in the bundled decoder here, with no native Main 10 SDR route
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main'),
+            withUnqualifiedHEVCRangeExtensions(
+                createCapabilities([ 'av1', 'vp9' ], [ 'aac' ], [ 'av1', 'vp9', 'hevc' ])
+            ),
+            {
+                allowRawHDR: false,
+                allowRawSDR,
+                authorizedRawHDRRouteKeys: routeKeys
+            }
+        );
+
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createVideoStream('av1', 'Main', 10, 'SDR')
+        )).toBe(supported);
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createVideoStream('vp9', 'Profile 2', 10, 'SDR')
+        )).toBe(supported);
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createVideoStream('hevc', 'Main 10', 10, 'SDR')
+        )).toBe(supported);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Main', 8, 'SDR'))).toBe(true);
+    });
+
+    it('needs the bundled Main 10 qualification for 10-bit SDR from the bundled HEVC decoder', () => {
+        const options = {
+            allowRawHDR: false,
+            allowRawSDR: true,
+            authorizedRawHDRRouteKeys: RAW_SDR_ROUTE_KEYS
+        };
+        const stream = createVideoStream('hevc', 'Main 10', 10, 'SDR');
+
+        const qualified = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main'),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities([], [ 'aac' ], [ 'hevc' ])),
+            options
+        );
+        const unqualified = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main'),
+            withUnqualifiedHEVCRangeExtensions(createCapabilitiesWithoutBundledMain10([], [ 'hevc' ])),
+            options
+        );
+
+        expect(isDirectPlayAdvertised(qualified.profile, stream)).toBe(true);
+        expect(isDirectPlayAdvertised(unqualified.profile, stream)).toBe(false);
+    });
+
+    it('keeps widened stock av1 and vp9 profiles from advertising 10-bit SDR without the raw SDR route', () => {
+        const original = createBaseProfile();
+        original.CodecProfiles = [ createStockVideoCodecProfile('av1,vp9', 'SDR|HDR10|HLG') ];
+        const capabilities = createCapabilities([ 'av1', 'vp9' ], [ 'aac' ], [ 'av1', 'vp9' ]);
+        const tenBitSDRStreams = [
+            createVideoStream('av1', 'Main', 10, 'SDR'),
+            createVideoStream('vp9', 'Profile 2', 10, 'SDR')
+        ];
+
+        const withoutRawSDR = augmentDeviceProfileForCustomDecode(
+            original,
+            capabilities,
+            RAW_HDR_PROFILE_OPTIONS
+        );
+        const withRawSDR = augmentDeviceProfileForCustomDecode(
+            original,
+            capabilities,
+            {
+                ...RAW_HDR_PROFILE_OPTIONS,
+                allowRawSDR: true,
+                authorizedRawHDRRouteKeys: [
+                    ...RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys,
+                    ...RAW_SDR_ROUTE_KEYS
+                ]
+            }
+        );
+
+        // The widened stock profile allows SDR up to the raw HDR depth; the exact SDR routes keep their own depths
+        expect(withoutRawSDR.profile.CodecProfiles).toContainEqual(expect.objectContaining({
+            Codec: 'av1',
+            Conditions: expect.arrayContaining([
+                expect.objectContaining({ Property: 'VideoRangeType', Value: 'SDR|HDR10|HLG' }),
+                expect.objectContaining({ Property: 'VideoBitDepth', Value: '10' })
+            ])
+        }));
+        for (const stream of tenBitSDRStreams) {
+            expect(isDirectPlayAdvertised(withoutRawSDR.profile, stream)).toBe(false);
+            expect(isDirectPlayAdvertised(withRawSDR.profile, stream)).toBe(true);
+        }
+        expect(isDirectPlayAdvertised(
+            withoutRawSDR.profile,
+            createVideoStream('av1', 'Main', 8, 'SDR')
+        )).toBe(true);
+        expect(isDirectPlayAdvertised(
+            withoutRawSDR.profile,
+            createVideoStream('vp9', 'Profile 2', 10, 'HDR10', {
+                ColorPrimaries: 'bt2020',
+                ColorSpace: 'bt2020nc',
+                ColorTransfer: 'smpte2084',
+                VideoRange: 'HDR'
+            })
+        )).toBe(true);
+    });
+
+    it('advertises a Profile 10 item labeled by transfer through its own exact route', () => {
+        const mediaStream = createProfile10Stream(null, 'HDR10');
+        const capabilities = createCapabilities([ 'av1' ], [ 'aac' ], [ 'av1' ]);
+        const options = { allowDolbyVision: true, allowRawHDR: false };
+
+        const genericResult = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            options
+        );
+        const itemResult = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            { ...options, itemMediaSource: { MediaStreams: [ mediaStream ] } }
+        );
+
+        expect(isDirectPlayAdvertised(genericResult.profile, mediaStream)).toBe(false);
+        expect(isDirectPlayAdvertised(itemResult.profile, mediaStream)).toBe(true);
+        // Jellyfin's Main merges into the generic main token instead of a second, conflicting pair
+        expect(getMeasuredRoutePairs(itemResult.profile, 'av1').every(pair => (
+            pair.startsWith('main|')
+        ))).toBe(true);
+        expect(getMeasuredRoutePairs(itemResult.profile, 'av1')).toContain('main|HDR10');
+    });
+
+    it('widens the stock av1 profile for an 8-bit 10.2 item on native AV1 decode alone', () => {
+        const original = createBaseProfile();
+        original.CodecProfiles = [ createStockVideoCodecProfile('av1', 'SDR') ];
+        const mediaStream = createProfile10Stream(2, 'DOVIWithSDR', {
+            BitDepth: 8,
+            ColorPrimaries: 'bt709',
+            ColorSpace: 'bt709',
+            ColorTransfer: 'bt709',
+            VideoRange: 'SDR'
+        });
+
+        const result = augmentDeviceProfileForCustomDecode(
+            original,
+            createCapabilities([ 'av1' ], [ 'aac' ]),
+            {
+                allowDolbyVision: true,
+                allowRawHDR: false,
+                itemMediaSource: { MediaStreams: [ mediaStream ] }
+            }
+        );
+
+        expect(isDirectPlayAdvertised(result.profile, mediaStream)).toBe(true);
+        expect(isDirectPlayAdvertised(
+            result.profile,
+            createProfile10Stream(2, 'DOVIWithSDR', { BitDepth: 10 })
+        )).toBe(false);
+    });
+
+    it('advertises an 8-bit HEVC Main Dolby Vision item through its own exact route', () => {
+        const mediaStream = createVideoStream('hevc', 'Main', 8, 'DOVIInvalid', {
+            BlPresentFlag: true,
+            DvBlSignalCompatibilityId: 0,
+            DvProfile: 8,
+            ElPresentFlag: false,
+            RpuPresentFlag: true
+        });
+        const capabilities = withUnqualifiedHEVCRangeExtensions(
+            createCapabilities([ 'hevc' ], [ 'aac' ], [ 'hevc' ])
+        );
+        const options = { allowDolbyVision: true, allowRawHDR: false };
+
+        const genericResult = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            options
+        );
+        const itemResult = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            { ...options, itemMediaSource: { MediaStreams: [ mediaStream ] } }
+        );
+
+        expect(isDirectPlayAdvertised(genericResult.profile, mediaStream)).toBe(false);
+        expect(isDirectPlayAdvertised(itemResult.profile, mediaStream)).toBe(true);
+    });
+
+    it('never widens a retry, even for a Dolby Vision item with a route', () => {
+        const original = createBaseProfile();
+        original.CodecProfiles = [ createStockVideoCodecProfile('av1', 'SDR') ];
+
+        const result = augmentDeviceProfileForCustomDecode(
+            original,
+            createCapabilities([ 'av1' ], [ 'aac' ], [ 'av1' ]),
+            {
+                allowDolbyVision: true,
+                allowRawHDR: true,
+                allowRawSDR: true,
+                authorizedRawHDRRouteKeys: [
+                    ...RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys,
+                    ...RAW_SDR_ROUTE_KEYS
+                ],
+                isRetry: true,
+                itemMediaSource: { MediaStreams: [ createProfile10Stream(null, 'HDR10') ] }
+            }
+        );
+
+        expect(result.profile).toEqual(original);
+        expect(result.telemetry).toMatchObject({
+            addedProfileCount: 0,
+            reason: 'retry-not-widened',
+            widenedHDRCodecProfileCount: 0
+        });
+    });
+
+    it('advertises HEVC HLG when the raw HLG key is the only HDR authorization', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main|main 10'),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities([ 'hevc' ], [ 'aac' ], [ 'hevc' ])),
+            {
+                allowRawHDR: true,
+                authorizedRawHDRRouteKeys: [ RAW_HLG_ROUTE_KEY ]
+            }
+        );
+
+        // Unlike PQ, which brings HDR10+, HLG adds no HEVC-only range, so the HEVC plan must carry it on its own
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('hevc', 'Main 10', 10, 'HLG', {
+            ColorPrimaries: 'bt2020',
+            ColorSpace: 'bt2020nc',
+            ColorTransfer: 'arib-std-b67',
+            VideoRange: 'HDR'
+        }))).toBe(true);
+    });
+
+    it('advertises the generic Profile 7 ranges with or without the bundled Main 10 qualification', () => {
+        const stream = createVideoStream('hevc', 'Main 10', 10, 'DOVIWithEL', {
+            BlPresentFlag: true,
+            ColorPrimaries: 'bt2020',
+            ColorSpace: 'bt2020nc',
+            ColorTransfer: 'smpte2084',
+            DvBlSignalCompatibilityId: 0,
+            DvProfile: 7,
+            ElPresentFlag: true,
+            RpuPresentFlag: true,
+            VideoRange: 'HDR'
+        });
+        const options = { allowDolbyVisionProfile7: true, allowRawHDR: false };
+
+        const qualified = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main|main 10'),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities([ 'hevc' ], [ 'aac' ], [ 'hevc' ])),
+            options
+        );
+        const unqualified = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main|main 10'),
+            withUnqualifiedHEVCRangeExtensions(createCapabilitiesWithoutBundledMain10([ 'hevc' ], [ 'hevc' ])),
+            options
+        );
+
+        // Without the bundled Main 10 qualification, which decodes the EL, Profile 7 still reconstructs from its BL
+        expect(isDirectPlayAdvertised(qualified.profile, stream)).toBe(true);
+        expect(isDirectPlayAdvertised(unqualified.profile, stream)).toBe(true);
     });
 });

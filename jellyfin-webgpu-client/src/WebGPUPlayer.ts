@@ -127,10 +127,7 @@ import {
     type CustomSubtitleCapabilities
 } from './custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlayCompatibility';
-import {
-    getHEVCRangeExtensionStreamDefinitionFromMetadata,
-    type HEVCRangeExtensionProbeDefinition
-} from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
+import { getHEVCRangeExtensionStreamDefinitionFromMetadata } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 import {
     getCustomPlaybackRuntimeAvailability,
     type CustomPlaybackRuntimeAvailability
@@ -174,35 +171,41 @@ function getRawVideoFrameBitDepth(format: CustomDecodeRawVideoFrameFormat): 8 | 
     }
 }
 
-function getHEVCRangeExtensionPresentationDefinition(
-    options: unknown
-): HEVCRangeExtensionProbeDefinition | null {
+// AV1 and VP9 present HDR only through raw planes, since the native external HDR route decodes HEVC Main 10 alone
+const RAW_ONLY_HDR_VIDEO_CODECS = new Set<string>([ 'AV1', 'VP9' ]);
+
+/**
+ * Returns whether the presented stream's HDR presents only through raw planes.
+ * AV1, VP9, and HEVC range extensions have no native external route, so an external authorization never covers them.
+ */
+function isRawOnlyHDRPresentation(options: unknown): boolean {
     if (!options || typeof options !== 'object') {
-        return null;
+        return false;
     }
     const mediaSource = (options as {
         mediaSource?: unknown
     }).mediaSource;
     if (!mediaSource || typeof mediaSource !== 'object') {
-        return null;
+        return false;
     }
     const mediaStreams = (mediaSource as { MediaStreams?: unknown }).MediaStreams;
     const videoTrackOrdinal = getPresentationVideoTrackOrdinal(options);
     if (!Array.isArray(mediaStreams) || videoTrackOrdinal === null) {
-        return null;
+        return false;
     }
     const videoStreams = mediaStreams.filter((stream: unknown): boolean => (
         stream !== null
         && typeof stream === 'object'
         && String((stream as { Type?: unknown }).Type ?? '').trim().toUpperCase() === 'VIDEO'
     ));
-    const videoStream = videoStreams[videoTrackOrdinal];
-    if (!videoStream || ![ 'H265', 'HEVC' ].includes(
-        String((videoStream as { Codec?: unknown }).Codec ?? '').trim().toUpperCase()
-    )) {
-        return null;
+    const videoStream: unknown = videoStreams[videoTrackOrdinal];
+    if (!videoStream) {
+        return false;
     }
-    return getHEVCRangeExtensionStreamDefinitionFromMetadata(videoStream);
+    const codec = String((videoStream as { Codec?: unknown }).Codec ?? '').trim().toUpperCase();
+    return RAW_ONLY_HDR_VIDEO_CODECS.has(codec)
+        || ([ 'H265', 'HEVC' ].includes(codec)
+            && getHEVCRangeExtensionStreamDefinitionFromMetadata(videoStream) !== null);
 }
 
 type OptionalItemCompatibility = {
@@ -303,8 +306,36 @@ const DOLBY_VISION_DEVICE_PROFILE_PROBE_SCOPES = new Set<HDRDeviceProfileProbeSc
     'dolby-vision-profile8-hlg-base',
     'unknown'
 ]);
-// Single-layer reconstruction falls back to the default format when the stream does not name its own
+// Reconstruction falls back to the default format when the stream does not name its own
 const DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT = 'I420P10';
+const RAW_SDR_ROUTE_KEY_SUFFIX = ':sdr';
+// Normalized play methods; custom playback is eligible for DirectPlay alone
+const DIRECT_PLAY_METHOD = 'DIRECTPLAY';
+const DIRECT_STREAM_METHOD = 'DIRECTSTREAM';
+// The presentation options of a play method that custom playback never accepts
+const UNAUTHORIZED_PRESENTATION_ELIGIBILITY_OPTIONS: CustomPresentationEligibilityOptions = {
+    allowDolbyVision: false,
+    allowDolbyVisionProfile7: false,
+    allowNativeDolbyVision: false,
+    allowNativeHDR: false,
+    allowRawHDR: false,
+    allowRawSDR: false,
+    authorizedExternalHDRRouteKeys: [],
+    authorizedRawHDRRouteKeys: []
+};
+
+/**
+ * Returns whether an item's scope waits for raw HDR.
+ * A raw-only HDR item presents every static or declared HDR base through raw planes, whatever the external result.
+ * Other items wait only in the raw HDR scopes.
+ */
+function isRawHDRDeviceProfileProbeScope(
+    probeScope: HDRDeviceProfileProbeScope,
+    rawOnlyHDRPresentation: boolean
+): boolean {
+    return RAW_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope)
+        || (rawOnlyHDRPresentation && EXTERNAL_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope));
+}
 
 /** Returns the RPU route a Dolby Vision presentation authorizes, when the stream has one. */
 function getDolbyVisionReconstructionTarget(
@@ -332,6 +363,18 @@ function getSingleLayerDolbyVisionRawFrameFormat(
         DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT;
 }
 
+/** Returns the raw format whose authorizations gate dual-layer reconstruction for the item. */
+function getDualLayerDolbyVisionRawFrameFormat(
+    reconstructionTarget: DolbyVisionReconstructionTarget | null
+): RawDolbyVisionVideoFrameFormat {
+    return reconstructionTarget?.rawFrameFormat ?? DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT;
+}
+
+/** Returns whether a raw route key presents SDR; raw SDR keys share the raw HDR key list. */
+function isRawSDRRouteKey(routeKey: RawHDRAuthorizationRouteKey): boolean {
+    return routeKey.endsWith(RAW_SDR_ROUTE_KEY_SUFFIX);
+}
+
 type RawDolbyVisionRouteFlags = Pick<
     CustomPlaybackEligibilityOptions,
     'allowDolbyVision' | 'allowDolbyVisionProfile4' | 'allowDolbyVisionProfile7'
@@ -341,6 +384,22 @@ type CustomPresentationAuthorizations = {
     authorizedExternalHDRRouteKeys: readonly ExternalHDRAuthorizationRouteKey[]
     authorizedRawHDRRouteKeys: readonly RawHDRAuthorizationRouteKey[]
 };
+
+type CustomPresentationEligibilityOptions = Pick<
+    CustomPlaybackEligibilityOptions,
+    | 'allowDolbyVision'
+    | 'allowDolbyVisionProfile4'
+    | 'allowDolbyVisionProfile7'
+    | 'allowNativeDolbyVision'
+    | 'allowNativeDolbyVisionProfile7HDR10Base'
+    | 'allowNativeDolbyVisionProfile8HDR10Base'
+    | 'allowNativeDolbyVisionProfile8HLGBase'
+    | 'allowNativeHDR'
+    | 'allowRawHDR'
+    | 'allowRawSDR'
+    | 'authorizedExternalHDRRouteKeys'
+    | 'authorizedRawHDRRouteKeys'
+>;
 
 type NativeDeviceProfileProof = {
     generation: number | null
@@ -647,6 +706,13 @@ function normalizeStreamType(value: unknown): string | null {
     return normalizedValue || null;
 }
 
+function getNormalizedPlayMethod(options: unknown): string | null {
+    if (!options || typeof options !== 'object') {
+        return null;
+    }
+    return normalizeStreamType((options as PlaybackOptionsRecord).playMethod);
+}
+
 function supportsCustomSubtitleCanvas(): boolean {
     if (typeof document === 'undefined') {
         return false;
@@ -819,6 +885,13 @@ function getDecodedAudioDownmixSettings(
     return eligibility.audioOutputMode === 'decoded-pcm' ?
         settings.audio.downmix :
         undefined;
+}
+
+/** Returns the play option of a dual-layer route that reconstructs without its EL. */
+function getDiscardedEnhancementLayerPlayOption(
+    eligibility: EligibleCustomPlayback
+): { discardDolbyVisionEnhancementLayer?: true } {
+    return eligibility.discardDolbyVisionEnhancementLayer ? { discardDolbyVisionEnhancementLayer: true } : {};
 }
 
 function initializeWebGPUAudioOutputManager(): WebGPUAudioOutputManager {
@@ -1791,24 +1864,32 @@ export default class WebGPUPlayer {
         return this.presenter.getDolbyVisionAuthorizationTelemetry(format);
     }
 
-    /** Returns exact Profile 4 MEL/base-fallback authorization telemetry. */
-    getProfile4DolbyVisionAuthorizationTelemetry(): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile4DolbyVisionAuthorizationTelemetry();
+    /** Returns exact Profile 4 MEL/base-fallback authorization telemetry for one raw base-layer format. */
+    getProfile4DolbyVisionAuthorizationTelemetry(
+        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
+    ): DolbyVisionAuthorizationTelemetry {
+        return this.presenter.getProfile4DolbyVisionAuthorizationTelemetry(format);
     }
 
-    /** Returns exact Profile 4 FEL residual authorization telemetry. */
-    getProfile4FELDolbyVisionAuthorizationTelemetry(): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile4FELDolbyVisionAuthorizationTelemetry();
+    /** Returns exact Profile 4 FEL residual authorization telemetry for one raw base-layer format. */
+    getProfile4FELDolbyVisionAuthorizationTelemetry(
+        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
+    ): DolbyVisionAuthorizationTelemetry {
+        return this.presenter.getProfile4FELDolbyVisionAuthorizationTelemetry(format);
     }
 
-    /** Returns exact Profile 7 MEL/base-fallback authorization telemetry. */
-    getProfile7DolbyVisionAuthorizationTelemetry(): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile7DolbyVisionAuthorizationTelemetry();
+    /** Returns exact Profile 7 MEL/base-fallback authorization telemetry for one raw base-layer format. */
+    getProfile7DolbyVisionAuthorizationTelemetry(
+        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
+    ): DolbyVisionAuthorizationTelemetry {
+        return this.presenter.getProfile7DolbyVisionAuthorizationTelemetry(format);
     }
 
-    /** Returns exact Profile 7 FEL residual authorization telemetry. */
-    getProfile7FELDolbyVisionAuthorizationTelemetry(): DolbyVisionAuthorizationTelemetry {
-        return this.presenter.getProfile7FELDolbyVisionAuthorizationTelemetry();
+    /** Returns exact Profile 7 FEL residual authorization telemetry for one raw base-layer format. */
+    getProfile7FELDolbyVisionAuthorizationTelemetry(
+        format: RawDolbyVisionVideoFrameFormat = DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT
+    ): DolbyVisionAuthorizationTelemetry {
+        return this.presenter.getProfile7FELDolbyVisionAuthorizationTelemetry(format);
     }
 
     /** Returns bounded exact-device external Profile 5 authorization state. */
@@ -2677,6 +2758,7 @@ export default class WebGPUPlayer {
                 audioOutputMode: eligibility.audioOutputMode ?? undefined,
                 audioTrackIndex: eligibility.audioTrackIndex,
                 decodedAudioOutputChannelCount,
+                ...getDiscardedEnhancementLayerPlayOption(eligibility),
                 durationMicroseconds: eligibility.durationMicroseconds,
                 dolbyVisionProfile: eligibility.dolbyVisionProfile,
                 maximumCodedHeight: eligibility.maximumCodedHeight,
@@ -2834,9 +2916,10 @@ export default class WebGPUPlayer {
 
         this.lastCustomDecodeCapabilities = capabilities;
         this.lastNativeMediaAudioCapabilities = nativeMediaAudioCapabilities;
-        const presentationOptions = await this.getCustomPresentationEligibilityOptions(
-            backendGeneration
-        );
+        // Another play method is ineligible whatever is authorized, so it skips the authorization waits
+        const presentationOptions = this.isDirectPlayOptions(options) ?
+            await this.getCustomPresentationEligibilityOptions(backendGeneration) :
+            UNAUTHORIZED_PRESENTATION_ELIGIBILITY_OPTIONS;
         if (!presentationOptions) {
             return null;
         }
@@ -2851,36 +2934,17 @@ export default class WebGPUPlayer {
 
     private async getCustomPresentationEligibilityOptions(
         backendGeneration: number
-    ): Promise<Pick<
-        CustomPlaybackEligibilityOptions,
-        | 'allowDolbyVision'
-        | 'allowDolbyVisionProfile4'
-        | 'allowDolbyVisionProfile7'
-        | 'allowNativeDolbyVision'
-        | 'allowNativeDolbyVisionProfile7HDR10Base'
-        | 'allowNativeDolbyVisionProfile8HDR10Base'
-        | 'allowNativeDolbyVisionProfile8HLGBase'
-        | 'allowNativeHDR'
-        | 'allowRawHDR'
-        | 'allowRawSDR'
-        | 'authorizedExternalHDRRouteKeys'
-        | 'authorizedRawHDRRouteKeys'
-    > | null> {
+    ): Promise<CustomPresentationEligibilityOptions | null> {
         await this.presenter.waitForRawSDRAuthorizationPrewarm();
         if (!this.isRequestedSessionCurrent(backendGeneration)) {
             return null;
         }
         const authorizedRawSDRRouteKeys = this.presenter
             .getAuthorizedRawHDRRouteKeys()
-            .filter((routeKey: RawHDRAuthorizationRouteKey): boolean => (
-                routeKey.endsWith(':sdr')
-            ));
+            .filter(isRawSDRRouteKey);
         // A Dolby Vision stream without an RPU route presents its declared base through the same static routes
         const metadata = this.currentPresentationColorMetadata
             ?? this.currentDolbyVisionBaseColorMetadata;
-        const rangeExtensionDefinition = getHEVCRangeExtensionPresentationDefinition(
-            this.currentPlaybackOptions
-        );
         const rawHDRRequested = metadata !== null
             && metadata.transfer !== 'sdr'
             && (metadata.bitDepth === 10 || metadata.bitDepth === 12);
@@ -2932,17 +2996,14 @@ export default class WebGPUPlayer {
                 authorizedRawHDRRouteKeys: authorizedRawSDRRouteKeys
             };
         }
-        if (!await this.waitForRangeExtensionRawHDRAuthorization(
-            rangeExtensionDefinition,
-            metadata,
-            backendGeneration
-        )) {
-            return null;
-        }
-        if (!await this.waitForDolbyVisionReconstructionAuthorization(
-            reconstructionTarget,
-            backendGeneration
-        )) {
+        // A single-layer RPU route is selected before the declared base it shares a raw capability with, so once that route is authorized no raw HDR key can change the selection
+        const singleLayerReconstructionAuthorized =
+            this.getItemRawDolbyVisionRouteFlags(reconstructionTarget).allowDolbyVision === true;
+        await Promise.all([
+            this.waitForRawOnlyHDRAuthorization(rawHDRRequested && !singleLayerReconstructionAuthorized),
+            this.waitForDolbyVisionReconstructionAuthorization(reconstructionTarget)
+        ]);
+        if (!this.isRequestedSessionCurrent(backendGeneration)) {
             return null;
         }
         const {
@@ -2978,7 +3039,11 @@ export default class WebGPUPlayer {
             allowRawHDR: rawHDRRequested && authorizedRawHDRRouteKeys.length > 0,
             allowRawSDR: authorizedRawSDRRouteKeys.length > 0,
             authorizedExternalHDRRouteKeys,
-            authorizedRawHDRRouteKeys
+            // A declared 10-bit SDR base presents through the raw SDR keys whatever the HDR request
+            authorizedRawHDRRouteKeys: [
+                ...authorizedRawSDRRouteKeys,
+                ...authorizedRawHDRRouteKeys
+            ]
         };
     }
 
@@ -2993,7 +3058,9 @@ export default class WebGPUPlayer {
         };
         switch (this.currentDolbyVisionPresentationDescriptor?.reconstructionProfile ?? null) {
             case 4:
-                flags.allowDolbyVisionProfile4 = this.presenter.isRawDolbyVisionProfile4PresentationAuthorized();
+                flags.allowDolbyVisionProfile4 = this.presenter.isRawDolbyVisionProfile4PresentationAuthorized(
+                    getDualLayerDolbyVisionRawFrameFormat(reconstructionTarget)
+                );
                 break;
             case 5:
             case 8:
@@ -3002,7 +3069,9 @@ export default class WebGPUPlayer {
                 );
                 break;
             case 7:
-                flags.allowDolbyVisionProfile7 = this.presenter.isRawDolbyVisionProfile7PresentationAuthorized();
+                flags.allowDolbyVisionProfile7 = this.presenter.isRawDolbyVisionProfile7PresentationAuthorized(
+                    getDualLayerDolbyVisionRawFrameFormat(reconstructionTarget)
+                );
                 break;
             case null:
                 break;
@@ -3015,49 +3084,39 @@ export default class WebGPUPlayer {
         dolbyVisionAvailable: boolean,
         reconstructionTarget: DolbyVisionReconstructionTarget | null
     ): RawDolbyVisionRouteFlags {
+        const dualLayerRawFrameFormat = getDualLayerDolbyVisionRawFrameFormat(reconstructionTarget);
         return {
             allowDolbyVision: dolbyVisionAvailable && this.presenter.isRawDolbyVisionPresentationAuthorized(
                 getSingleLayerDolbyVisionRawFrameFormat(reconstructionTarget)
             ),
             allowDolbyVisionProfile4: dolbyVisionAvailable
-                && this.presenter.isRawDolbyVisionProfile4PresentationAuthorized(),
+                && this.presenter.isRawDolbyVisionProfile4PresentationAuthorized(dualLayerRawFrameFormat),
             allowDolbyVisionProfile7: dolbyVisionAvailable
-                && this.presenter.isRawDolbyVisionProfile7PresentationAuthorized()
+                && this.presenter.isRawDolbyVisionProfile7PresentationAuthorized(dualLayerRawFrameFormat)
         };
     }
 
     /**
-     * HDR range-extension sources present only through raw planes, so their raw
-     * HDR probes must settle before eligibility. Returns false for a stale session.
+     * AV1, VP9, and HEVC range extensions present HDR only through raw planes, so their raw HDR probes must settle before eligibility whatever the external result.
      */
-    private async waitForRangeExtensionRawHDRAuthorization(
-        rangeExtensionDefinition: HEVCRangeExtensionProbeDefinition | null,
-        metadata: InputColorMetadata | null,
-        backendGeneration: number
-    ): Promise<boolean> {
-        if (!rangeExtensionDefinition || metadata?.transfer === 'sdr') {
-            return true;
+    private async waitForRawOnlyHDRAuthorization(rawHDRRequested: boolean): Promise<void> {
+        if (!rawHDRRequested || !isRawOnlyHDRPresentation(this.currentPlaybackOptions)) {
+            return;
         }
         await this.presenter.waitForRawHDRAuthorizationPrewarm();
-        return this.isRequestedSessionCurrent(backendGeneration);
     }
 
     /**
-     * Profile 4 and single-layer reconstruction in formats other than I420P10 authorize on first use, so
-     * their probe must settle before eligibility. Returns false for a stale session.
+     * Waits for the item's RPU route before eligibility.
+     * Most keys authorize on first use, and a prewarmed key probes again on a GPU device recreated after negotiation; a settled probe resolves at once.
      */
     private async waitForDolbyVisionReconstructionAuthorization(
-        target: DolbyVisionReconstructionTarget | null,
-        backendGeneration: number
-    ): Promise<boolean> {
-        if (
-            !target
-            || (target.profile !== 4 && target.rawFrameFormat === DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT)
-        ) {
-            return true;
+        target: DolbyVisionReconstructionTarget | null
+    ): Promise<void> {
+        if (!target) {
+            return;
         }
         await this.presenter.waitForDolbyVisionAuthorizationPrewarm(target);
-        return this.isRequestedSessionCurrent(backendGeneration);
     }
 
     private prepareCustomPresentationAuthorizations(
@@ -3081,7 +3140,9 @@ export default class WebGPUPlayer {
                 this.presenter.getAuthorizedExternalHDRRouteKeys() :
                 [],
             authorizedRawHDRRouteKeys: rawHDRRequested ?
-                this.presenter.getAuthorizedRawHDRRouteKeys() :
+                this.presenter.getAuthorizedRawHDRRouteKeys().filter(
+                    (routeKey: RawHDRAuthorizationRouteKey): boolean => !isRawSDRRouteKey(routeKey)
+                ) :
                 []
         };
     }
@@ -4269,47 +4330,9 @@ export default class WebGPUPlayer {
         );
     }
 
-    /** Prewarms only the HDR presentation families relevant to the requested item. */
-    private async prewarmHDRDeviceProfileRoutes(
-        probeScope: HDRDeviceProfileProbeScope,
-        reconstructionTarget: DolbyVisionReconstructionTarget | null = null
-    ): Promise<void> {
-        switch (probeScope) {
-            case 'static-hdr':
-                await this.waitForStaticHDRDeviceProfileRoutes();
-                break;
-            case 'dolby-vision':
-                await this.presenter.waitForDolbyVisionAuthorizationPrewarm(reconstructionTarget);
-                break;
-            case 'dolby-vision-hdr-base':
-                await Promise.all([
-                    this.waitForStaticHDRDeviceProfileRoutes(),
-                    this.presenter.waitForDolbyVisionAuthorizationPrewarm(reconstructionTarget)
-                ]);
-                break;
-            case 'dolby-vision-profile7':
-            case 'dolby-vision-profile8-hdr10-base':
-            case 'dolby-vision-profile8-hlg-base':
-                await Promise.all([
-                    this.presenter.waitForExternalHDRAuthorizationPrewarm(),
-                    this.presenter.waitForDolbyVisionAuthorizationPrewarm(reconstructionTarget)
-                ]);
-                break;
-            case 'none':
-                break;
-            case 'unknown':
-                await Promise.all([
-                    this.presenter.waitForExternalHDRAuthorizationPrewarm(),
-                    this.presenter.waitForRawHDRAuthorizationPrewarm(),
-                    this.presenter.waitForDolbyVisionAuthorizationPrewarm()
-                ]);
-                break;
-        }
-    }
-
-    /** Static HDR prefers native external presentation, so raw HDR is probed only when external is unavailable. */
-    private async waitForStaticHDRDeviceProfileRoutes(): Promise<void> {
-        await this.presenter.waitForExternalHDRAuthorizationPrewarm();
+    /** Waits for raw HDR only when the external probe authorized no native route, which static HEVC HDR prefers. */
+    private async waitForRawHDRWithoutExternalRoute(externalProbe: Promise<void>): Promise<void> {
+        await externalProbe;
         if (this.presenter.getAuthorizedExternalHDRRouteKeys().length === 0) {
             await this.presenter.waitForRawHDRAuthorizationPrewarm();
         }
@@ -4323,23 +4346,38 @@ export default class WebGPUPlayer {
             return [];
         }
         await this.presenter.waitForRawSDRAuthorizationPrewarm();
-        return this.presenter.getAuthorizedRawHDRRouteKeys().filter(
-            (routeKey: RawHDRAuthorizationRouteKey): boolean => (
-                routeKey.endsWith(':sdr')
-            )
-        );
+        return this.presenter.getAuthorizedRawHDRRouteKeys().filter(isRawSDRRouteKey);
     }
 
-    /** HDR range-extension items need raw HDR probes even when native HDR is authorized. */
+    /**
+     * Waits once for each presentation probe the item's scope needs, all in parallel.
+     * The scopes assume HEVC, whose static HDR prefers the native external route, so raw HDR waits for the external probe to find no route.
+     * An AV1, VP9, or HEVC range-extension item presents HDR only through raw planes, and an item without metadata may need either, so both wait for raw HDR whatever the external result.
+     */
     private async prewarmHDRDeviceProfileItemRoutes(
         probeScope: HDRDeviceProfileProbeScope,
-        rangeExtensionRequested: boolean,
+        rawOnlyHDRPresentation: boolean,
         reconstructionTarget: DolbyVisionReconstructionTarget | null
     ): Promise<void> {
-        await this.prewarmHDRDeviceProfileRoutes(probeScope, reconstructionTarget);
-        if (rangeExtensionRequested && RAW_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope)) {
-            await this.presenter.waitForRawHDRAuthorizationPrewarm();
+        const pendingProbes: Promise<void>[] = [];
+        // External keys also shape the HEVC ranges a transcode may keep, so even a raw-only item waits for them
+        const externalProbe = EXTERNAL_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope) ?
+            this.presenter.waitForExternalHDRAuthorizationPrewarm() :
+            null;
+        if (externalProbe) {
+            pendingProbes.push(externalProbe);
         }
+        if (isRawHDRDeviceProfileProbeScope(probeScope, rawOnlyHDRPresentation)) {
+            pendingProbes.push(
+                rawOnlyHDRPresentation || probeScope === 'unknown' || externalProbe === null ?
+                    this.presenter.waitForRawHDRAuthorizationPrewarm() :
+                    this.waitForRawHDRWithoutExternalRoute(externalProbe)
+            );
+        }
+        if (DOLBY_VISION_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope)) {
+            pendingProbes.push(this.presenter.waitForDolbyVisionAuthorizationPrewarm(reconstructionTarget));
+        }
+        await Promise.all(pendingProbes);
     }
 
     /** Returns only the HDR routes authorized on the present GPU device. */
@@ -4351,19 +4389,17 @@ export default class WebGPUPlayer {
         const HDRToneMappingEnabled = !isRetry && await getWebGPUHDRToneMappingEnabled();
         const probeScope = getHDRDeviceProfileProbeScope(item);
         const presentationOptions = getDeviceProfilePresentationOptions(item);
-        const rangeExtensionRequested = getHEVCRangeExtensionPresentationDefinition(
-            presentationOptions
-        ) !== null;
+        const rawOnlyHDRPresentation = isRawOnlyHDRPresentation(presentationOptions);
         const reconstructionTarget = getDolbyVisionReconstructionTarget(presentationOptions);
         if (HDRToneMappingEnabled) {
             await this.prewarmHDRDeviceProfileItemRoutes(
                 probeScope,
-                rangeExtensionRequested,
+                rawOnlyHDRPresentation,
                 reconstructionTarget
             );
         }
         const externalHDRProbed = EXTERNAL_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope);
-        const rawHDRProbed = RAW_HDR_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope);
+        const rawHDRProbed = isRawHDRDeviceProfileProbeScope(probeScope, rawOnlyHDRPresentation);
         const DolbyVisionProbed = DOLBY_VISION_DEVICE_PROFILE_PROBE_SCOPES.has(probeScope);
         const authorizedExternalHDRRouteKeys = HDRToneMappingEnabled && externalHDRProbed ?
             this.presenter.getAuthorizedExternalHDRRouteKeys() :
@@ -4371,9 +4407,7 @@ export default class WebGPUPlayer {
         const authorizedRawHDRRouteKeys = HDRToneMappingEnabled
             && rawHDRProbed ?
             this.presenter.getAuthorizedRawHDRRouteKeys().filter(
-                (routeKey: RawHDRAuthorizationRouteKey): boolean => (
-                    !routeKey.endsWith(':sdr')
-                )
+                (routeKey: RawHDRAuthorizationRouteKey): boolean => !isRawSDRRouteKey(routeKey)
             ) :
             [];
         const rawDolbyVisionRouteFlags = this.getRawDolbyVisionDeviceProfileFlags(
@@ -4443,13 +4477,12 @@ export default class WebGPUPlayer {
     }
 
     private isNonTranscodedSourceOptions(options: unknown): boolean {
-        if (!options || typeof options !== 'object') {
-            return false;
-        }
-        const playMethod = normalizeStreamType(
-            (options as PlaybackOptionsRecord).playMethod
-        );
-        return playMethod === 'DIRECTPLAY' || playMethod === 'DIRECTSTREAM';
+        const playMethod = getNormalizedPlayMethod(options);
+        return playMethod === DIRECT_PLAY_METHOD || playMethod === DIRECT_STREAM_METHOD;
+    }
+
+    private isDirectPlayOptions(options: unknown): boolean {
+        return getNormalizedPlayMethod(options) === DIRECT_PLAY_METHOD;
     }
 
     private isPresentationSessionCurrent(generation: number): boolean {

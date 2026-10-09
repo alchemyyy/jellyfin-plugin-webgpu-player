@@ -77,6 +77,7 @@ const customDecodeMockState = vi.hoisted(() => ({
     audioOutputMode: 'decoded-pcm' as 'decoded-pcm' | 'native-media',
     audioSourceChannelCount: 2,
     audioTrackIndex: null as number | null,
+    discardDolbyVisionEnhancementLayer: false,
     dolbyVision: false,
     dolbyVisionProfile7HDR10Base: false,
     dolbyVisionProfile7: false,
@@ -217,6 +218,9 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                     ?? customDecodeMockState.audioSourceChannelCount,
                 audioTrackIndex: audioEligibilityOverride?.audioTrackIndex
                     ?? customDecodeMockState.audioTrackIndex,
+                ...(customDecodeMockState.discardDolbyVisionEnhancementLayer ?
+                    { discardDolbyVisionEnhancementLayer: true } :
+                    {}),
                 dolbyVisionProfile: getDolbyVisionOutputProfile(),
                 durationMicroseconds: 60_000_000,
                 eligible: true,
@@ -800,6 +804,7 @@ import WebGPUPlayer, {
     CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS,
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
+import { getCustomPlaybackEligibility } from 'webgpu-player/capability/CustomPlaybackEligibility';
 
 type MockFunction = ReturnType<typeof vi.fn>;
 
@@ -860,9 +865,15 @@ type MockPresenter = {
     decodedPresentationRefreshHandler: (generation: number) => void
     endSession: MockFunction
     fallbackHandler: (generation: number) => void
+    getProfile4DolbyVisionAuthorizationTelemetry: MockFunction
+    getProfile4FELDolbyVisionAuthorizationTelemetry: MockFunction
+    getProfile7DolbyVisionAuthorizationTelemetry: MockFunction
+    getProfile7FELDolbyVisionAuthorizationTelemetry: MockFunction
     getRenderSettings: MockFunction
     getTelemetry: MockFunction
+    isRawDolbyVisionPresentationAuthorized: MockFunction
     isRawDolbyVisionProfile4PresentationAuthorized: MockFunction
+    isRawDolbyVisionProfile7PresentationAuthorized: MockFunction
     refresh: MockFunction
     seek: MockFunction
     presentDecodedFrame: MockFunction
@@ -1006,6 +1017,11 @@ function createPlaybackSelectionItem(
         }]
     };
 }
+
+// Any positive integer source rate prewarms decoded audio, past 192 kHz included
+const DXD_SAMPLE_RATE = 352_800;
+const ZERO_SAMPLE_RATE = 0;
+const TEXT_SAMPLE_RATE = '48000';
 
 function createKnownSDRAudioPlayOptions(sampleRate: unknown = 48_000): Record<string, unknown> {
     return {
@@ -1282,6 +1298,178 @@ function createKnownProfile7DolbyVisionPlayOptions(
     };
 }
 
+function createVideoStreamPlayOptions(videoStream: Record<string, unknown>): Record<string, unknown> {
+    return {
+        mediaSource: {
+            MediaStreams: [ {
+                Index: 0,
+                IsInterlaced: false,
+                Type: 'Video',
+                ...videoStream
+            } ]
+        },
+        playMethod: 'DirectPlay'
+    };
+}
+
+const PROFILE_7_RANGE_EXTENSION_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    DvBlSignalCompatibilityId: 0,
+    DvProfile: 7,
+    ElPresentFlag: true,
+    PixelFormat: 'yuv422p10le',
+    Profile: 'Rext',
+    RpuPresentFlag: true,
+    VideoRange: 'HDR',
+    VideoRangeType: 'DOVIWithEL'
+} as const;
+
+const PROFILE_4_MAIN_STREAM = {
+    BitDepth: 8,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    DvBlSignalCompatibilityId: 2,
+    DvProfile: 4,
+    ElPresentFlag: true,
+    Profile: 'Main',
+    RpuPresentFlag: true,
+    VideoRange: 'SDR',
+    VideoRangeType: 'SDR'
+} as const;
+
+const AV1_HDR10_STREAM = {
+    BitDepth: 10,
+    Codec: 'av1',
+    ColorPrimaries: 'bt2020',
+    ColorSpace: 'bt2020nc',
+    ColorTransfer: 'smpte2084',
+    Profile: 'Main',
+    VideoRange: 'HDR',
+    VideoRangeType: 'HDR10'
+} as const;
+
+// A 4:2:2 range extension presents its PQ base only through raw planes, and its RPU key authorizes on first use
+const PROFILE_8_1_RANGE_EXTENSION_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    ColorPrimaries: 'bt2020',
+    ColorSpace: 'bt2020nc',
+    ColorTransfer: 'smpte2084',
+    DvBlSignalCompatibilityId: 1,
+    DvProfile: 8,
+    ElPresentFlag: false,
+    PixelFormat: 'yuv422p10le',
+    Profile: 'Rext',
+    RpuPresentFlag: true,
+    VideoRange: 'HDR',
+    VideoRangeType: 'DOVIWithHDR10'
+} as const;
+
+const PROFILE_10_2_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'av1',
+    ColorPrimaries: 'bt709',
+    ColorSpace: 'bt709',
+    ColorTransfer: 'bt709',
+    DvBlSignalCompatibilityId: 2,
+    DvProfile: 10,
+    ElPresentFlag: false,
+    Profile: 'Main',
+    RpuPresentFlag: true,
+    VideoRange: 'SDR',
+    VideoRangeType: 'DOVIWithSDR'
+} as const;
+
+// Reconstruction-only streams, with no declared base a fallback could present
+const PROFILE_4_MAIN10_STREAM = { ...PROFILE_4_MAIN_STREAM, BitDepth: 10, Profile: 'Main 10' } as const;
+
+const PROFILE_8_MAIN_STREAM = {
+    BitDepth: 8,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    DvBlSignalCompatibilityId: 0,
+    DvProfile: 8,
+    Profile: 'Main',
+    RpuPresentFlag: true,
+    VideoRangeType: 'DOVIInvalid'
+} as const;
+
+const PROFILE_5_MAIN_STREAM = {
+    BitDepth: 8,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    DvBlSignalCompatibilityId: 0,
+    DvProfile: 5,
+    Profile: 'Main',
+    RpuPresentFlag: true,
+    VideoRangeType: 'DOVI'
+} as const;
+
+const PROFILE_7_MAIN10_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    DvBlSignalCompatibilityId: 0,
+    DvProfile: 7,
+    ElPresentFlag: true,
+    Profile: 'Main 10',
+    RpuPresentFlag: true,
+    VideoRangeType: 'DOVIWithEL'
+} as const;
+
+const PROFILE_8_MAIN10_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'hevc',
+    DvBlSignalCompatibilityId: 0,
+    DvProfile: 8,
+    Profile: 'Main 10',
+    RpuPresentFlag: true,
+    VideoRangeType: 'DOVIInvalid'
+} as const;
+
+const PROFILE_10_0_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'av1',
+    DvBlSignalCompatibilityId: 0,
+    DvProfile: 10,
+    Profile: 'Main',
+    RpuPresentFlag: true,
+    VideoRangeType: 'DOVI'
+} as const;
+
+// Reconstructs from its RPU before its declared PQ base
+const PROFILE_10_1_STREAM = {
+    BitDepth: 10,
+    BlPresentFlag: true,
+    Codec: 'av1',
+    ColorPrimaries: 'bt2020',
+    ColorSpace: 'bt2020nc',
+    ColorTransfer: 'smpte2084',
+    DvBlSignalCompatibilityId: 1,
+    DvProfile: 10,
+    ElPresentFlag: false,
+    Profile: 'Main',
+    RpuPresentFlag: true,
+    VideoRange: 'HDR',
+    VideoRangeType: 'DOVIWithHDR10'
+} as const;
+
+const RAW_PQ_ROUTE_KEY = 'I420P10:bt2020-ncl:bt2020:limited:pq';
+const RAW_SDR_ROUTE_KEY = 'I420P10:bt709:bt709:limited:sdr';
+const EXTERNAL_PQ_ROUTE_KEY = 'external-hevc-main10-bt709-limited:pq-v1';
+const EXTERNAL_HLG_ROUTE_KEY = 'external-hevc-main10-bt709-limited:hlg-v1';
+
+/** Returns the presentation options of the latest eligibility check. */
+function getLastEligibilityOptions(): Record<string, unknown> | undefined {
+    return vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[2];
+}
+
 function createNativeCompatibleProfile(): Record<string, unknown> {
     return {
         CodecProfiles: [],
@@ -1339,6 +1527,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.audioEligibilityOverride = null;
         customDecodeMockState.eligible = false;
         customDecodeMockState.holdPlay = false;
+        customDecodeMockState.discardDolbyVisionEnhancementLayer = false;
         customDecodeMockState.dolbyVision = false;
         customDecodeMockState.dolbyVisionProfile7HDR10Base = false;
         customDecodeMockState.dolbyVisionProfile7 = false;
@@ -1431,10 +1620,14 @@ describe('WebGPUPlayer HTML delegation', () => {
             SampleRate: 48_000,
             Type: 'Audio'
         }]) ],
-        [ '10-bit SDR AV1 with Opus 5.1', createPlaybackSelectionItem('av1-10bit-sdr', {
+        // 10-bit AV1 SDR presents only through raw planes, whose SDR keys are BT.709 only
+        [ '10-bit BT.601 SDR AV1 with Opus 5.1', createPlaybackSelectionItem('av1-10bit-bt601-sdr', {
             AverageFrameRate: 24,
             BitDepth: 10,
             Codec: 'AV1',
+            ColorPrimaries: 'smpte170m',
+            ColorSpace: 'smpte170m',
+            ColorTransfer: 'smpte170m',
             Height: 1_632,
             Profile: 'Main',
             Width: 3_840
@@ -1461,6 +1654,32 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(player.canPlayItem(item, playOptions)).toBe(false);
         expect(canPlayItem).toHaveBeenCalledTimes(2);
         expect(canPlayItem).toHaveBeenLastCalledWith(item, playOptions);
+    });
+
+    it('keeps 10-bit BT.709 SDR AV1 for the raw I420P10 route', () => {
+        const player = new WebGPUPlayer();
+        const canPlayItem = vi.fn(() => true);
+        getBackend().canPlayItem = canPlayItem;
+        const playOptions = { fullscreen: true };
+        // Unspecified color is BT.709 for SDR
+        const item = createPlaybackSelectionItem('av1-10bit-sdr', {
+            AverageFrameRate: 24,
+            BitDepth: 10,
+            Codec: 'AV1',
+            Height: 1_632,
+            Profile: 'Main',
+            Width: 3_840
+        }, [{
+            Channels: 6,
+            Codec: 'OPUS',
+            Index: 1,
+            SampleRate: 48_000,
+            Type: 'Audio'
+        }]);
+
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        expect(player.canPlayItem(item, playOptions)).toBe(true);
+        expect(canPlayItem).toHaveBeenCalledWith(item, playOptions);
     });
 
     it('selects with the stored custom decode preference ahead of the negotiation that adopts it', () => {
@@ -1648,6 +1867,24 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(player.supportsVideoStreamCopy(item, 'unknown-source')).toBe(true);
     });
 
+    it('blocks AV1 Profile 10 video stream copy like any Dolby Vision source', () => {
+        const player = new WebGPUPlayer();
+        const item = createPlaybackSelectionItem('dolby-vision-av1', {
+            BitDepth: 10,
+            BlPresentFlag: true,
+            Codec: 'AV1',
+            DvBlSignalCompatibilityId: 1,
+            DvProfile: 10,
+            ElPresentFlag: false,
+            Profile: 'Main',
+            RpuPresentFlag: true,
+            VideoRange: 'HDR',
+            VideoRangeType: 'DOVIWithHDR10'
+        });
+
+        expect(player.supportsVideoStreamCopy(item, 'dolby-vision-av1-source')).toBe(false);
+    });
+
     it('widens a custom-decode profile only when enabled and never on retry', async () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
@@ -1782,7 +2019,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedRawHDRRouteKeys = [
-            'I420P10:bt2020-ncl:bt2020:limited:pq'
+            RAW_PQ_ROUTE_KEY
         ];
 
         await player.getDeviceProfile({ Id: 'item' }, { isRetry: false });
@@ -1798,7 +2035,7 @@ describe('WebGPUPlayer HTML delegation', () => {
                 allowRawSDR: false,
                 authorizedExternalHDRRouteKeys: [],
                 authorizedRawHDRRouteKeys: [
-                    'I420P10:bt2020-ncl:bt2020:limited:pq'
+                    RAW_PQ_ROUTE_KEY
                 ],
                 isRetry: false,
                 nativeMediaAudioCapabilities: null
@@ -1814,10 +2051,10 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         presenterMockState.authorizedRawHDRRouteKeys = [
-            'I420P10:bt2020-ncl:bt2020:limited:pq'
+            RAW_PQ_ROUTE_KEY
         ];
 
         await player.getDeviceProfile({ Id: 'native-hdr-item' }, { isRetry: false });
@@ -1833,10 +2070,10 @@ describe('WebGPUPlayer HTML delegation', () => {
                 allowRawHDR: true,
                 allowRawSDR: false,
                 authorizedExternalHDRRouteKeys: [
-                    'external-hevc-main10-bt709-limited:pq-v1'
+                    EXTERNAL_PQ_ROUTE_KEY
                 ],
                 authorizedRawHDRRouteKeys: [
-                    'I420P10:bt2020-ncl:bt2020:limited:pq'
+                    RAW_PQ_ROUTE_KEY
                 ],
                 isRetry: false,
                 nativeMediaAudioCapabilities: null
@@ -1851,7 +2088,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
 
         await player.getDeviceProfile({
@@ -1886,7 +2123,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedRawHDRRouteKeys = [
-            'I420P10:bt2020-ncl:bt2020:limited:pq'
+            RAW_PQ_ROUTE_KEY
         ];
 
         await player.getDeviceProfile({
@@ -1956,7 +2193,7 @@ describe('WebGPUPlayer HTML delegation', () => {
 
     it.each([
         {
-            authorizedExternalHDRRouteKeys: [ 'external-hevc-main10-bt709-limited:pq-v1' ],
+            authorizedExternalHDRRouteKeys: [ EXTERNAL_PQ_ROUTE_KEY ],
             expectedRawHDRProbeCount: 0,
             name: 'native external'
         },
@@ -1976,7 +2213,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = authorizedExternalHDRRouteKeys;
         presenterMockState.authorizedRawHDRRouteKeys = [
-            'I420P10:bt2020-ncl:bt2020:limited:pq'
+            RAW_PQ_ROUTE_KEY
         ];
         // Without explicit colors this Profile 8.1 base is not an exact native base, only a declared PQ one
         const mediaStream = {
@@ -2052,6 +2289,256 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
             allowDolbyVisionProfile4: true,
             itemMediaSource: expect.objectContaining({ MediaStreams: expect.any(Array) })
+        });
+    });
+
+    it.each([
+        {
+            label: 'Profile 7 over a 10-bit 4:2:2 range extension',
+            mediaStream: { ...PROFILE_7_RANGE_EXTENSION_STREAM, Type: 'Video' },
+            target: { profile: 7, rawFrameFormat: 'I422P10' }
+        },
+        {
+            label: 'Profile 4 over an 8-bit Main base',
+            mediaStream: { ...PROFILE_4_MAIN_STREAM, Type: 'Video' },
+            target: { profile: 4, rawFrameFormat: 'I420' }
+        }
+    ])('authorizes $label for negotiation in its own raw format', async ({ mediaStream, target }) => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+
+        await player.getDeviceProfile({
+            Id: 'dual-layer-item',
+            MediaSources: [{ MediaStreams: [ mediaStream ] }]
+        }, { isRetry: false });
+
+        // Every dual-layer key outside the default prewarm authorizes on first use
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm).toHaveBeenCalledWith(target);
+        expect(presenter.isRawDolbyVisionProfile4PresentationAuthorized).toHaveBeenCalledWith(target.rawFrameFormat);
+        expect(presenter.isRawDolbyVisionProfile7PresentationAuthorized).toHaveBeenCalledWith(target.rawFrameFormat);
+        expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
+            allowDolbyVisionProfile4: true,
+            allowDolbyVisionProfile7: true,
+            itemMediaSource: { MediaStreams: [ mediaStream ] }
+        });
+    });
+
+    it('checks the generic dual-layer authorizations in I420P10 without an item route', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+
+        await player.getDeviceProfile({ Id: 'unknown-metadata-item' }, { isRetry: false });
+
+        expect(presenter.isRawDolbyVisionPresentationAuthorized).toHaveBeenCalledWith('I420P10');
+        expect(presenter.isRawDolbyVisionProfile4PresentationAuthorized).toHaveBeenCalledWith('I420P10');
+        expect(presenter.isRawDolbyVisionProfile7PresentationAuthorized).toHaveBeenCalledWith('I420P10');
+    });
+
+    it.each([
+        { codec: 'av1', profile: 'Main' },
+        { codec: 'vp9', profile: 'Profile 2' }
+    ])('waits for raw HDR for a static HDR $codec item although native HDR is authorized', async ({
+        codec,
+        profile
+    }) => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.authorizedExternalHDRRouteKeys = [
+            EXTERNAL_PQ_ROUTE_KEY
+        ];
+        presenterMockState.authorizedRawHDRRouteKeys = [
+            RAW_PQ_ROUTE_KEY
+        ];
+
+        await player.getDeviceProfile({
+            Id: 'raw-only-static-hdr-item',
+            MediaSources: [{
+                MediaStreams: [{
+                    BitDepth: 10,
+                    Codec: codec,
+                    ColorPrimaries: 'bt2020',
+                    ColorRange: 'limited',
+                    ColorSpace: 'bt2020-ncl',
+                    ColorTransfer: 'smpte2084',
+                    Profile: profile,
+                    Type: 'Video',
+                    VideoRange: 'HDR',
+                    VideoRangeType: 'HDR10'
+                }]
+            }]
+        }, { isRetry: false });
+
+        // The native external route decodes HEVC Main 10 alone, so its authorization never covers this item
+        expect(presenter.waitForExternalHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
+            allowRawHDR: true,
+            authorizedRawHDRRouteKeys: [ RAW_PQ_ROUTE_KEY ]
+        });
+    });
+
+    it('waits once for raw HDR for an AV1 static HDR item without native HDR authorization', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+
+        await player.getDeviceProfile({
+            Id: 'raw-only-static-hdr-item',
+            MediaSources: [{ MediaStreams: [ { ...AV1_HDR10_STREAM, Type: 'Video' } ] }]
+        }, { isRetry: false });
+
+        expect(presenter.waitForExternalHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+    });
+
+    it('starts the raw HDR wait of a raw-only item while the external wait is pending', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        const externalHDRWait = createDeferred<void>();
+        presenter.waitForExternalHDRAuthorizationPrewarm.mockImplementation(() => externalHDRWait.promise);
+
+        const profilePromise = player.getDeviceProfile({
+            Id: 'raw-only-static-hdr-item',
+            MediaSources: [{ MediaStreams: [ { ...AV1_HDR10_STREAM, Type: 'Video' } ] }]
+        }, { isRetry: false });
+        await vi.waitFor(() => expect(presenter.waitForExternalHDRAuthorizationPrewarm).toHaveBeenCalledOnce());
+        const rawHDRWaitCallCount = presenter.waitForRawHDRAuthorizationPrewarm.mock.calls.length;
+        externalHDRWait.resolve();
+        await profilePromise;
+
+        expect(rawHDRWaitCallCount).toBe(1);
+    });
+
+    it('waits for raw HDR for the declared base of an AV1 Profile 10.1 item', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        presenterMockState.authorizedExternalHDRRouteKeys = [
+            EXTERNAL_PQ_ROUTE_KEY
+        ];
+        presenterMockState.authorizedRawHDRRouteKeys = [
+            RAW_PQ_ROUTE_KEY
+        ];
+        const mediaStream = { ...PROFILE_10_1_STREAM, ColorRange: 'tv', Type: 'Video' };
+
+        await player.getDeviceProfile({
+            Id: 'profile-10-1-item',
+            MediaSources: [{ MediaStreams: [ mediaStream ] }]
+        }, { isRetry: false });
+
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm).toHaveBeenCalledWith({
+            profile: 8,
+            rawFrameFormat: 'I420P10'
+        });
+        expect(presenter.isRawDolbyVisionPresentationAuthorized).toHaveBeenCalledWith('I420P10');
+        expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
+            allowDolbyVision: true,
+            allowRawHDR: true,
+            authorizedRawHDRRouteKeys: [ RAW_PQ_ROUTE_KEY ],
+            itemMediaSource: { MediaStreams: [ mediaStream ] }
+        });
+    });
+
+    it('waits only for Dolby Vision for an AV1 Profile 10.0 item, which declares no base', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+
+        await player.getDeviceProfile({
+            Id: 'profile-10-0-item',
+            MediaSources: [{
+                MediaStreams: [{
+                    BitDepth: 10,
+                    BlPresentFlag: true,
+                    Codec: 'av1',
+                    DvBlSignalCompatibilityId: 0,
+                    DvProfile: 10,
+                    ElPresentFlag: false,
+                    Profile: 'Main',
+                    RpuPresentFlag: true,
+                    Type: 'Video',
+                    VideoRange: 'HDR',
+                    VideoRangeType: 'DOVI'
+                }]
+            }]
+        }, { isRetry: false });
+
+        expect(presenter.waitForExternalHDRAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm).toHaveBeenCalledWith({
+            profile: 5,
+            rawFrameFormat: 'I420P10'
+        });
+        expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
+            allowDolbyVision: true,
+            allowRawHDR: false
+        });
+    });
+
+    it('waits for raw HDR for a range-extension Profile 8.1 item with an exact native base shape', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        presenterMockState.authorizedExternalHDRRouteKeys = [
+            EXTERNAL_PQ_ROUTE_KEY
+        ];
+        presenterMockState.authorizedRawHDRRouteKeys = [
+            'I422P10:bt2020-ncl:bt2020:limited:pq'
+        ];
+
+        // The native base route decodes HEVC Main 10 alone, so this 4:2:2 base presents only through raw planes
+        await player.getDeviceProfile({
+            Id: 'range-extension-profile-8-1-item',
+            MediaSources: [{
+                MediaStreams: [{
+                    BitDepth: 10,
+                    BlPresentFlag: true,
+                    Codec: 'hevc',
+                    ColorPrimaries: 'bt2020',
+                    ColorRange: 'tv',
+                    ColorSpace: 'bt2020nc',
+                    ColorTransfer: 'smpte2084',
+                    DvBlSignalCompatibilityId: 1,
+                    DvProfile: 8,
+                    ElPresentFlag: false,
+                    PixelFormat: 'yuv422p10le',
+                    Profile: 'Rext',
+                    RpuPresentFlag: true,
+                    Type: 'Video',
+                    VideoRange: 'HDR',
+                    VideoRangeType: 'DOVIWithHDR10'
+                }]
+            }]
+        }, { isRetry: false });
+
+        expect(presenter.waitForExternalHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce();
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm).toHaveBeenCalledWith({
+            profile: 8,
+            rawFrameFormat: 'I422P10'
+        });
+        expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
+            allowRawHDR: true,
+            authorizedRawHDRRouteKeys: [ 'I422P10:bt2020-ncl:bt2020:limited:pq' ]
         });
     });
 
@@ -2158,7 +2645,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         const playOptions = createKnownProfile7DolbyVisionPlayOptions();
 
@@ -2175,7 +2662,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             allowNativeDolbyVisionProfile7HDR10Base: true,
             allowNativeHDR: true,
             authorizedExternalHDRRouteKeys: [
-                'external-hevc-main10-bt709-limited:pq-v1'
+                EXTERNAL_PQ_ROUTE_KEY
             ]
         });
     });
@@ -2187,7 +2674,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         const playOptions = createKnownProfile8HDR10BasePlayOptions();
 
@@ -2204,7 +2691,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             allowNativeDolbyVisionProfile8HDR10Base: true,
             allowNativeHDR: true,
             authorizedExternalHDRRouteKeys: [
-                'external-hevc-main10-bt709-limited:pq-v1'
+                EXTERNAL_PQ_ROUTE_KEY
             ]
         });
     });
@@ -2216,7 +2703,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:hlg-v1'
+            EXTERNAL_HLG_ROUTE_KEY
         ];
         const playOptions = createKnownProfile8HLGBasePlayOptions();
 
@@ -2233,7 +2720,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             allowNativeDolbyVisionProfile8HLGBase: true,
             allowNativeHDR: true,
             authorizedExternalHDRRouteKeys: [
-                'external-hevc-main10-bt709-limited:hlg-v1'
+                EXTERNAL_HLG_ROUTE_KEY
             ]
         });
         expect(customProfileMockState.augmentationCalls[0]?.options).not.toHaveProperty(
@@ -2247,7 +2734,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         const playOptions = createKnownProfile8HLGBasePlayOptions();
 
@@ -2368,7 +2855,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedRawHDRRouteKeys = [
-            'I420P10:bt2020-ncl:bt2020:limited:pq'
+            RAW_PQ_ROUTE_KEY
         ];
         customDecodeMockState.eligible = true;
         customDecodeMockState.hdr = true;
@@ -2432,7 +2919,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         customDecodeMockState.eligible = true;
         customDecodeMockState.hdr = true;
@@ -2481,7 +2968,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabled = true;
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         customDecodeMockState.eligible = true;
         customDecodeMockState.hdr = true;
@@ -2668,6 +3155,379 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({ dolbyVisionProfile: 7 })
         );
+        expect(customPlaybackController.play.mock.calls[0]?.[0])
+            .not.toHaveProperty('discardDolbyVisionEnhancementLayer');
+    });
+
+    it('starts a Profile 7 route that discards its EL without a qualified EL decoder', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        customDecodeMockState.discardDolbyVisionEnhancementLayer = true;
+        customDecodeMockState.dolbyVision = true;
+        customDecodeMockState.dolbyVisionProfile7 = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.hdr = true;
+        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
+        customDecodeMockState.videoOutputMode = 'raw-planes';
+
+        await player.play(createKnownProfile7DolbyVisionPlayOptions({
+            playMethod: 'DirectPlay'
+        }));
+
+        expect(backend.play).not.toHaveBeenCalled();
+        expect(getCustomPlaybackController().play).toHaveBeenCalledWith(
+            expect.objectContaining({ discardDolbyVisionEnhancementLayer: true, dolbyVisionProfile: 7 })
+        );
+    });
+
+    it.each([
+        {
+            expectedTarget: { profile: 4, rawFrameFormat: 'I420P10' },
+            label: 'Profile 4 over Main 10',
+            videoStream: PROFILE_4_MAIN10_STREAM
+        },
+        {
+            expectedTarget: { profile: 7, rawFrameFormat: 'I422P10' },
+            label: 'Profile 7 over a 10-bit 4:2:2 range extension',
+            videoStream: PROFILE_7_RANGE_EXTENSION_STREAM
+        },
+        {
+            expectedTarget: { profile: 8, rawFrameFormat: 'I420' },
+            label: 'Profile 8 over an 8-bit Main base',
+            videoStream: PROFILE_8_MAIN_STREAM
+        },
+        {
+            expectedTarget: { profile: 5, rawFrameFormat: 'I420' },
+            label: 'Profile 5 over an 8-bit Main base',
+            videoStream: PROFILE_5_MAIN_STREAM
+        },
+        {
+            expectedTarget: { profile: 7, rawFrameFormat: 'I420P10' },
+            label: 'Profile 7 over Main 10',
+            videoStream: PROFILE_7_MAIN10_STREAM
+        },
+        {
+            expectedTarget: { profile: 8, rawFrameFormat: 'I420P10' },
+            label: 'Profile 8 over Main 10',
+            videoStream: PROFILE_8_MAIN10_STREAM
+        },
+        {
+            // Profile 10.0 shares Profile 5's reconstruction
+            expectedTarget: { profile: 5, rawFrameFormat: 'I420P10' },
+            label: 'AV1 Profile 10.0',
+            videoStream: PROFILE_10_0_STREAM
+        }
+    ])('waits at eligibility for the reconstruction key, prewarmed or first-use: $label', async ({
+        expectedTarget,
+        videoStream
+    }) => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+
+        await player.play(createVideoStreamPlayOptions(videoStream));
+
+        // A prewarmed key probes again on a GPU device recreated after negotiation, so every target waits
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm.mock.calls).toEqual([ [ expectedTarget ] ]);
+    });
+
+    it.each([
+        {
+            authorization: 'isRawDolbyVisionProfile7PresentationAuthorized',
+            label: 'Profile 7 over a 10-bit 4:2:2 range extension',
+            rawFrameFormat: 'I422P10',
+            videoStream: PROFILE_7_RANGE_EXTENSION_STREAM
+        },
+        {
+            authorization: 'isRawDolbyVisionProfile4PresentationAuthorized',
+            label: 'Profile 4 over an 8-bit Main base',
+            rawFrameFormat: 'I420',
+            videoStream: PROFILE_4_MAIN_STREAM
+        }
+    ] as const)('authorizes $label for eligibility in its own raw format', async ({
+        authorization,
+        rawFrameFormat,
+        videoStream
+    }) => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+
+        await player.play(createVideoStreamPlayOptions(videoStream));
+
+        expect(presenter[authorization]).toHaveBeenCalledWith(rawFrameFormat);
+    });
+
+    it.each([
+        {
+            label: 'AV1 HDR10',
+            rawOnly: true,
+            videoStream: {
+                BitDepth: 10,
+                Codec: 'av1',
+                ColorPrimaries: 'bt2020',
+                ColorSpace: 'bt2020nc',
+                ColorTransfer: 'smpte2084',
+                Profile: 'Main',
+                VideoRange: 'HDR',
+                VideoRangeType: 'HDR10'
+            }
+        },
+        {
+            label: 'VP9 HLG',
+            rawOnly: true,
+            videoStream: {
+                BitDepth: 10,
+                Codec: 'vp9',
+                ColorPrimaries: 'bt2020',
+                ColorSpace: 'bt2020nc',
+                ColorTransfer: 'arib-std-b67',
+                Profile: 'Profile 2',
+                VideoRange: 'HDR',
+                VideoRangeType: 'HLG'
+            }
+        },
+        {
+            label: 'the declared PQ base of AV1 Profile 10.1',
+            rawOnly: true,
+            videoStream: {
+                BitDepth: 10,
+                BlPresentFlag: true,
+                Codec: 'av1',
+                ColorPrimaries: 'bt2020',
+                ColorSpace: 'bt2020nc',
+                ColorTransfer: 'smpte2084',
+                DvBlSignalCompatibilityId: 1,
+                DvProfile: 10,
+                Profile: 'Main',
+                RpuPresentFlag: true,
+                VideoRange: 'HDR',
+                VideoRangeType: 'DOVIWithHDR10'
+            }
+        },
+        {
+            label: 'HEVC Rext 10-bit 4:2:2 HDR10',
+            rawOnly: true,
+            videoStream: {
+                BitDepth: 10,
+                Codec: 'hevc',
+                ColorPrimaries: 'bt2020',
+                ColorSpace: 'bt2020nc',
+                ColorTransfer: 'smpte2084',
+                PixelFormat: 'yuv422p10le',
+                Profile: 'Rext',
+                VideoRange: 'HDR',
+                VideoRangeType: 'HDR10'
+            }
+        },
+        {
+            label: 'AV1 Profile 10.0, which declares no base',
+            rawOnly: false,
+            videoStream: {
+                BitDepth: 10,
+                BlPresentFlag: true,
+                Codec: 'av1',
+                DvBlSignalCompatibilityId: 0,
+                DvProfile: 10,
+                Profile: 'Main',
+                RpuPresentFlag: true,
+                VideoRangeType: 'DOVI'
+            }
+        },
+        {
+            label: 'HEVC Main 10 HDR10, which native external presentation can take',
+            rawOnly: false,
+            videoStream: {
+                BitDepth: 10,
+                Codec: 'hevc',
+                ColorPrimaries: 'bt2020',
+                ColorSpace: 'bt2020nc',
+                ColorTransfer: 'smpte2084',
+                Profile: 'Main 10',
+                VideoRange: 'HDR',
+                VideoRangeType: 'HDR10'
+            }
+        }
+    ])('waits at eligibility for raw HDR, whatever the external result, only for raw-only HDR: $label', async ({
+        rawOnly,
+        videoStream
+    }) => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.authorizedExternalHDRRouteKeys = [
+            EXTERNAL_PQ_ROUTE_KEY
+        ];
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+
+        await player.play(createVideoStreamPlayOptions(videoStream));
+
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledTimes(rawOnly ? 1 : 0);
+    });
+
+    it('starts the raw-only HDR and first-use Dolby Vision waits together at eligibility', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        // The RPU key is still pending, so the declared base may need raw HDR
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        const rawHDRWait = createDeferred<void>();
+        presenter.waitForRawHDRAuthorizationPrewarm.mockImplementation(() => rawHDRWait.promise);
+
+        const playPromise = player.play(createVideoStreamPlayOptions(PROFILE_8_1_RANGE_EXTENSION_STREAM));
+        await vi.waitFor(() => expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce());
+        const dolbyVisionWaitCalls = [ ...presenter.waitForDolbyVisionAuthorizationPrewarm.mock.calls ];
+        rawHDRWait.resolve();
+        await playPromise;
+
+        expect(dolbyVisionWaitCalls).toEqual([ [ { profile: 8, rawFrameFormat: 'I422P10' } ] ]);
+    });
+
+    it('skips the raw HDR wait at eligibility once the item\'s single-layer RPU route is authorized', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+
+        // Profile 10.1 reconstructs before its declared PQ base, which shares the raw AV1 capability
+        await player.play(createVideoStreamPlayOptions(PROFILE_10_1_STREAM));
+
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm.mock.calls).toEqual([
+            [ { profile: 8, rawFrameFormat: 'I420P10' } ]
+        ]);
+    });
+
+    it('reads the raw HDR keys only after the raw-only HDR wait settles at eligibility', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        vi.mocked(getCustomPlaybackEligibility).mockClear();
+        const rawHDRWait = createDeferred<void>();
+        presenter.waitForRawHDRAuthorizationPrewarm.mockImplementation(() => rawHDRWait.promise);
+
+        const playPromise = player.play(createVideoStreamPlayOptions(AV1_HDR10_STREAM));
+        await vi.waitFor(() => expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce());
+        // The probe settles only when its wait does
+        presenterMockState.authorizedRawHDRRouteKeys = [ RAW_PQ_ROUTE_KEY ];
+        rawHDRWait.resolve();
+        await playPromise;
+
+        expect(getLastEligibilityOptions()).toMatchObject({
+            allowRawHDR: true,
+            authorizedRawHDRRouteKeys: [ RAW_PQ_ROUTE_KEY ]
+        });
+    });
+
+    it('supersedes a play whose session stops during the raw-only HDR wait at eligibility', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        vi.mocked(getCustomPlaybackEligibility).mockClear();
+        const rawHDRWait = createDeferred<void>();
+        presenter.waitForRawHDRAuthorizationPrewarm.mockImplementation(() => rawHDRWait.promise);
+
+        const playPromise = player.play(createVideoStreamPlayOptions(AV1_HDR10_STREAM));
+        await vi.waitFor(() => expect(presenter.waitForRawHDRAuthorizationPrewarm).toHaveBeenCalledOnce());
+        const stopPromise = player.stop(false);
+        rawHDRWait.resolve();
+
+        await expect(playPromise).resolves.toBe(PLAYBACK_SUPERSEDED);
+        await stopPromise;
+        expect(getCustomPlaybackEligibility).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        'DirectStream',
+        'Transcode'
+    ])('skips every authorization wait at eligibility for a %s play', async (playMethod: string) => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.dolbyVisionAuthorized = true;
+        presenterMockState.authorizedRawHDRRouteKeys = [ RAW_PQ_ROUTE_KEY, RAW_SDR_ROUTE_KEY ];
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        vi.mocked(getCustomPlaybackEligibility).mockClear();
+
+        await player.play({
+            ...createVideoStreamPlayOptions(PROFILE_8_1_RANGE_EXTENSION_STREAM),
+            playMethod
+        });
+
+        // Custom playback accepts DirectPlay alone, whatever is authorized
+        expect(presenter.waitForRawSDRAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(presenter.waitForRawHDRAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(presenter.waitForDolbyVisionAuthorizationPrewarm).not.toHaveBeenCalled();
+        expect(getLastEligibilityOptions()).toMatchObject({
+            allowDolbyVision: false,
+            allowRawHDR: false,
+            allowRawSDR: false,
+            authorizedRawHDRRouteKeys: []
+        });
+    });
+
+    it.each([
+        { hdrToneMappingEnabled: true },
+        { hdrToneMappingEnabled: false }
+    ])('passes the raw SDR keys at eligibility for a declared 10-bit SDR base (tone mapping $hdrToneMappingEnabled)', async ({
+        hdrToneMappingEnabled
+    }) => {
+        const player = new WebGPUPlayer();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = hdrToneMappingEnabled;
+        presenterMockState.authorizedRawHDRRouteKeys = [ RAW_PQ_ROUTE_KEY, RAW_SDR_ROUTE_KEY ];
+        vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        vi.mocked(getCustomPlaybackEligibility).mockClear();
+
+        // Profile 10.2 without an authorized RPU route presents its declared SDR base through raw SDR
+        await player.play(createVideoStreamPlayOptions(PROFILE_10_2_STREAM));
+
+        expect(getLastEligibilityOptions()).toMatchObject({
+            allowRawHDR: false,
+            allowRawSDR: true,
+            authorizedRawHDRRouteKeys: [ RAW_SDR_ROUTE_KEY ]
+        });
+    });
+
+    it('reports each dual-layer Dolby Vision authorization for the requested raw base-layer format', () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        const telemetryMethods = [
+            'getProfile4DolbyVisionAuthorizationTelemetry',
+            'getProfile4FELDolbyVisionAuthorizationTelemetry',
+            'getProfile7DolbyVisionAuthorizationTelemetry',
+            'getProfile7FELDolbyVisionAuthorizationTelemetry'
+        ] as const;
+
+        for (const telemetryMethod of telemetryMethods) {
+            player[telemetryMethod]('I422P10');
+            player[telemetryMethod]();
+
+            // Without a format each reports the prewarmed I420P10 key
+            expect(presenter[telemetryMethod].mock.calls).toEqual([ [ 'I422P10' ], [ 'I420P10' ] ]);
+        }
     });
 
     it('presents an oversized Profile 7 source through its native HDR10 base', async () => {
@@ -2682,7 +3542,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         customDecodeMockState.dolbyVision = true;
         customDecodeMockState.dolbyVisionProfile7 = true;
@@ -2739,7 +3599,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:pq-v1'
+            EXTERNAL_PQ_ROUTE_KEY
         ];
         customDecodeMockState.dolbyVision = true;
         customDecodeMockState.dolbyVisionProfile8HDR10Base = true;
@@ -2795,7 +3655,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.hdrToneMappingEnabled = true;
         presenterMockState.dolbyVisionAuthorized = true;
         presenterMockState.authorizedExternalHDRRouteKeys = [
-            'external-hevc-main10-bt709-limited:hlg-v1'
+            EXTERNAL_HLG_ROUTE_KEY
         ];
         customDecodeMockState.dolbyVision = true;
         customDecodeMockState.dolbyVisionProfile8HLGBase = true;
@@ -3519,19 +4379,28 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(audioPrewarmMockState.leases[0].close).toHaveBeenCalledOnce();
     });
 
-    it('does not prewarm disabled, malformed, or out-of-range selected audio metadata', async () => {
+    it('does not prewarm disabled or malformed selected audio metadata', async () => {
         const disabledPlayer = new WebGPUPlayer();
         await disabledPlayer.play(createKnownSDRAudioPlayOptions());
         expect(audioPrewarmMockState.sampleRates).toHaveLength(0);
 
         playbackPreferencesMockState.customDecodeEnabled = true;
         const unsafePlayer = new WebGPUPlayer();
-        await unsafePlayer.play(createKnownSDRAudioPlayOptions('48000'));
+        await unsafePlayer.play(createKnownSDRAudioPlayOptions(TEXT_SAMPLE_RATE));
         expect(audioPrewarmMockState.sampleRates).toHaveLength(0);
 
-        const outOfRangePlayer = new WebGPUPlayer();
-        await outOfRangePlayer.play(createKnownSDRAudioPlayOptions(192_001));
+        const zeroRatePlayer = new WebGPUPlayer();
+        await zeroRatePlayer.play(createKnownSDRAudioPlayOptions(ZERO_SAMPLE_RATE));
         expect(audioPrewarmMockState.sampleRates).toHaveLength(0);
+    });
+
+    it('prewarms decoded audio for a source rate past 192 kHz', async () => {
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        const player = new WebGPUPlayer();
+
+        await player.play(createKnownSDRAudioPlayOptions(DXD_SAMPLE_RATE));
+
+        expect(audioPrewarmMockState.sampleRates).toHaveLength(1);
     });
 
     it('closes a transferred prewarm once when custom playback falls back', async () => {
