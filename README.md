@@ -98,7 +98,7 @@ These apply only while File Transformation does the rewriting.
 | `images/` | The plugin banner (the source SVG, and the PNG that the package and the repository manifest's `imageUrl` carry), and the plugin logo, the source of the book's favicon |
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
-| `release.py` | Sets the version, and packages the published plugin with a `meta.json` into a plugin repository manifest |
+| `release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
 | `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |
 | `.github/workflows/release.yml` | Release workflow, run by hand with the version to release: builds, packages, and publishes it |
 
@@ -295,7 +295,9 @@ optional, one line, and defaults to `Release X.X.X.X`.
 5. writes the corresponding source of the LGPL decoders with
    `make -C wasm source-archives`;
 6. packages the plugin into `manifest.json`, with the release asset as its
-   `sourceUrl`;
+   `sourceUrl`, and runs `release.py release-notes`, which writes the release
+   body: the changelog when given, the install steps, the merged pull requests,
+   and the commits since the previous `v` tag, without the release commits;
 7. commits `build.yaml`, `Directory.Build.props` and `manifest.json` as
    `Release X.X.X.X`, tags it, and publishes the GitHub release with the zip
    and the source tarballs;

@@ -10,24 +10,31 @@ version on the assembly.
     uv run release.py set-version 1.1.0.0 --changelog "Fix seeking"
     uv run release.py package
     uv run release.py package --source-url-base http://192.168.1.10:8000
+    uv run release.py release-notes v1.3.0.0 --repository alchemyyy/jellyfin-plugin-webgpu-player
 
 set-version writes the version into both files and the changelog into build.yaml; build the plugin after it. package
 zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image, copies the
 image beside the zip, and inserts or replaces that version in a plugin repository manifest whose imageUrl names that
 copy. They land in bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow
 writes the committed manifest.json instead, with the GitHub release as the download source.
+
+release-notes writes the GitHub release body: the install steps, the merged pull requests, and the commits since the
+previous release tag. It reads the history from git and the pull requests through the GitHub CLI.
 """
 
 import argparse
 import datetime
 import hashlib
+import html
 import io
 import json
 import re
+import subprocess
 import sys
 import uuid
 import xml.etree.ElementTree as ElementTree
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
@@ -54,9 +61,37 @@ VERSION_PATTERN: re.Pattern[str] = re.compile(r"(0|[1-9][0-9]{0,4})(\.(0|[1-9][0
 MAXIMUM_VERSION_PART: int = 65534
 # Wide enough that the YAML emitter never refolds a changelog
 YAML_LINE_WIDTH: int = 4096
+# Release tags are v and the four-part version
+RELEASE_TAG_PREFIX: str = "v"
+# The release workflow commits the version and manifest.json as this author, which is not a change worth listing
+RELEASE_BOT_EMAIL: str = "41898282+github-actions[bot]@users.noreply.github.com"
+GITHUB_URL: str = "https://github.com"
+GITHUB_RAW_URL: str = "https://raw.githubusercontent.com"
+GITHUB_API_VERSION: str = "2022-11-28"
+# GitHub rejects a release body above 125000 characters
+MAXIMUM_RELEASE_NOTES_LENGTH: int = 120_000
+RELEASE_NOTES_TRUNCATION_NOTICE: str = "Release notes truncated because they exceed GitHub's release body limit."
+# Commit fields joined by the unit separator, one record per line
+COMMIT_LOG_FORMAT: str = "%H%x1f%h%x1f%ae%x1f%s"
+COMMIT_FIELD_SEPARATOR: str = "\x1f"
 REQUIRED_KEYS: tuple[str, ...] = (
     "name", "guid", "version", "targetAbi", "overview", "description", "category", "owner", "artifacts", "changelog",
 )
+
+
+@dataclass(frozen=True)
+class CommitEntry:
+    full_hash: str
+    short_hash: str
+    subject: str
+
+
+@dataclass(frozen=True)
+class PullRequestEntry:
+    number: int
+    title: str
+    author_login: str
+    url: str
 
 
 def fail(message: str) -> NoReturn:
@@ -258,8 +293,153 @@ def package(source_url_base: str, output_directory: Path, manifest_file: Path) -
     print(f"Recorded {metadata['version']} in {manifest_file}, downloaded from {source_url}")
 
 
+def run_command(command: list[str]) -> str:
+    """Runs a command in the repository and returns its output, failing with its error output."""
+    result: subprocess.CompletedProcess[str] = subprocess.run(
+        command, cwd=REPOSITORY_DIRECTORY, capture_output=True, text=True, encoding="utf-8",
+    )
+    if result.returncode != 0:
+        fail(f"{' '.join(command)} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def parse_release_tag(tag: str) -> tuple[int, ...]:
+    """Parses a release tag such as v1.1.0.0 into its version parts."""
+    if not tag.startswith(RELEASE_TAG_PREFIX):
+        fail(f"{tag} is not a release tag such as {RELEASE_TAG_PREFIX}1.1.0.0")
+    return parse_version(tag.removeprefix(RELEASE_TAG_PREFIX))
+
+
+def find_previous_release_tag(tag: str) -> str | None:
+    """Returns the release tag with the highest version below the tag's, or None for the first release."""
+    version_parts: tuple[int, ...] = parse_release_tag(tag)
+    candidates: list[tuple[tuple[int, ...], str]] = []
+    for candidate_tag in run_command(["git", "tag", "--list", f"{RELEASE_TAG_PREFIX}*"]).split():
+        candidate_version: str = candidate_tag.removeprefix(RELEASE_TAG_PREFIX)
+        if VERSION_PATTERN.fullmatch(candidate_version) is None:
+            continue
+        candidate_parts: tuple[int, ...] = tuple(int(part) for part in candidate_version.split("."))
+        if candidate_parts < version_parts:
+            candidates.append((candidate_parts, candidate_tag))
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
+def read_commits(previous_tag: str | None, target: str) -> list[CommitEntry]:
+    """Reads the commits on the target since the previous release tag, newest first, without merges or release commits."""
+    # NOTE: The released commit is rebased onto main afterwards, so the tag may not be an ancestor; the range still
+    # excludes everything the tag reached
+    revision_range: str = f"{previous_tag}..{target}" if previous_tag else target
+    log_output: str = run_command(["git", "log", "--no-merges", f"--format={COMMIT_LOG_FORMAT}", revision_range])
+    commits: list[CommitEntry] = []
+    for log_line in log_output.splitlines():
+        if not log_line:
+            continue
+        full_hash, short_hash, author_email, subject = log_line.split(COMMIT_FIELD_SEPARATOR, 3)
+        if author_email == RELEASE_BOT_EMAIL:
+            continue
+        commits.append(CommitEntry(full_hash, short_hash, subject))
+    return commits
+
+
+def read_pull_requests(repository: str, commits: list[CommitEntry]) -> list[PullRequestEntry]:
+    """Looks up the merged pull requests that carried the commits, oldest first."""
+    pull_requests_by_number: dict[int, PullRequestEntry] = {}
+    for commit in commits:
+        response: str = run_command([
+            "gh", "api", "--header", f"X-GitHub-Api-Version: {GITHUB_API_VERSION}",
+            f"repos/{repository}/commits/{commit.full_hash}/pulls",
+        ])
+        for pull_request in json.loads(response):
+            if not pull_request.get("merged_at"):
+                continue
+            number: int = int(pull_request["number"])
+            title: str = " ".join(str(pull_request.get("title", "")).split())
+            author: dict = pull_request.get("user") or {}
+            pull_requests_by_number[number] = PullRequestEntry(
+                number=number,
+                title=title or f"Pull request #{number}",
+                author_login=str(author.get("login", "ghost")),
+                url=str(pull_request["html_url"]),
+            )
+    return [pull_requests_by_number[number] for number in sorted(pull_requests_by_number)]
+
+
+def format_pull_request_lines(pull_requests: list[PullRequestEntry]) -> list[str]:
+    """Formats the pull requests as a Markdown list."""
+    if not pull_requests:
+        return ["- No pull requests found."]
+    return [
+        f"- {pull_request.title} by {pull_request.author_login} in {pull_request.url}"
+        for pull_request in pull_requests
+    ]
+
+
+def format_commit_lines(repository: str, commits: list[CommitEntry]) -> list[str]:
+    """Formats the commits as an HTML list, each linked by its short hash."""
+    lines: list[str] = ["<ul>"]
+    if not commits:
+        lines.append("  <li>No commits.</li>")
+    escaped_repository: str = html.escape(repository, quote=True)
+    for commit in commits:
+        commit_url: str = f"{GITHUB_URL}/{escaped_repository}/commit/{html.escape(commit.full_hash, quote=True)}"
+        lines.append(
+            f'  <li><a href="{commit_url}"><code>{html.escape(commit.short_hash)}</code></a>'
+            f" {html.escape(commit.subject)}</li>"
+        )
+    lines.append("</ul>")
+    return lines
+
+
+def truncate_release_notes(release_notes: str) -> str:
+    """Cuts the notes at a line boundary under GitHub's limit, closing the commit list and appending a notice."""
+    if len(release_notes) <= MAXIMUM_RELEASE_NOTES_LENGTH:
+        return release_notes
+    suffix: str = f"\n\n{RELEASE_NOTES_TRUNCATION_NOTICE}"
+    prefix: str = release_notes[:MAXIMUM_RELEASE_NOTES_LENGTH - len(suffix)]
+    # Leave room to close the list, then drop the partial last line
+    prefix = prefix[:prefix.rfind("\n", 0, len(prefix) - len("\n</ul>"))].rstrip()
+    if prefix.count("<ul>") > prefix.count("</ul>"):
+        prefix += "\n</ul>"
+    return prefix + suffix
+
+
+def release_notes(tag: str, repository: str, changelog: str | None, target: str, output_file: Path | None) -> None:
+    """Writes the release body for the tag: the install steps, then the pull requests and commits since the last release."""
+    configuration: dict = read_build_configuration()
+    previous_tag: str | None = find_previous_release_tag(tag)
+    commits: list[CommitEntry] = read_commits(previous_tag, target)
+    pull_requests: list[PullRequestEntry] = read_pull_requests(repository, commits)
+    manifest_url: str = f"{GITHUB_RAW_URL}/{repository}/main/{MANIFEST_FILE_NAME}"
+
+    lines: list[str] = []
+    if changelog and changelog.strip():
+        lines.extend([changelog.strip(), ""])
+    lines.extend([
+        f"To install, add {manifest_url} as a plugin repository (Dashboard > Plugins),"
+        f" then install {configuration['name']} from the catalog.",
+        "",
+        "The tarballs are the corresponding source of the LGPL decoders built into the plugin.",
+        "",
+        "## Pull Requests",
+        "",
+        *format_pull_request_lines(pull_requests),
+        "",
+        f"## Commits since {previous_tag or 'the first commit'}",
+        "",
+        *format_commit_lines(repository, commits),
+    ])
+    notes: str = truncate_release_notes("\n".join(lines)) + "\n"
+    if output_file is None:
+        sys.stdout.write(notes)
+        return
+    output_file.write_text(notes, encoding="utf-8")
+    print(f"Wrote the {tag} release notes to {output_file}: {len(commits)} commits and {len(pull_requests)} pull requests")
+
+
 def main() -> None:
-    """Runs the set-version or package command."""
+    """Runs the set-version, package, or release-notes command."""
     argument_parser: argparse.ArgumentParser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands: argparse._SubParsersAction = argument_parser.add_subparsers(dest="command", required=True)
 
@@ -289,6 +469,21 @@ def main() -> None:
         help=f"The manifest to update (default: {MANIFEST_FILE_NAME} in the output directory).",
     )
 
+    release_notes_parser: argparse.ArgumentParser = commands.add_parser(
+        "release-notes", help="Write the GitHub release body with the pull requests and commits since the last release.",
+    )
+    release_notes_parser.add_argument("tag", help=f"The release tag, such as {RELEASE_TAG_PREFIX}1.1.0.0.")
+    release_notes_parser.add_argument(
+        "--repository", required=True, help="The GitHub repository as owner/name, for links and pull requests.",
+    )
+    release_notes_parser.add_argument("--changelog", help="A summary written above the install steps.")
+    release_notes_parser.add_argument(
+        "--target", default="HEAD", help="The commit being released (default: %(default)s).",
+    )
+    release_notes_parser.add_argument(
+        "--output-file", type=Path, help="The file the notes are written to (default: standard output).",
+    )
+
     arguments: argparse.Namespace = argument_parser.parse_args()
     match arguments.command:
         case "set-version":
@@ -297,6 +492,8 @@ def main() -> None:
             output_directory: Path = arguments.output_directory.resolve()
             manifest_file: Path = (arguments.manifest or output_directory / MANIFEST_FILE_NAME).resolve()
             package(arguments.source_url_base, output_directory, manifest_file)
+        case "release-notes":
+            release_notes(arguments.tag, arguments.repository, arguments.changelog, arguments.target, arguments.output_file)
 
 
 if __name__ == "__main__":

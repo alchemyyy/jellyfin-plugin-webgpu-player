@@ -1,5 +1,6 @@
 # Releases the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
 # The release job sets the version, builds and packages the plugin, publishes the GitHub release with the zip and the LGPL decoder sources, and then commits the version and manifest.json to main.
+# The release notes list the merged pull requests and the commits since the previous release tag.
 name: Release
 
 on:
@@ -37,13 +38,16 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    # Pushes the release commit and tag, and creates the release
+    # Pushes the release commit and tag, and creates the release; the release notes look up the pull requests
     permissions:
       contents: write
+      pull-requests: read
     # NOTE: Scripts read the inputs from the environment only, because ${{ }} inside a script would splice the changelog into shell code
     env:
       VERSION: ${{ inputs.version }}
       CHANGELOG: ${{ inputs.changelog || format('Release {0}', inputs.version) }}
+      # The release notes carry the changelog only when one was given
+      RELEASE_SUMMARY: ${{ inputs.changelog }}
       TAG: v${{ inputs.version }}
     steps:
       # The last step rebases the release commit onto main and pushes it, which would carry another branch's commits into main
@@ -53,9 +57,11 @@ jobs:
           echo "::error::Run the release on main, not $GITHUB_REF_NAME"
           exit 1
 
+      # The full history and tags give the release notes the commits since the previous release
       - name: Check out the plugin and the client submodules
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           submodules: true
 
       - name: Stop if the release tag exists
@@ -142,6 +148,16 @@ jobs:
             --output-directory "$RUNNER_TEMP/package" \
             --manifest manifest.json
 
+      # Before the release commit, so HEAD is the commit that was built
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run release.py release-notes "$TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --changelog "$RELEASE_SUMMARY" \
+            --output-file "$RUNNER_TEMP/release-notes.md"
+
       - name: Commit the version and manifest.json, and tag the release
         run: |
           git config user.name 'github-actions[bot]'
@@ -156,17 +172,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git push origin "refs/tags/$TAG"
-          manifest_url="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/manifest.json"
-          notes_file="$RUNNER_TEMP/release-notes.md"
-          {
-            printf '%s\n\n' "$CHANGELOG"
-            printf 'To install, add %s as a plugin repository (Dashboard > Plugins), then install %s from the catalog.\n\n' \
-              "$manifest_url" "$PLUGIN_NAME"
-            printf 'The tarballs are the corresponding source of the LGPL decoders built into the plugin.\n'
-          } > "$notes_file"
           # The plugin image goes up beside the zip, where manifest.json's imageUrl points
           gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip "$RUNNER_TEMP"/package/*.png "$SOURCE_ARCHIVES_DIRECTORY"/*.tar.gz \
-            --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$notes_file"
+            --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
 
       # Commits pushed to main during the build go under the release commit; the tag keeps the commit that was built
       - name: Publish manifest.json on main

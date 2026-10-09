@@ -9,6 +9,9 @@
    id="svg1"
    inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
    sodipodi:docname="jellyfin-plugin-webgpu-player-banner.svg"
+   inkscape:export-filename="jellyfin-plugin-webgpu-player-banner.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -62,7 +65,7 @@
        inkscape:randomized="0"
        d="m 174.21954,54.68885 -141.738629,81.83283 0,-163.665663 z"
        inkscape:transform-center-x="-22.484401"
-       transform="matrix(0.9517971,0,0,0.9659058,47.810058,166.36147)"
+       transform="matrix(0.9517971,0,0,0.9659058,48.275972,191.05491)"
        inkscape:transform-center-y="4.7661221e-06" />
     <path
        sodipodi:type="star"
@@ -80,7 +83,7 @@
        inkscape:randomized="0"
        d="m 174.21954,54.68885 -141.738629,81.83283 0,-163.665663 z"
        inkscape:transform-center-x="-21.331998"
-       transform="matrix(0.90301437,0,0,0.91408908,51.349638,169.06552)"
+       transform="matrix(0.90301437,0,0,0.91408908,51.815552,193.75896)"
        inkscape:transform-center-y="2.8371475e-06" />
     <path
        sodipodi:type="star"
@@ -98,7 +101,7 @@
        inkscape:randomized="0"
        d="m 174.21954,54.68885 -141.738629,81.83283 0,-163.665663 z"
        inkscape:transform-center-x="-10.743372"
-       transform="matrix(0.45478251,0,0,0.46036004,73.450768,170.13427)"
+       transform="matrix(0.45478251,0,0,0.46036004,73.916682,194.82771)"
        inkscape:transform-center-y="-4.4163727e-06" />
     <path
        sodipodi:type="star"
@@ -116,7 +119,7 @@
        inkscape:randomized="0"
        d="m 174.21954,54.68885 -141.738629,81.83283 0,-163.665663 z"
        inkscape:transform-center-x="10.743378"
-       transform="matrix(0.22739123,0.39385321,-0.39868348,0.23018004,137.92785,194.23084)"
+       transform="matrix(0.22739123,0.39385321,-0.39868348,0.23018004,138.39376,218.92428)"
        inkscape:transform-center-y="-0.11410226" />
     <path
        sodipodi:type="star"
@@ -134,7 +137,7 @@
        inkscape:randomized="0"
        d="m 174.21954,54.68885 -141.738629,81.83283 0,-163.665663 z"
        inkscape:transform-center-x="-5.3683759"
-       transform="matrix(-0.11362552,-0.19680514,0.19921879,-0.11501903,96.872688,285.57468)"
+       transform="matrix(-0.11362552,-0.19680514,0.19921879,-0.11501903,97.338602,310.26812)"
        inkscape:transform-center-y="0.05702163" />
     <path
        sodipodi:type="star"
@@ -152,18 +155,18 @@
        inkscape:randomized="0"
        d="m 174.21954,54.68885 -141.738629,81.83283 0,-163.665663 z"
        inkscape:transform-center-x="-5.368362"
-       transform="matrix(0.22725099,0,0,0.23003806,155.95139,206.86758)"
+       transform="matrix(0.22725099,0,0,0.23003806,156.4173,231.56102)"
        inkscape:transform-center-y="1.682245e-06" />
     <text
        xml:space="preserve"
        style="font-size:68.9154px;line-height:0;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:1.04652;stroke-dasharray:none"
-       x="231.34184"
-       y="240.6123"
+       x="231.80775"
+       y="265.30576"
        id="text1"><tspan
          sodipodi:role="line"
          id="tspan1"
          style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:68.9154px;line-height:0;font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1.04652;stroke-dasharray:none"
-         x="231.34184"
-         y="240.6123">WebGPU Player</tspan></text>
+         x="231.80775"
+         y="265.30576">WebGPU Player</tspan></text>
   </g>
 </svg>
