@@ -17,6 +17,8 @@ Benefits of this, beyond massive performance, are total control over tone-mappin
 
 This is meant to be a replacement solution to the Jellyfin desktop client "ecosystem". My philosophy here is that its a lot easier to develop a backend player, which is almost purely mechanically testable, than it is to modify or outright create a UX and stitch it into an existing native player program, with all the extra overhead of shipping and maintaining a standalone app a user base has to manually keep up to date. 
 
+[Currently supported formats](https://alchemyyy.github.io/WebGPU-Player/formats.html)
+
 <h2 align="center">Installation and Requirements</h2>
 
 WebGPU ***requires*** secure context (https) in order to run (*web app accessing GPU hardware = serious*). If you aren't connecting to Jellyfin in a secure context already, you should be. I can highly recommend a reverse proxy setup using [Caddy](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/caddy/).
