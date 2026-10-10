@@ -1,5 +1,5 @@
 // Builds the vendored hls.js fork when its dist is missing; webpack aliases hls.js to it.
-// Only the rollup JavaScript bundles: the fork's type build fails inside this package, because TypeScript's ancestor @types lookup finds conflicting declarations in this package's node_modules
+// Only the rollup bundle the add-on imports: the fork's other bundles go unused, and its type build fails inside this package, because TypeScript's ancestor @types lookup finds conflicting declarations in this package's node_modules
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -7,6 +7,8 @@ const { CLIENT_DIRECTORY, WEBGPU_PLAYER_HLS_DIRECTORY: HLS_DIRECTORY } = require
 
 // The bundle the add-on imports
 const HLS_BUNDLE_FILE = path.join(HLS_DIRECTORY, 'dist', 'hls.js');
+// The fork's rollup configuration that writes HLS_BUNDLE_FILE
+const HLS_BUNDLE_CONFIGURATION = 'full';
 // npm run passes this package's configuration down as npm_* variables; the fork is a separate npm project
 const NPM_VARIABLE_PATTERN = /^npm_/i;
 
@@ -23,7 +25,7 @@ function runInHLSDirectory(commandLine) {
     }
 }
 
-/** Builds the fork's bundles unless the one the add-on imports already exists. */
+/** Builds the fork's bundle that the add-on imports, unless it already exists. */
 function buildHLSWhenMissing() {
     if (!fs.existsSync(path.join(HLS_DIRECTORY, 'package.json'))) {
         throw new Error(`The hls.js fork is missing at ${HLS_DIRECTORY}. Run: git submodule update --init`);
@@ -37,7 +39,7 @@ function buildHLSWhenMissing() {
         runInHLSDirectory('npm ci --ignore-scripts');
     }
     // The separator keeps newer npm versions from parsing --config as their own option
-    runInHLSDirectory('npx --no -- rollup --config');
+    runInHLSDirectory(`npx --no -- rollup --config --configType ${HLS_BUNDLE_CONFIGURATION}`);
     if (!fs.existsSync(HLS_BUNDLE_FILE)) {
         throw new Error(`The hls.js build did not create ${HLS_BUNDLE_FILE}`);
     }

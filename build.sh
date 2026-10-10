@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Builds the client add-on, embeds it in the plugin, and builds or publishes the plugin.
 #
-# Initializes the client's two submodules when needed (not recursively), builds the engine's WebAssembly decoders
-# when they are missing (make, with Emscripten and rustup), runs `npm ci` in jellyfin-webgpu-client/ when its
-# node_modules is missing, and runs `npm run build` there against a read-only Jellyfin Web source tree.
-# Then it runs dotnet build or dotnet publish, which embeds the add-on build in bin/jellyfin-webgpu-client/ in the
-# plugin. Works in Git Bash on Windows and in bash on Linux and macOS.
+# Initializes the client's two submodules when needed (not recursively).
+# Builds the engine's WebAssembly decoders in the background when they are missing (make, with Emscripten and rustup).
+# Meanwhile it runs `npm ci` in jellyfin-webgpu-client/ when its node_modules is missing, and builds the hls.js fork.
+# Once the decoders are built, it runs `npm run build` there against a read-only Jellyfin Web source tree.
+# Then it runs dotnet build or dotnet publish, which embeds the add-on build in bin/jellyfin-webgpu-client/ in the plugin.
+# Works in Git Bash on Windows and in bash on Linux and macOS.
 
 set -euo pipefail
 
@@ -50,6 +51,8 @@ USAGE
 }
 
 fail() {
+    # A background decoder build finishes first, so it never outlives this script and this message prints last
+    wait
     printf 'build.sh: %s\n' "$*" >&2
     exit 1
 }
@@ -127,19 +130,29 @@ if [ "$skip_npm" = false ]; then
         fi
     done
 
-    # The decoders are build outputs of their own toolchain, so only a checkout without them builds them
+    # The decoders are build outputs of their own toolchain, so only a checkout without them builds them.
+    # Only npm run build reads them, so they build in the background while npm ci and the hls.js fork build run
     wasm_output_directory="$engine_directory/$(engine_layout wasmOutputDirectory)" \
         || fail 'Cannot read the engine layout (Node.js is required)'
+    decoder_build_process_id=''
     if [ ! -d "$wasm_output_directory" ]; then
         printf 'Building the engine WebAssembly decoders into %s\n' "$wasm_output_directory"
+        wasm_directory="$(native_path "$engine_directory/wasm")"
         # The sources first, then one job per decoder kit
-        make -C "$(native_path "$engine_directory/wasm")" sources \
-            && make -C "$(native_path "$engine_directory/wasm")" -j5 all \
-            || fail "The engine decoder build failed; see the engine's docs/src/decoders.md for the toolchain"
+        (make -C "$wasm_directory" sources && make -C "$wasm_directory" -j5 all) &
+        decoder_build_process_id=$!
     fi
 
     if [ ! -d "$client_directory/node_modules" ]; then
         (cd "$client_directory" && npm ci) || fail 'npm ci failed'
+    fi
+
+    # npm run build builds the fork too, but only after the decoders; it finds the bundle built here and skips it
+    (cd "$client_directory" && node scripts/build-hls.js) || fail 'The hls.js fork build failed'
+
+    if [ -n "$decoder_build_process_id" ]; then
+        wait "$decoder_build_process_id" \
+            || fail "The engine decoder build failed; see the engine's docs/src/decoders.md for the toolchain"
     fi
 
     # The variable is scoped to the build command, so the caller's environment is left as it was

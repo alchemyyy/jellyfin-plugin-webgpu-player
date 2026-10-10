@@ -58,11 +58,10 @@ jobs:
           exit 1
 
       # The full history and tags give the release notes the commits since the previous release
-      - name: Check out the plugin and the client submodules
+      - name: Check out the plugin
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          submodules: true
 
       - name: Stop if the release tag exists
         run: |
@@ -70,6 +69,10 @@ jobs:
             echo "::error::$TAG already exists"
             exit 1
           fi
+
+      # The build reads only the submodules' pinned trees; checkout's fetch-depth 0 would clone their full history too
+      - name: Check out the client submodules
+        run: git submodule update --init --depth 1 --jobs 2
 
       # setup-uv publishes exact version tags only
       - name: Set up uv
@@ -113,19 +116,19 @@ jobs:
             echo "SOURCE_ARCHIVES_DIRECTORY=$source_archives_directory"
           } >> "$GITHUB_ENV"
 
-      - name: Install the pinned Emscripten
+      # Both installs are mostly downloads, so the Rust toolchain installs in the background while Emscripten does
+      - name: Install the pinned Emscripten and Rust toolchains
         run: |
+          # The Dolby Vision parser crate's rust-toolchain.toml names the toolchain and its WASM target
+          (cd "$WASM_DIRECTORY/libdovi" && rustup toolchain install --no-self-update) &
+          rust_install_process_id=$!
           emsdk_directory="$RUNNER_TEMP/emsdk"
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$emsdk_directory"
           "$emsdk_directory/emsdk" install "$PINNED_EMSCRIPTEN_VERSION"
           "$emsdk_directory/emsdk" activate "$PINNED_EMSCRIPTEN_VERSION"
+          wait "$rust_install_process_id"
           # The decoder Makefile finds emcc through EMSDK
           echo "EMSDK=$emsdk_directory" >> "$GITHUB_ENV"
-
-      - name: Install the pinned Rust toolchain
-        # The Dolby Vision parser crate's rust-toolchain.toml names the toolchain and its WASM target
-        working-directory: ${{ env.WASM_DIRECTORY }}/libdovi
-        run: rustup toolchain install --no-self-update
 
       - name: Check out Jellyfin Web
         uses: actions/checkout@v7

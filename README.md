@@ -141,10 +141,13 @@ The decoders are build outputs and are not committed; see the engine's
 
 `build.sh` does the following:
 1. initializes the two submodules (not recursively);
-2. builds the engine's decoders with `make -C wasm sources all` when the
-   engine's `bin/wasm/` is missing;
-3. runs `npm ci` in `jellyfin-webgpu-client/` when `node_modules` is missing;
-4. runs `npm run build` there against the Jellyfin Web checkout;
+2. starts the engine's decoder build, `make -C wasm sources` and then
+   `make -C wasm -j5 all`, in the background when the engine's `bin/wasm/` is
+   missing;
+3. meanwhile runs `npm ci` in `jellyfin-webgpu-client/` when `node_modules` is
+   missing, and builds the hls.js fork;
+4. waits for the decoders, then runs `npm run build` there against the
+   Jellyfin Web checkout;
 5. builds the plugin, which embeds that build from `bin/jellyfin-webgpu-client/`.
 
 Under Git Bash it passes Windows paths to `node` and `dotnet`. `./build.sh --help`
@@ -193,8 +196,9 @@ relative to `jellyfin-webgpu-client/`; the default is `../../jellyfin-web`.
   configs and the build scripts take every path from it, so a moved folder is
   one edit there. `build.sh`, the plugin project, `tsconfig.json`,
   `package.json` and `.gitmodules` still name their paths themselves.
-- `build` and `test` first build the hls.js fork when its `dist` is missing
-  (`npm ci --ignore-scripts`, then rollup). Delete
+- `build` and `test` first build the hls.js fork when its `dist/hls.js` is
+  missing (`npm ci --ignore-scripts`, then rollup's `full` configuration, which
+  writes that file, the one bundle the add-on imports). Delete
   `vendor/webgpu-player-hls/dist` to rebuild it after the submodule moves.
 - The build, test, typecheck and lint scripts first write the gitignored
   `tsconfig.host.json`, which maps host module specifiers to
@@ -285,11 +289,14 @@ gh workflow run release.yml --ref main -f version=1.1.0.0 -f changelog="Add HDR1
 `version` is required: four parts without a leading `v`. `changelog` is
 optional, one line, and defaults to `Release X.X.X.X`.
 `.github/workflows/release.yml` then:
-1. stops unless it runs on `main`, or if the tag `vX.X.X.X` exists;
+1. stops unless it runs on `main`, or if the tag `vX.X.X.X` exists, and checks
+   out the plugin with its full history, which the release notes read, and the
+   two submodules at depth 1;
 2. runs `release.py set-version`, which writes the version into `build.yaml`
    and `Directory.Build.props` and the changelog into `build.yaml`;
 3. installs Node.js 24, .NET 10, uv, the Emscripten version the engine's
-   `wasm/Makefile` pins, and the Rust toolchain of the Dolby Vision crate;
+   `wasm/Makefile` pins, and, at the same time, the Rust toolchain of the Dolby
+   Vision crate;
 4. checks out Jellyfin Web at the upstream commit `JELLYFIN_WEB_REF` names, and
    runs `./build.sh --publish` against it;
 5. writes the corresponding source of the LGPL decoders with
