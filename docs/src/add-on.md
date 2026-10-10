@@ -62,7 +62,7 @@ Every setting is local to the browser profile.
 
 ## Build and check
 
-You need Node.js 24 and npm 11, and the engine's decoder toolchain from its [Set up a checkout](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/setup.html) chapter.
+You need Node.js 24 and npm 11, and the engine's decoder toolchain from its [Set up a checkout](https://alchemyyy.github.io/WebGPU-Player/setup.html) chapter.
 The server plugin also needs the .NET 10 SDK.
 Jellyfin Web is a read-only input, the shallow submodule in `vendor/jellyfin-web/`, pinned to the commit the add-on builds against.
 

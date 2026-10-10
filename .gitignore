@@ -7,3 +7,4 @@ jellyfin-webgpu-client/node_modules/
 jellyfin-webgpu-client/tsconfig.host.json
 field-tester/
 /__pycache__
+docs/book/

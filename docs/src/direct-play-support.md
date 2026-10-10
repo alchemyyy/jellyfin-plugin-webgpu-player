@@ -2,12 +2,12 @@
 
 Two matrices decide whether Jellyfin direct-plays an HEVC or Dolby Vision source, AV1 Profile 10 included, through the custom pipeline:
 
-1. The engine's support matrix, in its [HEVC and Dolby Vision support](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html) chapter: whether the engine plays the source (Eligible), by which route, and on what evidence.
+1. The engine's support matrix, in its [HEVC and Dolby Vision support](https://alchemyyy.github.io/WebGPU-Player/codec-support.html) chapter: whether the engine plays the source (Eligible), by which route, and on what evidence.
 2. This chapter: whether Jellyfin negotiates DirectPlay for the source (Negotiated), given the label Jellyfin gives it and what the add-on's device profile can express.
 
 A source direct-plays through the custom pipeline only when both say yes.
 Each table below lists the engine's variants in the engine's order and links to the engine's table for the route and the evidence.
-The engine's [Supported formats](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/formats.html) chapter lists every container, codec, and HDR format it plays, and [Subtitles](#subtitles) below covers what the add-on renders.
+The engine's [Supported formats](https://alchemyyy.github.io/WebGPU-Player/formats.html) chapter lists every container, codec, and HDR format it plays, and [Subtitles](#subtitles) below covers what the add-on renders.
 
 `jellyfin-webgpu-client.tests/custom/HEVCDirectPlaySupportMatrix.test.ts` and `jellyfin-webgpu-client.tests/custom/AV1DirectPlaySupportMatrix.test.ts` assert both matrices, row by row, except the `metadata-unsupported` and `video-track-unavailable` rejections:
 
@@ -39,7 +39,7 @@ What Jellyfin adds to the engine's matrix:
 
 ## Plain HEVC
 
-Engine rows: [Plain HEVC](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html#plain-hevc).
+Engine rows: [Plain HEVC](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#plain-hevc).
 
 | Engine variant | Jellyfin label | Negotiated | Notes |
 | --- | --- | --- | --- |
@@ -51,7 +51,7 @@ Engine rows: [Plain HEVC](../../jellyfin-webgpu-client/vendor/webgpu-player/docs
 
 ## Range extensions
 
-Engine rows: [Range extensions](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html#range-extensions).
+Engine rows: [Range extensions](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#range-extensions).
 
 | Engine variant | Jellyfin label | Negotiated | Notes |
 | --- | --- | --- | --- |
@@ -66,7 +66,7 @@ Named aliases are exact per variant.
 
 ## Dolby Vision
 
-Engine rows: [Dolby Vision](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html#dolby-vision).
+Engine rows: [Dolby Vision](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#dolby-vision).
 
 | Engine variant | Jellyfin label | Negotiated |
 | --- | --- | --- |
@@ -85,7 +85,7 @@ Engine rows: [Dolby Vision](../../jellyfin-webgpu-client/vendor/webgpu-player/do
 
 ## Dolby Vision over AV1
 
-Engine rows: [Dolby Vision over AV1](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html#dolby-vision-over-av1).
+Engine rows: [Dolby Vision over AV1](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#dolby-vision-over-av1).
 
 | Engine variant | Jellyfin label | Negotiated |
 | --- | --- | --- |
@@ -103,7 +103,7 @@ Profile 9 (AVC) has no RPU route in the engine; Jellyfin labels it by transfer, 
 
 ## Rejected
 
-Engine rows: [Rejected](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html#rejected).
+Engine rows: [Rejected](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#rejected).
 
 | Engine variant | Negotiated |
 | --- | --- |

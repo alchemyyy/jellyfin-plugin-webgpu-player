@@ -1,7 +1,7 @@
 # Decisions
 
 This chapter records settled decisions about the plugin and its add-on.
-The engine's [Decisions](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/decisions.html) chapter records the engine's.
+The engine's [Decisions](https://alchemyyy.github.io/WebGPU-Player/decisions.html) chapter records the engine's.
 Dates are month-day in 2026, UTC.
 Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the player was developed until the plugin replaced the fork.
 

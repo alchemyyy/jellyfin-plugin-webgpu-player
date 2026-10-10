@@ -13,3 +13,5 @@ preferred-dark-theme = "coal"
 additional-css = ["theme/engine-theme.css"]
 additional-js = ["theme/engine-theme.js"]
 git-repository-url = "https://github.com/alchemyyy/jellyfin-plugin-webgpu-player"
+# The site's path on GitHub Pages; the 404 page's links resolve from it
+site-url = "/jellyfin-plugin-webgpu-player/"

@@ -5,7 +5,7 @@ Each assumes a checkout built as in [The client add-on](add-on.md#build-and-chec
 
 ## Advertise a new engine route
 
-1. Add the route in the engine, following its "Add or change a codec route" recipe in [Recipes](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/recipes.html#add-or-change-a-codec-route).
+1. Add the route in the engine, following its "Add or change a codec route" recipe in [Recipes](https://alchemyyy.github.io/WebGPU-Player/recipes.html#add-or-change-a-codec-route).
 2. Negotiation.
    `jellyfin-webgpu-client/src/custom/CustomDeviceProfile.ts` turns the evidence into CodecProfile conditions, and `jellyfin-webgpu-client/src/WebGPUPlayer.ts` derives the option flags and configures the color pipeline.
    Container pairing stays only in `src/capability/CustomContainerCodecSupport.ts` (engine).
@@ -25,7 +25,7 @@ Check: the engine's checks from its root, and the add-on checks from [The client
    `export()` returns the same object to automation instead.
 4. Run `localStorage.removeItem('webgpuPlayerTimingTrace')` when done, because a running trace keeps up to 200,000 events in memory.
 
-The engine's "Capture a timing trace" recipe in [Recipes](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/recipes.html#capture-a-timing-trace) describes the events.
+The engine's "Capture a timing trace" recipe in [Recipes](https://alchemyyy.github.io/WebGPU-Player/recipes.html#capture-a-timing-trace) describes the events.
 
 ## Take an engine change
 

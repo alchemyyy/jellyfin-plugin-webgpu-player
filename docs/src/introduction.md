@@ -4,7 +4,7 @@ This book documents the Jellyfin side of the WebGPU Player: the server plugin `j
 Together they add the player to an unmodified Jellyfin Web.
 
 The playback engine is a separate repository, [WebGPU Player](https://github.com/alchemyyy/WebGPU-Player), checked out as a submodule at `jellyfin-webgpu-client/vendor/webgpu-player/`.
-The engine knows nothing about Jellyfin, and its own book covers the engine: its [architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/architecture.html), [eligibility and routes](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/routes.html), [codec support](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html), its decoders, and its build.
+The engine knows nothing about Jellyfin, and its own book covers the engine: its [architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html), [eligibility and routes](https://alchemyyy.github.io/WebGPU-Player/routes.html), [codec support](https://alchemyyy.github.io/WebGPU-Player/codec-support.html), its decoders, and its build.
 This book covers what the plugin decides: how the add-on reaches the page, player selection, the device profile, the PlaybackInfo requests, settings, and the host's half of a playback session.
 The plugin's `README.md` covers the server plugin, its rewrites, and its asset route.
 
@@ -32,6 +32,6 @@ The plugin's `README.md` covers the server plugin, its rewrites, and its asset r
 | --- | --- |
 | Build and check the add-on | [The client add-on](add-on.md#build-and-check) |
 | Follow a playback session through Jellyfin Web | [Playback in Jellyfin Web](playback.md) |
-| Learn why the server direct-plays a source or not | [Negotiation](negotiation.md), [Direct play support](direct-play-support.md), and the engine's [support matrix](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html) |
+| Learn why the server direct-plays a source or not | [Negotiation](negotiation.md), [Direct play support](direct-play-support.md), and the engine's [support matrix](https://alchemyyy.github.io/WebGPU-Player/codec-support.html) |
 | Find an add-on file | [Module map](module-map.md) |
 | Avoid repeating an investigation | [Decisions](decisions.md) |

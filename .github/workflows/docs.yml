@@ -1,0 +1,93 @@
+# Publishes the book in docs/ to GitHub Pages when a push to main changes it, or when run by hand (Actions > Docs > Run workflow).
+# The build job builds the book with the pinned mdBook and bundles the engine's theme into it, and the deploy job publishes it.
+# NOTE: Pages must deploy from GitHub Actions (Settings > Pages > Source)
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    # The book, the engine submodule whose theme it bundles, and this workflow
+    paths:
+      - docs/**
+      - jellyfin-webgpu-client/vendor/webgpu-player
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push waits rather than cancelling one in progress
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The version docs/src/maintaining.md installs
+  MDBOOK_VERSION: 0.5.4
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+
+      # The book's theme comes from the engine's docs/theme/, and the book needs no other submodule
+      - name: Check out the engine submodule
+        run: |
+          engine_directory="$(git config --file .gitmodules --get submodule.webgpu-player.path)"
+          git submodule update --init --depth 1 "$engine_directory"
+          echo "ENGINE_DIRECTORY=$engine_directory" >> "$GITHUB_ENV"
+
+      - name: Install mdBook
+        run: |
+          mdbook_directory="$RUNNER_TEMP/mdbook"
+          mkdir -p "$mdbook_directory"
+          curl --fail --silent --show-error --location \
+            "https://github.com/rust-lang/mdBook/releases/download/v$MDBOOK_VERSION/mdbook-v$MDBOOK_VERSION-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar --extract --gzip --directory "$mdbook_directory"
+          echo "$mdbook_directory" >> "$GITHUB_PATH"
+
+      - name: Build the book
+        run: mdbook build docs
+
+      # docs/theme/engine-theme.css and engine-theme.js load the engine's theme from the submodule, three levels above docs/book/theme/,
+      # which is outside the site, so the site gets a copy of the theme and the built files point at it
+      - name: Bundle the engine's theme
+        run: |
+          engine_theme_directory="$ENGINE_DIRECTORY/docs/theme"
+          mkdir -p docs/book/theme/engine
+          cp "$engine_theme_directory"/*.css "$engine_theme_directory"/*.js docs/book/theme/engine/
+          for bridge in docs/book/theme/engine-theme*.css docs/book/theme/engine-theme*.js; do
+            if ! grep --quiet --fixed-strings "../../../$engine_theme_directory/" "$bridge"; then
+              echo "::error::$bridge no longer loads the engine's theme from ../../../$engine_theme_directory/"
+              exit 1
+            fi
+            sed --in-place "s#\.\./\.\./\.\./$engine_theme_directory/#engine/#g" "$bridge"
+          done
+
+      - name: Upload the book
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/book
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # deploy-pages publishes with an OIDC token
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish the book
+        id: deployment
+        uses: actions/deploy-pages@v5

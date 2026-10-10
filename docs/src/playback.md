@@ -1,7 +1,7 @@
 # Playback in Jellyfin Web
 
 This chapter follows the host's half of a playback session.
-The engine's [Architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/architecture.html) chapter follows the custom pipeline below it.
+The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html) chapter follows the custom pipeline below it.
 
 ## Layers
 
@@ -11,7 +11,7 @@ The engine's [Architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/do
 </div>
 
 `WebGPUPlayer`, `HTMLPlayerDelegate`, and `HtmlVideoPlayer` with its hls.js runtime are add-on code, and the rAF loop runs in `WebGPUPlayer`.
-The engine's [Architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/architecture.html#layers) chapter details its side of the diagram.
+The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#layers) chapter details its side of the diagram.
 
 ## Startup of a custom session
 
@@ -25,7 +25,7 @@ The engine's [Architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/do
 3. The add-on loads the engine pipeline as the `webgpu-custom-playback` chunk.
    `HtmlVideoPlayer.prepareCustomPlayback` returns a source-less `<video>`.
    The presenter enters push mode, and `configurePresentationColorPipeline` installs the shaders and authorizes the selected route.
-4. The engine's controller starts the session; see its [Architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/architecture.html#startup-of-a-custom-session) chapter.
+4. The engine's controller starts the session; see its [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#startup-of-a-custom-session) chapter.
 5. When the controller emits `ready` and `playing`, the rAF loop starts, `play()` resolves, and PlaybackManager emits `playbackstart`.
 
 ## Steady state

@@ -8,15 +8,16 @@ Both are built with [mdBook](https://github.com/rust-lang/mdBook) 0.5.
 
 1. Install mdBook once: `cargo install mdbook --version 0.5.4 --locked`.
 2. From the plugin root, run `mdbook serve docs --open` while editing; it rebuilds on every save.
-3. Before committing, run `mdbook build docs`.
-   It fails on a broken `SUMMARY.md`, and it rewrites `docs/book/`, which is tracked.
-   Commit the rebuilt book with the chapters it was built from.
-4. Links into the engine's book point at its built pages, so build that book too (`mdbook build docs` from the engine root) when reading locally.
+3. Before committing, run `mdbook build docs`; it fails on a broken `SUMMARY.md`.
+   It writes the book to `docs/book/`, which is not tracked.
+
+A push to `main` that changes `docs/` or the engine submodule publishes the book to <https://alchemyyy.github.io/jellyfin-plugin-webgpu-player/>, through `.github/workflows/docs.yml`; its `MDBOOK_VERSION` is the version in step 1.
+Links into the engine's book point at the engine's site, <https://alchemyyy.github.io/WebGPU-Player/>, since a relative link out of `docs/` does not resolve on the published site.
 
 `docs/book.toml` holds the configuration, and `docs/src/SUMMARY.md` the table of contents.
 
 Diagrams are PlantUML sources in `docs/diagrams/`, rendered to light and dark SVGs in `docs/src/diagrams/`, both tracked.
-They include the engine's `docs/diagrams/diagram-theme.puml` (engine), and the engine's [Maintaining this book](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/maintaining.html#diagrams) chapter describes how to write and embed one.
+They include the engine's `docs/diagrams/diagram-theme.puml` (engine), and the engine's [Maintaining this book](https://alchemyyy.github.io/WebGPU-Player/maintaining.html#diagrams) chapter describes how to write and embed one.
 Render them from the plugin root with `node jellyfin-webgpu-client/vendor/webgpu-player/tools/render-diagrams.mjs docs`, and check them with `--check` before committing.
 A chapter that is not listed in `SUMMARY.md` is not built.
 The book's only theme file of its own is `docs/theme/favicon.svg`, a plain-SVG export of the plugin logo; after changing `images/jellyfin-plugin-webgpu-player.svg`, export it again from the plugin root:
@@ -28,6 +29,7 @@ inkscape images/jellyfin-plugin-webgpu-player.svg --export-plain-svg --export-fi
 `docs/theme/engine-theme.css` imports the engine book's stylesheets from `docs/theme/` (engine), so both books look the same.
 `docs/theme/engine-theme.js` loads the engine book's scripts the same way, such as its diagram viewer.
 Their URLs are relative to the built files in `docs/book/theme/`, and they need the engine submodule checked out.
+The published site has no submodule, so `.github/workflows/docs.yml` copies the engine's theme into the built book and points both files at the copy.
 
 ## When to update it
 

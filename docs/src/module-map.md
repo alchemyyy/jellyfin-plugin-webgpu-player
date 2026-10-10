@@ -2,7 +2,7 @@
 
 One entry per file or family of the add-on, in `jellyfin-webgpu-client/src/`.
 Each source file's tests are at the same relative path under `jellyfin-webgpu-client.tests/`.
-The plugin's `README.md` maps the server plugin, and the engine's [Module map](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/module-map.html) maps the engine.
+The plugin's `README.md` maps the server plugin, and the engine's [Module map](https://alchemyyy.github.io/WebGPU-Player/module-map.html) maps the engine.
 
 - `index.ts`: the add-on entry.
   It configures the engine's assets and feature flags, installs the timing trace control, binds the host bridge, installs the host-compatible mode, and returns the player.

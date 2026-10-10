@@ -2,7 +2,7 @@
 
 This chapter follows a playback from player selection to a Jellyfin decision.
 Player selection, the device profile, and the PlaybackInfo requests are add-on code.
-Eligibility, the probes, and the route catalog are engine code, in the engine's [Eligibility and routes](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/routes.html) chapter.
+Eligibility, the probes, and the route catalog are engine code, in the engine's [Eligibility and routes](https://alchemyyy.github.io/WebGPU-Player/routes.html) chapter.
 The stock profile is the one the add-on's HTML backend returns from `getDeviceProfile`.
 
 ## Flow
@@ -65,7 +65,7 @@ The profile advertises ranges per item HDR scope.
 A known-SDR item gets no HDR routes, and an item with missing metadata is scoped `unknown` and gets all of them.
 The raw Dolby Vision route also advertises DOVIInvalid, Jellyfin's label for P8 outside CCIDs 1, 2, and 4 (and, on Jellyfin 12, for a base whose color contradicts its CCID), because RPU reconstruction presents any CCID.
 The generic DOVIWithEL ranges are advertised with or without the bundled HEVC decoder's Main 10 qualification, because P7 reconstructs from its base layer when no qualified decoder decodes the EL.
-The profile never advertises more than the engine's support matrix, in its [HEVC and Dolby Vision support](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/codec-support.html) chapter, can play.
+The profile never advertises more than the engine's support matrix, in its [HEVC and Dolby Vision support](https://alchemyyy.github.io/WebGPU-Player/codec-support.html) chapter, can play.
 [Direct play support](direct-play-support.md) maps each of its rows to the label Jellyfin gives it and whether the profile negotiates it.
 
 Per codec, the routes are:
@@ -96,7 +96,7 @@ If it would, `CustomDeviceProfile` advertises the item's exact VideoProfile (as 
 
 ## Audio
 
-- The profile advertises the engine's audio routes per codec and channel count, as the engine's [audio routes](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/routes.html#audio-routes) list them.
+- The profile advertises the engine's audio routes per codec and channel count, as the engine's [audio routes](https://alchemyyy.github.io/WebGPU-Player/routes.html#audio-routes) list them.
 - The profile uses `AudioSampleRate NotEquals 0`, because Jellyfin reuses conditions as transcode targets.
 - AC-3, E-AC-3, and PCM have no runtime probe, so `appendMeasuredNativeAudioRouteProfiles` never emits its 48 kHz profile.
 - A profile condition cannot express ChannelLayout, so three-channel routes and E-AC-3 and TrueHD 7.1 are advertised by channel count and qualified by layout only at eligibility.
