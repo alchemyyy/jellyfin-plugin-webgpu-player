@@ -92,7 +92,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Set the version and changelog
-        run: uv run release.py set-version "$VERSION" --changelog "$CHANGELOG"
+        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG"
 
       - name: Read the engine's decoder build settings
         run: |
@@ -146,7 +146,7 @@ jobs:
 
       - name: Package the plugin and record it in manifest.json
         run: |
-          uv run release.py package \
+          uv run .github/scripts/release.py package \
             --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
             --output-directory "$RUNNER_TEMP/package" \
             --manifest manifest.json \
@@ -157,7 +157,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          uv run release.py release-notes "$TAG" \
+          uv run .github/scripts/release.py release-notes "$TAG" \
             --repository "$GITHUB_REPOSITORY" \
             --changelog "$RELEASE_SUMMARY" \
             --output-file "$RUNNER_TEMP/release-notes.md"

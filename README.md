@@ -98,7 +98,7 @@ These apply only while File Transformation does the rewriting.
 | `images/` | The plugin banner (the source SVG, and the PNG that the package carries and the repository manifest's `imageUrl` names on `main`), and the plugin logo, the source of the book's favicon |
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
-| `release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
+| `.github/scripts/release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
 | `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |
 | `.github/workflows/release.yml` | Release workflow, run by hand with the version to release: builds, packages, and publishes it |
 
@@ -322,7 +322,7 @@ optional, one line, and defaults to `Release X.X.X.X`.
 
 ```sh
 ./build.sh --publish
-uv run release.py package
+uv run .github/scripts/release.py package
 python -m http.server --directory bin/package
 ```
 
@@ -337,5 +337,5 @@ first.
   from the manifest's `checksum`, so package again after every build.
 - The version and changelog come from `build.yaml`, and the three version
   properties in `Directory.Build.props` must match it.
-  `uv run release.py set-version <version> --changelog <text>` sets both
+  `uv run .github/scripts/release.py set-version <version> --changelog <text>` sets both
   files.

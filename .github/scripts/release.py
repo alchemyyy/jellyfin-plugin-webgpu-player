@@ -7,10 +7,10 @@
 build.yaml holds the plugin metadata, including the version and its changelog. Directory.Build.props stamps the same
 version on the assembly.
 
-    uv run release.py set-version 1.1.0.0 --changelog "Fix seeking"
-    uv run release.py package
-    uv run release.py package --source-url-base http://192.168.1.10:8000
-    uv run release.py release-notes v1.3.0.0 --repository alchemyyy/jellyfin-plugin-webgpu-player
+    uv run .github/scripts/release.py set-version 1.1.0.0 --changelog "Fix seeking"
+    uv run .github/scripts/release.py package
+    uv run .github/scripts/release.py package --source-url-base http://192.168.1.10:8000
+    uv run .github/scripts/release.py release-notes v1.3.0.0 --repository alchemyyy/jellyfin-plugin-webgpu-player
 
 set-version writes the version into both files and the changelog into build.yaml; build the plugin after it. package
 zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image, and inserts
@@ -41,7 +41,7 @@ from typing import NoReturn
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString, FoldedScalarString
 
-REPOSITORY_DIRECTORY: Path = Path(__file__).resolve().parent
+REPOSITORY_DIRECTORY: Path = Path(__file__).resolve().parents[2]
 BUILD_CONFIGURATION_FILE: Path = REPOSITORY_DIRECTORY / "build.yaml"
 BUILD_PROPERTIES_FILE: Path = REPOSITORY_DIRECTORY / "Directory.Build.props"
 PUBLISH_DIRECTORY: Path = REPOSITORY_DIRECTORY / "bin" / "Jellyfin.Plugin.WebGPUPlayer" / "Release" / "publish"
