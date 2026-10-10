@@ -23,10 +23,10 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   The decoder opens at the container's coded size and refuses a later, larger picture, so the item falls back.
   A broadcast transport stream that switches resolution produces such a picture.
   Reopening the decoder at the new size when a sequence header changes it would play them.
-- The prebuilt HEVC (`@hevcjs/core`) and OpenJPEG decoders keep Emscripten's default 2 GiB heap.
+- The prebuilt OpenJPEG decoder (`@cornerstonejs/codec-openjpeg`) keeps Emscripten's default 2 GiB heap.
   A frame whose decoder state does not fit fails in the decoder.
-  Rebuilding either package with a 4 GiB heap and reading its returned pointers unsigned would lift the limit.
-  The MPEG-2/VC-1 kit already has a 4 GiB heap.
+  Rebuilding the package with a 4 GiB heap and reading its returned pointers unsigned would lift the limit.
+  The MPEG-2/VC-1 and HEVC kits already have a 4 GiB heap.
 - AVI, and the legacy codecs it usually carries.
   The engine's prefilter declines AVI, FLV, ASF, and MPEG program streams, because no route's container carries them and Mediabunny 1.52.2 demuxes none of them.
   It also declines MPEG-4 Part 2 (DivX, Xvid), H.263, MS-MPEG4, MPEG-1, and Theora in any container, because no route decodes them.
@@ -72,7 +72,8 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   Threads need SharedArrayBuffer, which needs COOP and COEP headers on Jellyfin Web's top-level document; the plugin would add them as server middleware.
   Under `require-corp`, Jellyfin Web's YouTube trailer iframe is blocked, and the Cast sender script from gstatic needs a CORP header that Google controls.
   `credentialless` relaxes subresources but not cross-origin iframes, and Safari lacks it, so isolation can only be an opt-in beside the non-isolated path.
-  It also needs a threaded HEVC decoder with its own qualification, such as FFmpeg's HEVC decoder with frame threads, because `@hevcjs/core` is single-threaded.
+  The software HEVC decoder is FFmpeg's, which supports frame and slice threads, but the `ffmpeg-hevc` kit builds with `--disable-pthreads`, because threads need the isolation above.
+  It also needs a threaded build of that kit beside the single-threaded one, with its own qualification.
   With isolation, a SharedArrayBuffer ring would also replace the PCM messages to the AudioWorklet.
 - One copy for Dolby Vision base and enhancement-layer pairs.
   The pair path copies each layer into one compound buffer after the bundled decoder's drain-time copy, so a dual-layer frame is copied twice.
@@ -87,9 +88,9 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   An interim fix writes one 32-bit word per pixel, about 27 percent faster, and passes `transfer` to the VideoFrame constructor.
 - Every HEVC packet is walked two to four times and its base layer rebuilt.
   The HDR10+ queue walks the NAL units twice, and `splitDolbyVisionHEVCAccessUnit` walks them again and re-encodes the base layer into a new buffer even when it removes nothing; the AV1 splitter already returns an unchanged unit uncopied.
-  The bundled decoder also converts each packet to Annex B, scans it again for SPS units, and copies it into WebAssembly memory it allocates and frees per packet.
+  The bundled decoder walks each packet once more for its SPS units and leading pictures, and copies it into WebAssembly memory it allocates and frees per packet.
   At 60 Mbps, one walk of an Annex B packet, as MPEG-TS and M2TS carry, costs about 7 ms per second.
-  Closing it needs one walk per packet shared by every consumer, the input returned unchanged when nothing is removed (or a `subarray` when only trailing RPU units are), SPS collection during the Annex B conversion into a persistent input buffer, and `transfer` to `EncodedVideoChunk` when the engine owns the buffer.
+  Closing it needs one walk per packet shared by every consumer, the bundled decoder's SPS and leading-picture checks included, the input returned unchanged when nothing is removed (or a `subarray` when only trailing RPU units are), a persistent WebAssembly input buffer, and `transfer` to `EncodedVideoChunk` when the engine owns the buffer.
 - The DTS decoder builds without SIMD.
   `libdcadec-dts` builds with `-O3` but without `-msimd128` or LTO.
   Adding `-msimd128` is low risk; moving the E-AC-3 and TrueHD kits from `-Oz` to `-O3` would grow the served binaries, which costs first-load time.
@@ -102,7 +103,6 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 - Small per-frame and per-sample overheads.
   The AudioWorklet scans every output sample for telemetry on its render thread (`analyzeOutput`).
   The presenter decodes each frame's 3232-byte RPU snapshot on the main thread to check header fields the worker already validated.
-  `HEVCDecoderBackend` allocates and frees its info, count, and frame structures on every call.
   Raw-plane frames create a bind group per frame although their texture views are stable.
 
 ## Playback smoothness

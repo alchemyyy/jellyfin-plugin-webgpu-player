@@ -131,7 +131,7 @@
     "WebGPUUnitNits": "nits",
     "WebGPUUnitStops": "stops",
     "WebGPUUnnamedAudioOutput": "Audio output {0}",
-    "WebGPUVideoDecoderBundledHEVC": "Bundled HEVC decoder",
+    "WebGPUVideoDecoderBundledHEVC": "FFmpeg HEVC decoder",
     "WebGPUVideoDecoderFFmpegMPEG2VC1": "FFmpeg MPEG-2 and VC-1 decoder",
     "WebGPUVideoDecoderNative": "WebCodecs decoder",
     "WebGPUVideoDecoderOpenJPEG": "OpenJPEG decoder",
