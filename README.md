@@ -7,7 +7,7 @@
   <img src="images/jellyfin-plugin-webgpu-player-banner-shallow.png" alt="WebGPU Player" width="500">
 </p>
 
-## About
+<h2 align="center">About</h2>
 
 <p align="center"><b><i>This plugin is in alpha!!!</i></b></p>
 
@@ -15,7 +15,11 @@ This plugin adds a custom WebGPU-based media player as an optional player backen
 
 Benefits of this, beyond massive performance, are total control over tone-mapping and audio downmixing settings on a per-device basis.
 
-## Installation
+This is meant to be a replacement solution to the Jellyfin desktop client "ecosystem". My philosophy here is that its a lot easier to develop a backend player, which is almost purely mechanically testable, than it is to modify or outright create a UX and stitch it into an existing native player program, with all the extra overhead of shipping and maintaining a standalone app a user base has to manually keep up to date. 
+
+<h2 align="center">Installation and Requirements</h2>
+
+WebGPU ***requires*** secure context (https) in order to run (*web app accessing GPU hardware = serious*). If you aren't connecting to Jellyfin in a secure context already, you should be. I can highly recommend a reverse proxy setup using [Caddy](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/caddy/).
 
 Add this plugin as you would any other plugin: add this manifest to your plugin repositories, then install the "WebGPU Player" plugin from it:
 ```
@@ -28,7 +32,7 @@ The plugin itself is basically a wrapper for injecting modifications into the Je
 
 ***WARNING:*** This plugin essentially overwrites the stock player, even though it allows access to the old backend. This means there most likely will be compatibility issues between this and other things that modify the player UX. Feel free to report any of these issues and I'll look into fixing them.
 
-## Development
+<h2 align="center">Development</h2>
 
 ### Documentation
 
@@ -119,7 +123,7 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 | `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |
 | `.github/workflows/release.yml` | Release workflow, run by hand with the version to release: builds, packages, and publishes it |
 
-### Localization
+<h2 align="center">Localization</h2>
 
 The add-on's text is translated the way Jellyfin Web's is: one JSON file per language with a key for every string, maintained through Weblate.
 
