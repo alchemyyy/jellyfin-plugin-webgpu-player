@@ -9,6 +9,7 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 | `jellyfin-webgpu-client/` | The add-on, a private npm package with its sources in `src/` |
 | `jellyfin-webgpu-client/vendor/webgpu-player/` | The engine: a submodule, and an npm workspace of the add-on |
 | `jellyfin-webgpu-client/vendor/webgpu-player-hls/` | The hls.js fork, a submodule |
+| `jellyfin-webgpu-client/vendor/jellyfin-web/` | The Jellyfin Web the add-on builds against: a shallow submodule, read-only |
 | `jellyfin-webgpu-client.tests/` | The add-on's Vitest suites, mirroring its `src/` |
 | `bin/jellyfin-webgpu-client/` | The add-on build, which the plugin embeds |
 | `docs/` | This book |
@@ -61,14 +62,14 @@ Every setting is local to the browser profile.
 
 ## Build and check
 
-You need Node.js 24 and npm 11, the engine's decoder toolchain from its [Set up a checkout](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/setup.html) chapter, and a Jellyfin Web checkout.
-The checkout is a read-only input; an unmodified upstream one works.
+You need Node.js 24 and npm 11, and the engine's decoder toolchain from its [Set up a checkout](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/setup.html) chapter.
 The server plugin also needs the .NET 10 SDK.
+Jellyfin Web is a read-only input, the shallow submodule in `vendor/jellyfin-web/`, pinned to the commit the add-on builds against.
 
-1. In the plugin root, run `git submodule update --init`.
+1. In the plugin root, run `git submodule update --init`; the Jellyfin Web submodule is fetched shallow.
    Then run `npm ci` in `jellyfin-webgpu-client/`.
-2. Point `JELLYFIN_WEB_DIR` at the Jellyfin Web checkout, as an absolute path or one relative to `jellyfin-webgpu-client/`.
-   The default is `../../jellyfin-web`.
+2. To build against another Jellyfin Web checkout, point `JELLYFIN_WEB_DIR` at it, as an absolute path or one relative to `jellyfin-webgpu-client/`.
+   The default is the submodule.
 3. In `jellyfin-webgpu-client/`, run:
 
    ```sh

@@ -65,3 +65,6 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 
 - The plugin's documentation is this book (10-09): one mdBook in `docs/`, beside the engine's own book.
   Jellyfin and add-on material lives here; the engine's book covers only the engine.
+- Jellyfin Web is vendored as a shallow submodule (10-09): `jellyfin/jellyfin-web` at `jellyfin-webgpu-client/vendor/jellyfin-web/`, read-only.
+  Local and release builds read the same pinned commit, which had been pinned only in the release workflow while local builds read a sibling checkout.
+  `build.sh --jellyfin-web-path` and `JELLYFIN_WEB_DIR` still name another checkout.

@@ -5,3 +5,7 @@
 	path = jellyfin-webgpu-client/vendor/webgpu-player-hls
 	url = https://github.com/alchemyyy/hls.js.git
 	branch = fix/cals2
+[submodule "jellyfin-web"]
+	path = jellyfin-webgpu-client/vendor/jellyfin-web
+	url = https://github.com/jellyfin/jellyfin-web.git
+	shallow = true

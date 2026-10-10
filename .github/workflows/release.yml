@@ -29,10 +29,6 @@ defaults:
 
 env:
   PLUGIN_NAME: WebGPU Player
-  # The Jellyfin Web source tree the client add-on builds against, read-only: an upstream master commit
-  JELLYFIN_WEB_REPOSITORY: jellyfin/jellyfin-web
-  JELLYFIN_WEB_REF: fca925f3fd57e54b0c3faeb0a04ef5b0f673fb83
-  JELLYFIN_WEB_DIRECTORY: jellyfin-web
 
 jobs:
   release:
@@ -72,7 +68,7 @@ jobs:
 
       # The build reads only the submodules' pinned trees; checkout's fetch-depth 0 would clone their full history too
       - name: Check out the client submodules
-        run: git submodule update --init --depth 1 --jobs 2
+        run: git submodule update --init --depth 1 --jobs 3
 
       # setup-uv publishes exact version tags only
       - name: Set up uv
@@ -130,16 +126,8 @@ jobs:
           # The decoder Makefile finds emcc through EMSDK
           echo "EMSDK=$emsdk_directory" >> "$GITHUB_ENV"
 
-      - name: Check out Jellyfin Web
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ env.JELLYFIN_WEB_REPOSITORY }}
-          ref: ${{ env.JELLYFIN_WEB_REF }}
-          path: ${{ env.JELLYFIN_WEB_DIRECTORY }}
-          persist-credentials: false
-
       - name: Build the plugin
-        run: ./build.sh --publish --jellyfin-web-path "$JELLYFIN_WEB_DIRECTORY"
+        run: ./build.sh --publish
 
       - name: Write the corresponding source of the LGPL decoders
         run: make -C "$WASM_DIRECTORY" source-archives

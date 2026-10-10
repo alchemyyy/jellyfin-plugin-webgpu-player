@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the client add-on, embeds it in the plugin, and builds or publishes the plugin.
 #
-# Initializes the client's two submodules when needed (not recursively).
+# Initializes the client's submodules when needed (not recursively): the engine, the hls.js fork, and the pinned
+# Jellyfin Web, unless --jellyfin-web-path names another checkout.
 # Builds the engine's WebAssembly decoders in the background when they are missing (make, with Emscripten and rustup).
 # Meanwhile it runs `npm ci` in jellyfin-webgpu-client/ when its node_modules is missing, and builds the hls.js fork.
 # Once the decoders are built, it runs `npm run build` there against a read-only Jellyfin Web source tree.
@@ -18,10 +19,12 @@ client_directory="$script_directory/jellyfin-webgpu-client"
 engine_directory="$client_directory/vendor/webgpu-player"
 addon_output_directory="$script_directory/bin/jellyfin-webgpu-client"
 submodule_paths=('jellyfin-webgpu-client/vendor/webgpu-player' 'jellyfin-webgpu-client/vendor/webgpu-player-hls')
+jellyfin_web_submodule_path='jellyfin-webgpu-client/vendor/jellyfin-web'
 readonly script_directory project_directory project_file manifest_file_name client_directory engine_directory \
-    addon_output_directory
+    addon_output_directory jellyfin_web_submodule_path
 
-jellyfin_web_path="$script_directory/../jellyfin-web"
+# Empty for the pinned Jellyfin Web submodule
+jellyfin_web_path=''
 skip_npm=false
 configuration='Release'
 publish=false
@@ -32,8 +35,8 @@ Usage: ./build.sh [options]
 
 Options:
   --jellyfin-web-path <path>  The Jellyfin Web checkout whose src/ the add-on build reads, passed to npm as
-                              JELLYFIN_WEB_DIR. Nothing is written to it. Defaults to ../jellyfin-web next to
-                              this repository.
+                              JELLYFIN_WEB_DIR. Nothing is written to it. Defaults to the pinned submodule in
+                              jellyfin-webgpu-client/vendor/jellyfin-web/.
   --skip-npm                  Reuse the existing add-on build in bin/jellyfin-webgpu-client/ instead of running
                               the decoder and npm builds.
   --configuration <name>      The dotnet build configuration: Debug or Release (default).
@@ -117,10 +120,10 @@ esac
 
 # Client add-on build
 if [ "$skip_npm" = false ]; then
-    jellyfin_web_directory="$(cd "$jellyfin_web_path" 2>/dev/null && pwd)" \
-        || fail "No Jellyfin Web checkout at $jellyfin_web_path"
-    [ -d "$jellyfin_web_directory/src" ] \
-        || fail "No Jellyfin Web source tree at $jellyfin_web_directory (src is missing)"
+    if [ -z "$jellyfin_web_path" ]; then
+        submodule_paths+=("$jellyfin_web_submodule_path")
+        jellyfin_web_path="$script_directory/$jellyfin_web_submodule_path"
+    fi
 
     # Not recursive: the decoder build fetches the engine's codec source submodules itself, shallow and pinned
     for submodule_path in "${submodule_paths[@]}"; do
@@ -129,6 +132,11 @@ if [ "$skip_npm" = false ]; then
                 || fail "git submodule update --init $submodule_path failed"
         fi
     done
+
+    jellyfin_web_directory="$(cd "$jellyfin_web_path" 2>/dev/null && pwd)" \
+        || fail "No Jellyfin Web checkout at $jellyfin_web_path"
+    [ -d "$jellyfin_web_directory/src" ] \
+        || fail "No Jellyfin Web source tree at $jellyfin_web_directory (src is missing)"
 
     # The decoders are build outputs of their own toolchain, so only a checkout without them builds them.
     # Only npm run build reads them, so they build in the background while npm ci and the hls.js fork build run

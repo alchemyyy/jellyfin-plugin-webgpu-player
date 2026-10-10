@@ -8,12 +8,11 @@ const ADDON_SOURCE_DIRECTORY = path.join(CLIENT_DIRECTORY, 'src');
 const TESTS_DIRECTORY = path.resolve(CLIENT_DIRECTORY, '..', 'jellyfin-webgpu-client.tests');
 // Next to the .NET build outputs in the repository's bin/; the plugin project embeds it from there
 const ADDON_OUTPUT_DIRECTORY = path.resolve(CLIENT_DIRECTORY, '..', 'bin', 'jellyfin-webgpu-client');
-// The workbench sibling of the plugin repository, used when JELLYFIN_WEB_DIR is not set
-const DEFAULT_JELLYFIN_WEB_DIRECTORY = path.resolve(CLIENT_DIRECTORY, '..', '..', 'jellyfin-web');
-
 // Submodules
 const WEBGPU_PLAYER_DIRECTORY = path.join(CLIENT_DIRECTORY, 'vendor', 'webgpu-player');
 const WEBGPU_PLAYER_HLS_DIRECTORY = path.join(CLIENT_DIRECTORY, 'vendor', 'webgpu-player-hls');
+// The pinned Jellyfin Web, used when JELLYFIN_WEB_DIR is not set
+const DEFAULT_JELLYFIN_WEB_DIRECTORY = path.join(CLIENT_DIRECTORY, 'vendor', 'jellyfin-web');
 
 // The one engine path spelled out here; the engine's layout file names the rest
 const WEBGPU_PLAYER_LAYOUT = require(path.join(WEBGPU_PLAYER_DIRECTORY, 'tools', 'constants.json'));
