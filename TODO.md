@@ -65,6 +65,61 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   Revalidation is background work with the same contention as warming, so it belongs on the gated scheduler above, or after a playback session ends until that scheduler exists.
   The engine book's `routes.md` "Probes and caching" and `decisions.md` change with it.
 
+## Playback performance
+
+- Threaded WebAssembly decoding, through cross-origin isolation.
+  Every bundled video decoder runs on one thread, so 4K software HEVC plays at 15 to 20 fps against a 23.976 fps source, and only threads close that gap.
+  Threads need SharedArrayBuffer, which needs COOP and COEP headers on Jellyfin Web's top-level document; the plugin would add them as server middleware.
+  Under `require-corp`, Jellyfin Web's YouTube trailer iframe is blocked, and the Cast sender script from gstatic needs a CORP header that Google controls.
+  `credentialless` relaxes subresources but not cross-origin iframes, and Safari lacks it, so isolation can only be an opt-in beside the non-isolated path.
+  It also needs a threaded HEVC decoder with its own qualification, such as FFmpeg's HEVC decoder with frame threads, because `@hevcjs/core` is single-threaded.
+  With isolation, a SharedArrayBuffer ring would also replace the PCM messages to the AudioWorklet.
+- One copy for Dolby Vision base and enhancement-layer pairs.
+  The pair path copies each layer into one compound buffer after the bundled decoder's drain-time copy, so a dual-layer frame is copied twice.
+  Closing it needs either the base layer's drain to reserve the enhancement layer's region, so the enhancement layer is copied straight into its paired buffer, or a frame protocol that transfers two buffers per pair, which the presenter's one-buffer check would then accept.
+- MPEG-2 and VC-1 frames are copied three times before their upload.
+  `MPEG2VC1SoftwareVideoDecoder.copyCurrentFrame` packs the planes into a new buffer, `VideoSample` copies it again, and `toVideoFrame` copies it a third time.
+  Building the VideoFrame in `emitCurrentFrame` from a view over FFmpeg's three planes, with their offsets and strides as its `layout`, leaves one copy, because the AVFrame stays valid until the next `receive_frame`.
+  The kit also builds without `-msimd128`, so FFmpeg's C fallbacks are not vectorized.
+- JPEG 2000 frames expand from RGB to RGBA in JavaScript.
+  `copyRGBToRGBA` takes about 4 ms per 2K frame and 16 ms per 4K frame, and the VideoFrame constructor then copies the RGBA again.
+  Closing it needs the engine's own OpenJPEG build, with SIMD for its wavelet transform, writing RGBA from the component planes in WebAssembly; the prebuilt `@cornerstonejs/codec-openjpeg` has no SIMD.
+  An interim fix writes one 32-bit word per pixel, about 27 percent faster, and passes `transfer` to the VideoFrame constructor.
+- Every HEVC packet is walked two to four times and its base layer rebuilt.
+  The HDR10+ queue walks the NAL units twice, and `splitDolbyVisionHEVCAccessUnit` walks them again and re-encodes the base layer into a new buffer even when it removes nothing; the AV1 splitter already returns an unchanged unit uncopied.
+  The bundled decoder also converts each packet to Annex B, scans it again for SPS units, and copies it into WebAssembly memory it allocates and frees per packet.
+  At 60 Mbps, one walk of an Annex B packet, as MPEG-TS and M2TS carry, costs about 7 ms per second.
+  Closing it needs one walk per packet shared by every consumer, the input returned unchanged when nothing is removed (or a `subarray` when only trailing RPU units are), SPS collection during the Annex B conversion into a persistent input buffer, and `transfer` to `EncodedVideoChunk` when the engine owns the buffer.
+- The DTS decoder builds without SIMD.
+  `libdcadec-dts` builds with `-O3` but without `-msimd128` or LTO.
+  Adding `-msimd128` is low risk; moving the E-AC-3 and TrueHD kits from `-Oz` to `-O3` would grow the served binaries, which costs first-load time.
+- The bundled audio decoders convert PCM in JavaScript.
+  TrueHD deinterleaves and converts its integer samples one at a time in JavaScript, and DTS converts each plane the same way.
+  Converting to planar float in the C bridges removes those loops.
+- Decoded AC-3 still decodes in the decode worker.
+  `@mediabunny/ac3` decodes inside Mediabunny's sample sink, so AC-3 on the decoded PCM route shares the decode worker's thread with video, while E-AC-3, DTS, and TrueHD decode in the audio decode worker.
+  The package exposes only its Mediabunny registration, so closing it needs the FFmpeg E-AC-3 kit built with FFmpeg's AC-3 decoder too and a codec choice in its bridge; AC-3 would then send packets as E-AC-3 does, and its qualification would move to the same kit.
+- Small per-frame and per-sample overheads.
+  The AudioWorklet scans every output sample for telemetry on its render thread (`analyzeOutput`).
+  The presenter decodes each frame's 3232-byte RPU snapshot on the main thread to check header fields the worker already validated.
+  `HEVCDecoderBackend` allocates and frees its info, count, and frame structures on every call.
+  Raw-plane frames create a bind group per frame although their texture views are stable.
+
+## Playback smoothness
+
+- The video clock jumps back 70 to 80 ms when playback starts.
+  Until `getOutputTimestamp()` returns a usable timestamp, `BrowserCustomAudioOutput.mapOutputTelemetry` falls back to the worklet's rendered position, which runs ahead of the audible one by the output latency and buffering.
+  The first correlated audio report then pulls the clock back by that amount, so the first frames hold for about two frame durations.
+  A timing trace on an Intel Arc laptop showed jumps of 72 to 81 ms against a reported output latency of 64 to 72 ms.
+  Closing it needs the uncorrelated fallback to subtract the context's `outputLatency` plus `baseLatency` when the browser reports them, so the first correlated report corrects by a few milliseconds; without them, today's behavior stays.
+- The first frames after a start or seek take 130 to 270 ms of GPU work.
+  On the same laptop, resuming 4K HDR10+ HEVC mid-GOP, the first two presented frames' GPU work took 266 and 129 ms, Chrome held back two animation frames (127 and 103 ms) without a long task, and one frame dropped.
+  Two causes are suspected, and neither is confirmed:
+  - The seek preroll decodes from the preceding keyframe to the start position as fast as the decoder returns frames, so it reaches the hardware decoder as one burst, the same contention the owned decode's packet pacing removed from steady playback.
+  - The presenter's first draw may compile its HDR pipeline in the GPU process, and the first import of decoder textures may add to it.
+  Telling them apart takes a timed run that starts at 0, with no preroll, beside one that resumes mid-GOP, or a second seek in the same session, when the pipeline is already built.
+  Closing it needs, for the preroll, a deliberately slower preroll, which trades seek time for a smoother first frame; for the pipeline, creating it with `createRenderPipelineAsync` during startup, inside the play request, before the first frame is due.
+
 ## Robustness
 
 - Single-layer RPUs that reuse a dual-layer RPU's mapping.

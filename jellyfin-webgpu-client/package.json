@@ -78,7 +78,7 @@
   "scripts": {
     "build": "node scripts/build-hls.js && node scripts/write-host-tsconfig.js && cross-env NODE_ENV=\"production\" webpack --config webpack.config.js",
     "build:development": "node scripts/build-hls.js && node scripts/write-host-tsconfig.js && webpack --config webpack.config.js",
-    "lint": "node scripts/write-host-tsconfig.js && eslint && cd ../jellyfin-webgpu-client.tests && eslint",
+    "lint": "node scripts/write-host-tsconfig.js && cd .. && eslint --concurrency=auto",
     "stylelint": "stylelint \"src/**/*.{css,scss}\"",
     "test": "node scripts/build-hls.js && node scripts/write-host-tsconfig.js && vitest --watch=false --config vitest.config.ts",
     "typecheck": "node scripts/write-host-tsconfig.js && node scripts/typecheck.js"

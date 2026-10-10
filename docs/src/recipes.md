@@ -19,7 +19,7 @@ Check: the engine's checks from its root, and the add-on checks from [The client
 ## Capture a timing trace
 
 1. In the browser console, run `localStorage.setItem('webgpuPlayerTimingTrace', '1')` and reload, so the trace runs from the first play.
-   `window.WebGPUPlayerTimingTrace.start()` also works, but a decode worker started before it sends no events.
+   `window.WebGPUPlayerTimingTrace.start()` also works, but a decode run started before it sends no events until the next seek.
 2. Play the passage that misbehaves.
 3. Run `await window.WebGPUPlayerTimingTrace.download()`, which saves `webgpu-player-timing-<start time>.json`.
    `export()` returns the same object to automation instead.

@@ -83,7 +83,8 @@ What they do:
 - Every script first writes the ignored `tsconfig.host.json`, which maps the host's module specifiers into `JELLYFIN_WEB_DIR` and the engine's `imports` into `paths`, because the add-on's `node` module resolution does not read them.
 - `typecheck` checks the add-on, its tests, and the engine sources against the host's types.
   It reports only the add-on's and the engine's diagnostics, because the host's own dependencies are not installed.
-- `lint` runs ESLint over the add-on and its tests, and over the engine's `src/` and `test/`.
+- `lint` runs ESLint once over the add-on and its tests, on worker threads (`--concurrency=auto`), through the plugin root's `eslint.config.mjs`, which applies each directory's own config below it.
+  The engine lints itself, with `npm run lint` in `vendor/webgpu-player/`.
 - `test` runs the add-on's suites; `npm test -w webgpu-player` runs the engine's.
 - `build` builds the hls.js fork when its `dist` is missing, runs the engine's asset build, copies `bin/libraries/` (engine) into the add-on's `libraries/`, and writes the add-on to `bin/jellyfin-webgpu-client/`.
 - `./build.sh` in the plugin root builds the decoders (when `bin/wasm/` (engine) is missing), the add-on, and the plugin that embeds it.

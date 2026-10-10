@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-5aa0509e.js";
+            window.path_to_searchindex_js = "searchindex-7dcde35b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04e99d7c.js"></script>
@@ -269,7 +269,8 @@ npm run build
 <li>Every script first writes the ignored <code>tsconfig.host.json</code>, which maps the host’s module specifiers into <code>JELLYFIN_WEB_DIR</code> and the engine’s <code>imports</code> into <code>paths</code>, because the add-on’s <code>node</code> module resolution does not read them.</li>
 <li><code>typecheck</code> checks the add-on, its tests, and the engine sources against the host’s types.
 It reports only the add-on’s and the engine’s diagnostics, because the host’s own dependencies are not installed.</li>
-<li><code>lint</code> runs ESLint over the add-on and its tests, and over the engine’s <code>src/</code> and <code>test/</code>.</li>
+<li><code>lint</code> runs ESLint once over the add-on and its tests, on worker threads (<code>--concurrency=auto</code>), through the plugin root’s <code>eslint.config.mjs</code>, which applies each directory’s own config below it.
+The engine lints itself, with <code>npm run lint</code> in <code>vendor/webgpu-player/</code>.</li>
 <li><code>test</code> runs the add-on’s suites; <code>npm test -w webgpu-player</code> runs the engine’s.</li>
 <li><code>build</code> builds the hls.js fork when its <code>dist</code> is missing, runs the engine’s asset build, copies <code>bin/libraries/</code> (engine) into the add-on’s <code>libraries/</code>, and writes the add-on to <code>bin/jellyfin-webgpu-client/</code>.</li>
 <li><code>./build.sh</code> in the plugin root builds the decoders (when <code>bin/wasm/</code> (engine) is missing), the add-on, and the plugin that embeds it.</li>

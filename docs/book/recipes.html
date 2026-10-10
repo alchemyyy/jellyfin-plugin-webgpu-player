@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-5aa0509e.js";
+            window.path_to_searchindex_js = "searchindex-7dcde35b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04e99d7c.js"></script>
@@ -195,7 +195,7 @@ Add the row, its expected route, and its fallbacks to <code>jellyfin-webgpu-clie
 <h2 id="capture-a-timing-trace"><a class="header" href="#capture-a-timing-trace">Capture a timing trace</a></h2>
 <ol>
 <li>In the browser console, run <code>localStorage.setItem('webgpuPlayerTimingTrace', '1')</code> and reload, so the trace runs from the first play.
-<code>window.WebGPUPlayerTimingTrace.start()</code> also works, but a decode worker started before it sends no events.</li>
+<code>window.WebGPUPlayerTimingTrace.start()</code> also works, but a decode run started before it sends no events until the next seek.</li>
 <li>Play the passage that misbehaves.</li>
 <li>Run <code>await window.WebGPUPlayerTimingTrace.download()</code>, which saves <code>webgpu-player-timing-&lt;start time&gt;.json</code>.
 <code>export()</code> returns the same object to automation instead.</li>

@@ -141,6 +141,7 @@ import WebGPUPresenter, {
     type PresentationSurface,
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
+import type { WorkerPresentationAttachment } from 'webgpu-player/presentation/WorkerPresentationProtocol';
 
 import type {
     DolbyVisionAuthorizationRoute,
@@ -2380,7 +2381,11 @@ export default class WebGPUPlayer {
                     request
                 ).then(() => undefined);
             },
-            nativeAudioBridgeFactory
+            nativeAudioBridgeFactory,
+            // Each decode worker draws its frames into a canvas of its own; the presenter declines where it cannot hand one over
+            presentationRendererProvider: (): WorkerPresentationAttachment | null => (
+                this.presenter.createWorkerPresentationAttachment(this.presentationGeneration)
+            )
         });
         controllerReference.controller = customPlaybackController;
         return customPlaybackController;
@@ -3115,7 +3120,9 @@ export default class WebGPUPlayer {
         presentationGeneration: number,
         decodedFrame: DecodedPresentationFrame
     ): 'failed' | 'presented' | 'temporarily-busy' {
-        const videoFrameSubmissionCompleted = decodedFrame.outputMode === 'video-frame' ?
+        // A VideoFrame and a frame the decode worker draws are released only once their GPU work ended
+        const releasedAfterGPUWork = decodedFrame.outputMode === 'video-frame' || decodedFrame.outputMode === 'worker-frame';
+        const videoFrameSubmissionCompleted = releasedAfterGPUWork ?
             (gpuWorkCompleted: boolean): void => {
                 this.handleDecodedVideoFrameSubmissionCompleted(
                     customPlaybackController,
