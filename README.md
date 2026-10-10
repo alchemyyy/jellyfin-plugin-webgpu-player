@@ -1,4 +1,4 @@
-# jellyfin-plugin-webgpu-player
+# WebGPU Player for Jellyfin-web
 
 ![WebGPU Player](images/jellyfin-plugin-webgpu-player-banner.png)
 
