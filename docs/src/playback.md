@@ -31,8 +31,6 @@ The engine's [Architecture](../../jellyfin-webgpu-client/vendor/webgpu-player/do
 ## Steady state
 
 - The rAF loop in `WebGPUPlayer` takes the controller's current frame and presents it.
-- `WebGPUPlayer` gives the controller a renderer provider, so each decode worker can draw its frames in a canvas the presenter hands it (see the engine's [Embedding](../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/embedding.html#presentation-in-the-worker) chapter).
-  It acknowledges a `'worker-frame'` as it does a `'video-frame'`, once the frame's GPU work completed.
 - No rAF runs while the page is hidden, so a 25 ms timer in `WebGPUPlayer` takes and discards due frames against the clock.
   Credits keep flowing and audio stays the master.
 - `WebGPUPlayer.selectDecodedAudioOutputChannelCount` returns 2 when the user forces stereo, and otherwise defers to the engine's `selectCustomAudioOutputChannelCountForMaximum`.

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-7dcde35b.js";
+            window.path_to_searchindex_js = "searchindex-5990fc34.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-04e99d7c.js"></script>
@@ -359,8 +359,6 @@ The presenter enters push mode, and <code>configurePresentationColorPipeline</co
 <h2 id="steady-state"><a class="header" href="#steady-state">Steady state</a></h2>
 <ul>
 <li>The rAF loop in <code>WebGPUPlayer</code> takes the controller’s current frame and presents it.</li>
-<li><code>WebGPUPlayer</code> gives the controller a renderer provider, so each decode worker can draw its frames in a canvas the presenter hands it (see the engine’s <a href="../../jellyfin-webgpu-client/vendor/webgpu-player/docs/book/embedding.html#presentation-in-the-worker">Embedding</a> chapter).
-It acknowledges a <code>'worker-frame'</code> as it does a <code>'video-frame'</code>, once the frame’s GPU work completed.</li>
 <li>No rAF runs while the page is hidden, so a 25 ms timer in <code>WebGPUPlayer</code> takes and discards due frames against the clock.
 Credits keep flowing and audio stays the master.</li>
 <li><code>WebGPUPlayer.selectDecodedAudioOutputChannelCount</code> returns 2 when the user forces stereo, and otherwise defers to the engine’s <code>selectCustomAudioOutputChannelCountForMaximum</code>.</li>
