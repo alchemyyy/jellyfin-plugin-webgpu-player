@@ -152,6 +152,10 @@ function getMeasuredHEVCProfiles(profile: DeviceProfile): CodecProfile[] {
     ));
 }
 
+// The stream URL the play request carries, and the media source the engine reads it as
+const STREAM_URL = 'http://localhost/Videos/range-extension/stream.mkv';
+const STREAM_SOURCE = { kind: 'url', url: STREAM_URL } as const;
+
 function createPlaybackOptions(videoStream: Record<string, unknown>): Record<string, unknown> {
     return {
         mediaSource: {
@@ -171,7 +175,8 @@ function createPlaybackOptions(videoStream: Record<string, unknown>): Record<str
         },
         playMethod: 'DirectPlay',
         playerStartPositionTicks: 0,
-        url: 'http://localhost/Videos/range-extension/stream.mkv'
+        source: STREAM_SOURCE,
+        url: STREAM_URL
     };
 }
 

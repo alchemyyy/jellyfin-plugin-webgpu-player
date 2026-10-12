@@ -249,8 +249,8 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                 rawVideoFrameFormat: customDecodeMockState.videoOutputMode === 'raw-planes' ?
                     'I420P10' :
                     null,
+                source: { kind: 'url', url: 'http://localhost/video.mp4?api_key=custom-decode-secret' },
                 startTimeMicroseconds: 1_000_000,
-                url: 'http://localhost/video.mp4?api_key=custom-decode-secret',
                 videoDecoderBackend: customDecodeMockState.videoDecoderBackend,
                 videoOutputMode: customDecodeMockState.videoOutputMode,
                 videoTrackIndex: 0
@@ -795,8 +795,8 @@ vi.mock('addons/webGPUPlayer/backend/htmlVideoPlayer/plugin', () => {
 });
 
 import { HTML_PLAYER_EVENTS } from 'addons/webGPUPlayer/HTMLPlayerDelegate';
+import { CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS } from 'webgpu-player/pipeline/CustomPlaybackFrameLoop';
 import WebGPUPlayer, {
-    CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS,
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
 import { getCustomPlaybackEligibility } from 'webgpu-player/capability/CustomPlaybackEligibility';
@@ -2849,8 +2849,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             nativeHDRTransfer: null,
             neutralizeHDRColorMetadata: false,
             rawVideoFrameFormat: null,
+            source: { kind: 'url', url: 'http://localhost/video.mp4?api_key=custom-decode-secret' },
             startTimeMicroseconds: 1_000_000,
-            url: 'http://localhost/video.mp4?api_key=custom-decode-secret',
             videoDecoderBackend: 'native',
             videoOutputMode: 'video-frame',
             videoTrackIndex: 0
@@ -2868,6 +2868,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             videoOutputMode: 'video-frame'
         });
         expect(eligibilityTelemetry).not.toHaveProperty('url');
+        expect(eligibilityTelemetry).not.toHaveProperty('source');
         expect(JSON.stringify(eligibilityTelemetry)).not.toContain('custom-decode-secret');
 
         player.currentTime(2_500);

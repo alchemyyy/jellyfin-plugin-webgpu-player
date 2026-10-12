@@ -10,7 +10,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 <a class="diagram-dark" href="diagrams/playback-layers.dark.svg"><img src="diagrams/playback-layers.dark.svg" alt="Playback layers: stock Jellyfin Web, the add-on's player, and the engine"></a>
 </div>
 
-`WebGPUPlayer`, `HTMLPlayerDelegate`, and `HtmlVideoPlayer` with its hls.js runtime are add-on code, and the rAF loop runs in `WebGPUPlayer`.
+`WebGPUPlayer`, `HTMLPlayerDelegate`, and `HtmlVideoPlayer` with its hls.js runtime are add-on code, and `WebGPUPlayer` runs the engine's frame loop, `CustomPlaybackFrameLoop`.
 The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#layers) chapter details its side of the diagram.
 
 ## Startup of a custom session
@@ -24,14 +24,14 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
    Its 25 s bound lasts until the controller starts, and the controller's own startup bound applies after that.
 3. The add-on loads the engine pipeline as the `webgpu-custom-playback` chunk.
    `HtmlVideoPlayer.prepareCustomPlayback` returns a source-less `<video>`.
-   The presenter enters push mode, and `configurePresentationColorPipeline` installs the shaders and authorizes the selected route.
+   The presenter enters push mode, and the engine's `configurePresentationColorPipeline` installs the shaders for the selected route.
 4. The engine's controller starts the session; see its [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#startup-of-a-custom-session) chapter.
-5. When the controller emits `ready` and `playing`, the rAF loop starts, `play()` resolves, and PlaybackManager emits `playbackstart`.
+5. When the controller emits `ready` and `playing`, the frame loop starts, `play()` resolves, and PlaybackManager emits `playbackstart`.
 
 ## Steady state
 
-- The rAF loop in `WebGPUPlayer` takes the controller's current frame and presents it.
-- No rAF runs while the page is hidden, so a 25 ms timer in `WebGPUPlayer` takes and discards due frames against the clock.
+- The frame loop takes the controller's current frame each animation frame and presents it.
+- No animation frame runs while the page is hidden, so the frame loop's 25 ms timer takes and discards due frames against the clock instead.
   Credits keep flowing and audio stays the master.
 - `WebGPUPlayer.selectDecodedAudioOutputChannelCount` returns 2 when the user forces stereo, and otherwise defers to the engine's `selectCustomAudioOutputChannelCountForMaximum`.
 - The add-on triggers a live audio layout switch when the output reports `sinkchange` with a different channel count, and when force stereo or the downmix algorithm changes.

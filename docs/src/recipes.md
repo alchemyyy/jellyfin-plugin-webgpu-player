@@ -7,7 +7,7 @@ Each assumes a checkout built as in [The client add-on](add-on.md#build-and-chec
 
 1. Add the route in the engine, following its "Add or change a codec route" recipe in [Recipes](https://alchemyyy.github.io/WebGPU-Player/recipes.html#add-or-change-a-codec-route).
 2. Negotiation.
-   `jellyfin-webgpu-client/src/custom/CustomDeviceProfile.ts` turns the evidence into CodecProfile conditions, and `jellyfin-webgpu-client/src/WebGPUPlayer.ts` derives the option flags and configures the color pipeline.
+   `jellyfin-webgpu-client/src/custom/CustomDeviceProfile.ts` turns the evidence into CodecProfile conditions, and the engine's `src/presentation/PresentationSetup.ts` derives the presentation option flags and configures the color pipeline.
    Container pairing stays only in `src/capability/CustomContainerCodecSupport.ts` (engine).
    Add no resolution, level, frame rate, or bitrate gate, and no decoder pair blacklist.
 3. Tests.
