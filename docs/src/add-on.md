@@ -90,6 +90,7 @@ What they do:
   It reports only the add-on's and the engine's diagnostics, because the host's own dependencies are not installed.
 - `lint` runs ESLint once over the add-on and its tests, on worker threads (`--concurrency=auto`), through the plugin root's `eslint.config.mjs`, which applies each directory's own config below it.
   The engine lints itself, with `npm run lint` in `vendor/webgpu-player/`.
+  The pinned Jellyfin Web in `vendor/jellyfin-web/` is the host's read-only source, so nothing lints it.
 - `test` runs the add-on's suites; `npm test -w webgpu-player` runs the engine's.
 - `build` builds the hls.js fork's `dist/hls.js`, the one bundle the add-on imports, when it is missing, runs the engine's asset build, copies `bin/libraries/` (engine) into the add-on's `libraries/`, and writes the add-on to `bin/jellyfin-webgpu-client/`.
 - `./build.sh` in the plugin root builds the decoders (when `bin/wasm/` (engine) is missing), the add-on, and the plugin that embeds it.
