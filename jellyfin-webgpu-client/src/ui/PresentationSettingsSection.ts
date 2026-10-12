@@ -2,6 +2,7 @@ import escapeHtml from 'escape-html';
 
 import globalize from 'lib/globalize';
 
+import { PASS_FILE_EXTENSION } from 'webgpu-player/presentation/passes/PassLanguage';
 import { parsePassManifest, PassManifestError } from 'webgpu-player/presentation/passes/PassManifest';
 import type { PassManifest, PassParameter, PassRejection, PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 import type { PresentationPresetPass } from 'webgpu-player/presentation/WebGPUPresenter';
@@ -21,7 +22,7 @@ import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } fro
 
 const HDR_OUTPUT_SETTING_KEY = 'hdrOutput';
 // The pass files the picker offers: WGSL sources, which are plain text
-const PASS_FILE_TYPES = '.wgsl,text/plain';
+const PASS_FILE_TYPES = `${PASS_FILE_EXTENSION},text/plain`;
 // A float parameter steps freely; integer parameters step by whole numbers
 const FLOAT_PARAMETER_STEP = 'any';
 const INTEGER_PARAMETER_STEP = '1';

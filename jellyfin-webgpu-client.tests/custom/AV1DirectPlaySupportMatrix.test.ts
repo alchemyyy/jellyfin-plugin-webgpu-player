@@ -316,6 +316,10 @@ function createProfile10Stream(
 // The server reports every MP4/MOV file with this probe string and matches profile containers by any token
 const MP4_PROBE_CONTAINER = 'mov,mp4,m4a,3gp,3g2,mj2';
 
+// The stream URL the play request carries, and the media source the engine reads it as
+const STREAM_URL = '/Videos/item/stream.mkv';
+const STREAM_SOURCE = { kind: 'url', url: STREAM_URL } as const;
+
 function createPlaybackOptions(
     videoStream: Readonly<Record<string, unknown>>,
     container = 'mkv'
@@ -339,7 +343,8 @@ function createPlaybackOptions(
         },
         playMethod: 'DirectPlay',
         playerStartPositionTicks: 0,
-        url: '/Videos/item/stream.mkv'
+        source: STREAM_SOURCE,
+        url: STREAM_URL
     };
 }
 
