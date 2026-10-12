@@ -614,6 +614,14 @@ function getTimingTracePlaybackSource(options: unknown): TimingTraceMetadata | n
     };
 }
 
+/** Returns the eligibility a timing trace carries, with the source reduced to its kind, since traces get shared and a stream URL holds the API key. */
+function getTimingTraceEligibility(eligibility: CustomPlaybackEligibility | null): TimingTraceMetadata | null {
+    if (!eligibility?.eligible) {
+        return eligibility;
+    }
+    return { ...eligibility, source: { kind: eligibility.source.kind } };
+}
+
 function formatRoundedMilliseconds(microseconds: Microseconds): number {
     return Math.round(microsecondsToMilliseconds(microseconds));
 }
@@ -874,7 +882,7 @@ export default class WebGPUPlayer {
     private getTimingTraceMetadata(): TimingTraceMetadata {
         return {
             controller: this.getActiveCustomPlaybackController()?.getTelemetry() ?? null,
-            eligibility: this.lastCustomPlaybackEligibility,
+            eligibility: getTimingTraceEligibility(this.lastCustomPlaybackEligibility),
             playbackSource: getTimingTracePlaybackSource(this.currentPlaybackOptions),
             presentation: this.presenter.getTelemetry()
         };

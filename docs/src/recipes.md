@@ -23,6 +23,7 @@ Check: the engine's checks from its root, and the add-on checks from [The client
 2. Play the passage that misbehaves.
 3. Run `await window.WebGPUPlayerTimingTrace.download()`, which saves `webgpu-player-timing-<start time>.json`.
    `export()` returns the same object to automation instead.
+   The playback metadata names the item and the route, with the eligibility's source reduced to its kind, so a trace holds no stream URL or API key.
 4. Run `localStorage.removeItem('webgpuPlayerTimingTrace')` when done, because a running trace keeps up to 200,000 events in memory.
 
 The engine's "Capture a timing trace" recipe in [Recipes](https://alchemyyy.github.io/WebGPU-Player/recipes.html#capture-a-timing-trace) describes the events.

@@ -795,6 +795,7 @@ vi.mock('addons/webGPUPlayer/backend/htmlVideoPlayer/plugin', () => {
 });
 
 import { HTML_PLAYER_EVENTS } from 'addons/webGPUPlayer/HTMLPlayerDelegate';
+import { installTimingTraceControl } from 'addons/webGPUPlayer/TimingTraceControl';
 import { CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS } from 'webgpu-player/pipeline/CustomPlaybackFrameLoop';
 import WebGPUPlayer, {
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
@@ -1468,6 +1469,8 @@ const RAW_PQ_ROUTE_KEY = 'I420P10:bt2020-ncl:bt2020:limited:pq';
 const RAW_SDR_ROUTE_KEY = 'I420P10:bt709:bt709:limited:sdr';
 const EXTERNAL_PQ_ROUTE_KEY = 'external-hevc-main10-bt709-limited:pq-v1';
 const EXTERNAL_HLG_ROUTE_KEY = 'external-hevc-main10-bt709-limited:hlg-v1';
+// The API key in the stream URL of the mocked eligibility's source
+const STREAM_URL_API_KEY = 'custom-decode-secret';
 
 function getLastEligibilityOptions(): Record<string, unknown> | undefined {
     return vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[2];
@@ -2820,6 +2823,29 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         await player.stop(false);
         expect(presenter.endSession).toHaveBeenCalledWith(3);
+    });
+
+    it('keeps the stream URL out of the timing trace metadata', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        installTimingTraceControl({});
+        const control = window.WebGPUPlayerTimingTrace;
+        control?.start();
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        const trace = await control?.export();
+        control?.stop();
+        control?.clear();
+        delete window.WebGPUPlayerTimingTrace;
+
+        expect(trace?.metadata.eligibility).toMatchObject({ eligible: true, source: { kind: 'url' } });
+        expect(JSON.stringify(trace?.metadata)).not.toContain(STREAM_URL_API_KEY);
     });
 
     it('uses eligible custom playback without starting the native media source', async () => {
