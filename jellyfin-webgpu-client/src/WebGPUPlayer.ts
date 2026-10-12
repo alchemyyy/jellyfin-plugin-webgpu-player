@@ -111,7 +111,7 @@ import type {
 import {
     isRawDolbyVisionVideoFrameFormat,
     type RawDolbyVisionVideoFrameFormat
-} from 'webgpu-player/color/ColorPipelineShader';
+} from 'webgpu-player/video/RawVideoFrameCopy';
 import {
     probeCachedNativeMediaAudioCapabilities,
     type NativeMediaAudioCapabilities
