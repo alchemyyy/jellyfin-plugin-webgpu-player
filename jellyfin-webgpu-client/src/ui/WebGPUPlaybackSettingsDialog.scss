@@ -189,6 +189,51 @@
         display: none;
     }
 
+    .webgpuSettingsPasses {
+        display: flex;
+        gap: 0.4em;
+        margin: 0.35em 0;
+        flex-direction: column;
+    }
+
+    .webgpuSettingsPass {
+        padding: 0.35em 0.5em;
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 0.2em;
+    }
+
+    .webgpuSettingsPassHeader {
+        display: flex;
+        gap: 0.5em;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .webgpuSettingsPassName {
+        overflow: hidden;
+        font-weight: 600;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .webgpuSettingsPassState {
+        overflow-wrap: anywhere;
+    }
+
+    .webgpuSettingsPassParameter {
+        display: grid;
+        gap: 0.5em;
+        margin-top: 0.25em;
+        align-items: center;
+        grid-template-columns: minmax(6em, 1fr) minmax(5em, 8em);
+    }
+
+    .webgpuSettingsButtonRow {
+        display: flex;
+        gap: 0.45em;
+        flex-wrap: wrap;
+    }
+
     .webgpuSettingsFooter {
         display: flex;
         gap: 0.45em;

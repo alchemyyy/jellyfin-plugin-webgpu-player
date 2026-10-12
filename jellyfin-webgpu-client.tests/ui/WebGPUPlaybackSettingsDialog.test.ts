@@ -1,12 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 import { createHDRToSDRRenderSettings } from 'webgpu-player/presentation/RenderSettings';
+import type { PresentationPresetPass } from 'webgpu-player/presentation/WebGPUPresenter';
 import type WebGPUPlayer from 'addons/webGPUPlayer/WebGPUPlayer';
-import { createDefaultWebGPUUserSettings } from 'addons/webGPUPlayer/WebGPUUserSettings';
+import {
+    createDefaultWebGPUUserSettings,
+    MAXIMUM_PRESENTATION_PASS_COUNT,
+    MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH,
+    type WebGPUUserSettings
+} from 'addons/webGPUPlayer/WebGPUUserSettings';
 import {
     CUSTOM_AUDIO_DOWNMIX_ALGORITHMS,
     DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
 } from 'webgpu-player/audio/processing/CustomAudioDownmixAlgorithm';
+import { translateSourceString } from '../host/globalizeMock';
+import {
+    BLANK_PASS_SOURCE,
+    INVERT_PASS_NAME,
+    INVERT_PASS_SOURCE,
+    MISSING_SHAPE_PASS_NAME,
+    MISSING_SHAPE_PASS_SOURCE,
+    SATURATION_PARAMETER_DEFAULT,
+    SATURATION_PARAMETER_MAXIMUM,
+    SATURATION_PARAMETER_MINIMUM,
+    SATURATION_PARAMETER_NAME,
+    SATURATION_PASS_NAME,
+    SATURATION_PASS_SOURCE,
+    STORED_SATURATION
+} from '../presentationPassSources';
 
 type AudioOutputSnapshotMock = {
     activeDeviceId: string | null
@@ -55,7 +77,8 @@ vi.mock('components/layoutManager', () => ({
 
 // Shortened texts for the audio output statuses these tests match; every other key renders its source string
 vi.mock('lib/globalize', async () => {
-    const { translateSourceString } = await import('../host/globalizeMock');
+    // The factory runs before the module's imports, so it loads the source strings itself
+    const globalizeMock = await import('../host/globalizeMock');
     const translations: Record<string, string> = {
         WebGPUAudioOutputDescription: 'System default follows operating-system output changes.',
         WebGPUAudioOutputStatusDefaultSaved: 'The system default audio output is saved.',
@@ -67,7 +90,7 @@ vi.mock('lib/globalize', async () => {
     return {
         default: {
             translate: (key: string, ...values: Array<string | number>): string => (
-                translations[key] ?? translateSourceString(key, ...values)
+                translations[key] ?? globalizeMock.translateSourceString(key, ...values)
             )
         }
     };
@@ -309,15 +332,90 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-/** Builds a player whose render and audio calls succeed, for the placement tests. */
-function createPlacementTestPlayer(): WebGPUPlayer {
+// One default button per setting the panel offers, HDR output included
+const DEFAULT_SETTING_BUTTON_COUNT = 18;
+
+// What a player reports before any shader pass runs
+const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
+
+// The step of an f32 parameter's input
+const FLOAT_PARAMETER_STEP = 'any';
+// A saturation the user types, inside the declared range
+const CHANGED_SATURATION = 1.5;
+// Rejection details and failures the presentation tests report, and the states the panel shows for them
+const INVERT_REJECTION_DETAIL = "domain 'display' after OUTPUT";
+const DUPLICATE_REJECTION_DETAIL = 'pass 3';
+const MISSING_SHAPE_HEADER_FAILURE = "header-invalid: line 1: Missing required directive 'shape'";
+const PARAMETER_PENDING_ERROR = `pass-unknown: '${SATURATION_PASS_NAME}'`;
+const HDR_OUTPUT_FAILURE = 'no HDR display';
+const SATURATION_PASS_FILE_NAME = 'saturation.wgsl';
+const INVERT_PASS_FILE_NAME = 'invert.wgsl';
+const BLANK_PASS_FILE_NAME = 'blank.wgsl';
+
+type PresentationPlayerMethods = Pick<
+    WebGPUPlayer,
+    'getPresentationPlanReport' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
+>;
+
+/** A pass the panel lists, as its name and its state text. */
+type PassRow = Readonly<{
+    name: string
+    state: string
+}>;
+
+/** Builds the presentation calls the panel makes when it opens, which succeed without passes. */
+function createPresentationPlayerMethods(): PresentationPlayerMethods {
+    return {
+        getPresentationPlanReport: vi.fn((): PlanReport => EMPTY_PLAN_REPORT),
+        setHDROutputEnabled: vi.fn((): Promise<void> => Promise.resolve()),
+        setPresentationParameter: vi.fn(),
+        setPresentationPreset: vi.fn((): Promise<PlanReport> => Promise.resolve(EMPTY_PLAN_REPORT))
+    };
+}
+
+/** Builds a player whose render and audio calls succeed, with the given presentation calls. */
+function createPresentationTestPlayer(presentationMethods: PresentationPlayerMethods): WebGPUPlayer {
     return {
         applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),
         getDetectedInputPeakNits: vi.fn(() => 1_000),
         getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
         updateAudioDownmixSettings: vi.fn(() => true),
-        updateRenderSettings: vi.fn(() => true)
+        updateRenderSettings: vi.fn(() => true),
+        ...presentationMethods
     } as unknown as WebGPUPlayer;
+}
+
+/** Builds a player whose render and audio calls succeed, for the placement tests. */
+function createPlacementTestPlayer(): WebGPUPlayer {
+    return createPresentationTestPlayer(createPresentationPlayerMethods());
+}
+
+/** Stores the presentation settings the panel loads, beside the stored settings the suite starts from. */
+function storePresentation(presentation: WebGPUUserSettings['presentation']): void {
+    storageMockState.value = JSON.stringify({ ...JSON.parse(storageMockState.value ?? '{}') as object, presentation });
+}
+
+/** Reads the presentation settings the panel saved. */
+function readSavedPresentation(): WebGPUUserSettings['presentation'] {
+    return (JSON.parse(storageMockState.value ?? '{}') as WebGPUUserSettings).presentation;
+}
+
+/** Reads each pass the panel lists, in order. */
+function readPassRows(panel: HTMLElement): PassRow[] {
+    const rows: PassRow[] = [];
+    for (const passElement of panel.querySelectorAll<HTMLElement>('.webgpuSettingsPass')) {
+        rows.push({
+            name: requirePanelElement<HTMLElement>(passElement, '.webgpuSettingsPassName').textContent,
+            state: requirePanelElement<HTMLElement>(passElement, '.webgpuSettingsPassState').textContent
+        });
+    }
+    return rows;
+}
+
+/** Chooses pass files in the panel's file input, as the file picker would. */
+function choosePassFiles(passFileInput: HTMLInputElement, files: readonly File[]): void {
+    Object.defineProperty(passFileInput, 'files', { configurable: true, value: files });
+    passFileInput.dispatchEvent(new Event('change'));
 }
 
 describe('WebGPUPlaybackSettingsPanel', () => {
@@ -402,7 +500,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 4_000),
             getRenderSettings: vi.fn(() => activeRenderSettings),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
 
         const firstOpenPromise = showWebGPUPlaybackSettingsPanel(player);
@@ -418,8 +517,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const defaultButtons = Array.from(
             panel.querySelectorAll<HTMLButtonElement>('[data-default-setting]')
         );
-        expect(defaultButtons).toHaveLength(17);
-        expect(new Set(defaultButtons.map(button => button.dataset.defaultSetting)).size).toBe(17);
+        expect(defaultButtons).toHaveLength(DEFAULT_SETTING_BUTTON_COUNT);
+        expect(new Set(defaultButtons.map(button => button.dataset.defaultSetting)).size).toBe(DEFAULT_SETTING_BUTTON_COUNT);
         expect(defaultButtons.every(button => button.textContent === 'Default')).toBe(true);
         expect(requirePanelElement<HTMLInputElement>(
             panel,
@@ -558,7 +657,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => null),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         type SavedPlayback = { playback?: { enableCustomDecode?: boolean, enableHDRToneMapping?: boolean } };
         const readSavedPlayback = (): SavedPlayback['playback'] => (
@@ -614,7 +714,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
@@ -642,7 +743,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
 
         const openPromise = toggleWebGPUPlaybackSettingsPanel(player);
@@ -670,7 +772,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         // The host's video OSD listens for wheel events on the document in the bubble phase
         const documentWheelListener = vi.fn();
@@ -862,7 +965,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => activeRenderSettings),
             updateAudioDownmixSettings,
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1022,7 +1126,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => false),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1101,7 +1206,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1165,7 +1271,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const savedSettings = storageMockState.value;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
@@ -1201,7 +1308,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => activeRenderSettings),
             updateAudioDownmixSettings,
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1247,7 +1355,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1327,7 +1436,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1409,7 +1519,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1473,7 +1584,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1523,7 +1635,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             getDetectedInputPeakNits: vi.fn(() => 1_000),
             getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
             updateAudioDownmixSettings: vi.fn(() => true),
-            updateRenderSettings: vi.fn(() => true)
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
 
         const firstPanelPromise = showWebGPUPlaybackSettingsPanel(player);
@@ -1548,5 +1661,209 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         ).value).toBe('');
         requirePanelElement<HTMLButtonElement>(secondPanel, '.webgpuSettingsClose').click();
         await secondPanelPromise;
+    });
+
+    it('lists each stored shader pass with its plan state and applies parameter changes live', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        vi.mocked(presentationMethods.getPresentationPlanReport).mockReturnValue({
+            activePasses: [ SATURATION_PASS_NAME ],
+            inactivePasses: [
+                { detail: INVERT_REJECTION_DETAIL, name: INVERT_PASS_NAME, reason: 'domain-unreachable' },
+                { detail: DUPLICATE_REJECTION_DETAIL, name: SATURATION_PASS_NAME, reason: 'duplicate-name' }
+            ]
+        });
+        storePresentation({
+            hdrOutput: false,
+            passes: [
+                { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE },
+                { parameters: {}, source: INVERT_PASS_SOURCE },
+                { parameters: {}, source: SATURATION_PASS_SOURCE },
+                { parameters: {}, source: MISSING_SHAPE_PASS_SOURCE }
+            ]
+        });
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        expect(readPassRows(panel)).toEqual([
+            { name: SATURATION_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') },
+            { name: INVERT_PASS_NAME, state: `domain-unreachable: ${INVERT_REJECTION_DETAIL}` },
+            // The plan leaves out the later of two passes with one name
+            { name: SATURATION_PASS_NAME, state: `duplicate-name: ${DUPLICATE_REJECTION_DETAIL}` },
+            { name: MISSING_SHAPE_PASS_NAME, state: MISSING_SHAPE_HEADER_FAILURE }
+        ]);
+        const parameterSelector = `[data-parameter-name="${SATURATION_PARAMETER_NAME}"]`;
+        const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-pass-index="0"]${parameterSelector}`);
+        expect(parameterInput.min).toBe(String(SATURATION_PARAMETER_MINIMUM));
+        expect(parameterInput.max).toBe(String(SATURATION_PARAMETER_MAXIMUM));
+        expect(parameterInput.step).toBe(FLOAT_PARAMETER_STEP);
+        expect(parameterInput.value).toBe(String(STORED_SATURATION));
+        expect(requirePanelElement<HTMLInputElement>(panel, `[data-pass-index="2"]${parameterSelector}`).value)
+            .toBe(String(SATURATION_PARAMETER_DEFAULT));
+
+        parameterInput.value = String(CHANGED_SATURATION);
+        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(presentationMethods.setPresentationParameter)
+            .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
+        expect(readSavedPresentation().passes[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
+        expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassParameterApplied'));
+        // The save keeps the list as it is, so the edited input keeps its focus
+        expect(parameterInput.isConnected).toBe(true);
+
+        // A pass the player does not run yet takes the saved value when its preset next applies
+        vi.mocked(presentationMethods.setPresentationParameter).mockImplementationOnce((): void => {
+            throw new RangeError(PARAMETER_PENDING_ERROR);
+        });
+        parameterInput.value = String(SATURATION_PARAMETER_MAXIMUM);
+        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(readSavedPresentation().passes[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: SATURATION_PARAMETER_MAXIMUM });
+        expect(presentationStatus.textContent)
+            .toBe(translateSourceString('WebGPUShaderPassParameterPending', PARAMETER_PENDING_ERROR));
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('adds chosen shader pass files, skipping invalid ones, and removes passes singly or all at once', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        vi.mocked(presentationMethods.setPresentationPreset)
+            .mockResolvedValueOnce({ activePasses: [ SATURATION_PASS_NAME, INVERT_PASS_NAME ], inactivePasses: [] })
+            .mockResolvedValueOnce({ activePasses: [ INVERT_PASS_NAME ], inactivePasses: [] });
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const passFileInput = requirePanelElement<HTMLInputElement>(panel, '[data-presentation-pass-files]');
+        const removePassesButton = requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsRemovePasses');
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        expect(removePassesButton.disabled).toBe(true);
+
+        const openFilePicker = vi.spyOn(passFileInput, 'click').mockImplementation((): void => undefined);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsAddPasses').click();
+        expect(openFilePicker).toHaveBeenCalledTimes(1);
+        choosePassFiles(passFileInput, [
+            new File([ SATURATION_PASS_SOURCE ], SATURATION_PASS_FILE_NAME),
+            new File([ BLANK_PASS_SOURCE ], BLANK_PASS_FILE_NAME),
+            new File([ INVERT_PASS_SOURCE ], INVERT_PASS_FILE_NAME)
+        ]);
+        await flushMicrotasks();
+
+        const addedPasses: PresentationPresetPass[] = [
+            { parameters: {}, source: SATURATION_PASS_SOURCE },
+            { parameters: {}, source: INVERT_PASS_SOURCE }
+        ];
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(addedPasses);
+        expect(readSavedPresentation().passes).toEqual(addedPasses);
+        expect(readPassRows(panel)).toEqual([
+            { name: SATURATION_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') },
+            { name: INVERT_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') }
+        ]);
+        expect(presentationStatus.textContent).toBe(translateSourceString(
+            'WebGPUJoinedSentences',
+            translateSourceString(
+                'WebGPUShaderPassFilesSkipped',
+                BLANK_PASS_FILE_NAME,
+                MAXIMUM_PRESENTATION_PASS_COUNT,
+                MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH
+            ),
+            translateSourceString('WebGPUShaderPassesSummary', addedPasses.length, 0)
+        ));
+        expect(removePassesButton.disabled).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-remove-pass="0"]').click();
+        await flushMicrotasks();
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(addedPasses.slice(1));
+        expect(readPassRows(panel)).toEqual([
+            { name: INVERT_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') }
+        ]);
+
+        removePassesButton.click();
+        await flushMicrotasks();
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([]);
+        expect(readSavedPresentation().passes).toEqual([]);
+        expect(readPassRows(panel)).toEqual([]);
+        expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassesNone'));
+        expect(removePassesButton.disabled).toBe(true);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('ignores a shader pass result that a newer change superseded', async () => {
+        let resolveAddedPreset: (report: PlanReport) => void = (report: PlanReport): void => {
+            throw new Error(`Missing preset resolver for ${report.activePasses.join(', ')}`);
+        };
+        const presentationMethods = createPresentationPlayerMethods();
+        vi.mocked(presentationMethods.setPresentationPreset).mockImplementationOnce((): Promise<PlanReport> => (
+            new Promise<PlanReport>((resolve): void => {
+                resolveAddedPreset = resolve;
+            })
+        ));
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        choosePassFiles(
+            requirePanelElement<HTMLInputElement>(panel, '[data-presentation-pass-files]'),
+            [ new File([ SATURATION_PASS_SOURCE ], SATURATION_PASS_FILE_NAME) ]
+        );
+        await flushMicrotasks();
+        expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassesApplying'));
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsRemovePasses').click();
+        await flushMicrotasks();
+        resolveAddedPreset({ activePasses: [ SATURATION_PASS_NAME ], inactivePasses: [] });
+        await flushMicrotasks();
+
+        expect(readPassRows(panel)).toEqual([]);
+        expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassesNone'));
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('saves HDR output, applies it live, and restores its default', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        expect(HDROutputCheckbox.checked).toBe(false);
+
+        HDROutputCheckbox.checked = true;
+        HDROutputCheckbox.dispatchEvent(new Event('change'));
+        await flushMicrotasks();
+        expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(true);
+        expect(readSavedPresentation().hdrOutput).toBe(true);
+        expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUHDROutputApplied'));
+
+        vi.mocked(presentationMethods.setHDROutputEnabled).mockRejectedValueOnce(new Error(HDR_OUTPUT_FAILURE));
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="hdrOutput"]').click();
+        await flushMicrotasks();
+        expect(HDROutputCheckbox.checked).toBe(false);
+        expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(false);
+        expect(readSavedPresentation().hdrOutput).toBe(false);
+        expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUHDROutputFailed', HDR_OUTPUT_FAILURE));
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('restores and reapplies the presentation defaults on reset all', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        storePresentation({ hdrOutput: true, passes: [ { parameters: {}, source: INVERT_PASS_SOURCE } ] });
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
+        expect(HDROutputCheckbox.checked).toBe(true);
+        expect(readPassRows(panel)).toHaveLength(1);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll').click();
+        await flushMicrotasks();
+
+        const defaultPresentation = createDefaultWebGPUUserSettings().presentation;
+        expect(readSavedPresentation()).toEqual(defaultPresentation);
+        expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(defaultPresentation.hdrOutput);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(defaultPresentation.passes);
+        expect(HDROutputCheckbox.checked).toBe(defaultPresentation.hdrOutput);
+        expect(readPassRows(panel)).toEqual([]);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
     });
 });

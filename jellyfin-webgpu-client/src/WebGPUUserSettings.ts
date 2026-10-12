@@ -12,11 +12,22 @@ import {
     createDefaultAudioDownmixSettings,
     type AudioDownmixSettings
 } from 'webgpu-player/audio/processing/CustomAudioDownmix';
+import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
+import type { PresentationPresetPass } from 'webgpu-player/presentation/WebGPUPresenter';
 
-export const WEBGPU_USER_SETTINGS_VERSION = 2;
+export const WEBGPU_USER_SETTINGS_VERSION = 3;
 export const WEBGPU_USER_SETTINGS_STORAGE_KEY = 'webGPUPlaybackSettings';
-const PREVIOUS_WEBGPU_USER_SETTINGS_VERSION = 1;
+// The versions the settings migrate from: version 1 had no audio output device, and neither had presentation settings
+const PREVIOUS_WEBGPU_USER_SETTINGS_VERSIONS: readonly unknown[] = [ 1, 2 ];
+const FIRST_AUDIO_OUTPUT_DEVICE_SETTINGS_VERSION = 2;
 const MAXIMUM_AUDIO_OUTPUT_DEVICE_ID_LENGTH = 1_024;
+/** The shader passes a preset holds at most. */
+export const MAXIMUM_PRESENTATION_PASS_COUNT = 16;
+/** The characters one pass's source holds at most, which keeps a full preset well inside local storage. */
+export const MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH = 262_144;
+/** The characters a stored parameter name holds at most; a longer name is no identifier a pass would declare, so it is dropped. */
+export const MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH = 256;
+const NULL_CHARACTER = '\0';
 
 export type WebGPUUserSettings = Readonly<{
     audio: Readonly<{
@@ -28,6 +39,11 @@ export type WebGPUUserSettings = Readonly<{
     playback: Readonly<{
         enableCustomDecode: boolean
         enableHDRToneMapping: boolean
+    }>
+    // Both apply live: the presenter replans the active session and keeps them for later ones
+    presentation: Readonly<{
+        hdrOutput: boolean
+        passes: readonly PresentationPresetPass[]
     }>
     render: Readonly<{
         automaticInputPeakNits: boolean
@@ -63,7 +79,7 @@ function normalizeAudioOutputDeviceId(value: unknown): string | null {
     }
     if (typeof value !== 'string'
         || value.length > MAXIMUM_AUDIO_OUTPUT_DEVICE_ID_LENGTH
-        || value.includes('\0')) {
+        || value.includes(NULL_CHARACTER)) {
         return null;
     }
     return value;
@@ -79,6 +95,53 @@ function normalizeNumber(
         return fallback;
     }
     return Math.min(Math.max(value, minimum), maximum);
+}
+
+/** Returns whether a value can be a stored pass source: nonblank text within the size limit, without null characters. */
+export function isPresentationPassSource(value: unknown): value is string {
+    return typeof value === 'string'
+        && value.trim().length > 0
+        && value.length <= MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH
+        && !value.includes(NULL_CHARACTER);
+}
+
+/** Keeps a pass's finite parameter values under nonblank names, up to the parameters a pass declares at most. */
+function normalizePresentationParameters(value: unknown): Readonly<Record<string, number>> {
+    const parameterEntries: Array<[string, number]> = [];
+    if (!isRecord(value)) {
+        return Object.fromEntries(parameterEntries);
+    }
+    for (const [ name, parameterValue ] of Object.entries(value)) {
+        if (parameterEntries.length >= MAXIMUM_PARAMETER_COUNT) {
+            break;
+        }
+        if (name.trim().length === 0
+            || name.length > MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH
+            || typeof parameterValue !== 'number'
+            || !Number.isFinite(parameterValue)) {
+            continue;
+        }
+        parameterEntries.push([ name, parameterValue ]);
+    }
+    return Object.fromEntries(parameterEntries);
+}
+
+/** Keeps the stored passes that hold a valid source, in order, up to the passes a preset holds at most. */
+function normalizePresentationPasses(value: unknown): PresentationPresetPass[] {
+    const passes: PresentationPresetPass[] = [];
+    if (!Array.isArray(value)) {
+        return passes;
+    }
+    for (const candidate of value) {
+        if (passes.length >= MAXIMUM_PRESENTATION_PASS_COUNT) {
+            break;
+        }
+        if (!isRecord(candidate) || !isPresentationPassSource(candidate.source)) {
+            continue;
+        }
+        passes.push({ parameters: normalizePresentationParameters(candidate.parameters), source: candidate.source });
+    }
+    return passes;
 }
 
 function normalizeToneMapOperator(value: unknown, fallback: ToneMapOperator): ToneMapOperator {
@@ -104,6 +167,10 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
             enableCustomDecode: true,
             enableHDRToneMapping: true
         },
+        presentation: {
+            hdrOutput: false,
+            passes: []
+        },
         render: {
             automaticInputPeakNits: true,
             settings: createHDRToSDRRenderSettings()
@@ -117,7 +184,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
     const defaults = createDefaultWebGPUUserSettings();
     if (!isRecord(value)
         || (value.version !== WEBGPU_USER_SETTINGS_VERSION
-            && value.version !== PREVIOUS_WEBGPU_USER_SETTINGS_VERSION)) {
+            && !PREVIOUS_WEBGPU_USER_SETTINGS_VERSIONS.includes(value.version))) {
         return defaults;
     }
 
@@ -191,6 +258,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
     const downmix = getRecord(audio, 'downmix');
     const defaultDownmix = defaults.audio.downmix;
     const playback = getRecord(value, 'playback');
+    const presentation = getRecord(value, 'presentation');
     return {
         audio: {
             downmix: {
@@ -218,7 +286,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
                 audio.forceStereoDownmix,
                 defaults.audio.forceStereoDownmix
             ),
-            outputDeviceId: value.version === WEBGPU_USER_SETTINGS_VERSION ?
+            outputDeviceId: typeof value.version === 'number' && value.version >= FIRST_AUDIO_OUTPUT_DEVICE_SETTINGS_VERSION ?
                 normalizeAudioOutputDeviceId(audio.outputDeviceId) :
                 null
         },
@@ -231,6 +299,10 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
                 playback.enableHDRToneMapping,
                 defaults.playback.enableHDRToneMapping
             )
+        },
+        presentation: {
+            hdrOutput: normalizeBoolean(presentation.hdrOutput, defaults.presentation.hdrOutput),
+            passes: normalizePresentationPasses(presentation.passes)
         },
         render: {
             automaticInputPeakNits: normalizeBoolean(
