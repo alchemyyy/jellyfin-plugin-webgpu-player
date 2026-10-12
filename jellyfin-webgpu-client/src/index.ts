@@ -1,6 +1,6 @@
 import { configureEngineAssets } from 'webgpu-player/EngineAssets';
 import { configureEngineFeatureFlags } from 'webgpu-player/EngineConfiguration';
-import 'webgpu-player/style.scss';
+import 'webgpu-player/style.css';
 
 import { installHostCompatibleMode } from './compat/HostCompatibleMode';
 import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
