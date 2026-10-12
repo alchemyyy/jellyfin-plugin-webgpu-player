@@ -7,8 +7,14 @@ vi.mock('scripts/settings/userSettings', () => ({
     }
 }));
 
+import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
+import type { PresentationPresetPass } from 'webgpu-player/presentation/WebGPUPresenter';
 import {
+    MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH,
+    MAXIMUM_PRESENTATION_PASS_COUNT,
+    MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH,
     WEBGPU_USER_SETTINGS_STORAGE_KEY,
+    WEBGPU_USER_SETTINGS_VERSION,
     createConfiguredHDRRenderSettings,
     createDefaultWebGPUUserSettings,
     loadWebGPUUserSettings,
@@ -18,6 +24,25 @@ import {
     saveWebGPUUserSettings,
     type WebGPUUserSettingsStorage
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
+import {
+    BLANK_PASS_SOURCE,
+    INVERT_PASS_SOURCE,
+    SATURATION_PARAMETER_NAME,
+    SATURATION_PASS_SOURCE,
+    STORED_SATURATION
+} from './presentationPassSources';
+
+const SELECTED_OUTPUT_DEVICE_ID = 'selected-output';
+// Version 2 stored the audio output device but no presentation settings
+const SETTINGS_VERSION_BEFORE_PRESENTATION = 2;
+// Stored parameter names and values that no pass parameter can have
+const BLANK_PARAMETER_NAME = ' ';
+const OVERSIZED_PARAMETER_NAME = 'p'.repeat(MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH + 1);
+const NON_FINITE_PARAMETER_VALUE = Number.POSITIVE_INFINITY;
+const TEXT_PARAMETER_VALUE = '0.5';
+// Stored pass sources that no pass may hold
+const NULL_CHARACTER_PASS_SOURCE = `${INVERT_PASS_SOURCE}\0`;
+const OVERSIZED_PASS_SOURCE = INVERT_PASS_SOURCE.padEnd(MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH + 1, ' ');
 
 function createStorage(initialValue: string | null = null): WebGPUUserSettingsStorage {
     let value = initialValue;
@@ -60,7 +85,7 @@ describe('WebGPUUserSettings', () => {
                     surroundLevel: -2
                 },
                 forceStereoDownmix: true,
-                outputDeviceId: 'selected-output'
+                outputDeviceId: SELECTED_OUTPUT_DEVICE_ID
             },
             render: {
                 automaticInputPeakNits: false,
@@ -117,6 +142,10 @@ describe('WebGPUUserSettings', () => {
                 ...settings.audio,
                 forceStereoDownmix: true,
                 outputDeviceId: 'per-origin-output-id'
+            },
+            presentation: {
+                hdrOutput: true,
+                passes: [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE } ]
             }
         };
 
@@ -136,7 +165,7 @@ describe('WebGPUUserSettings', () => {
                     centerLevel: 0.5
                 },
                 forceStereoDownmix: true,
-                outputDeviceId: 'selected-output'
+                outputDeviceId: SELECTED_OUTPUT_DEVICE_ID
             },
             render: {
                 ...defaults.render,
@@ -152,8 +181,85 @@ describe('WebGPUUserSettings', () => {
                 outputDeviceId: null
             },
             render: { automaticInputPeakNits: false },
-            version: 2
+            version: WEBGPU_USER_SETTINGS_VERSION
         });
+    });
+
+    it('migrates v2 settings with their output device and default presentation settings', () => {
+        const defaults = createDefaultWebGPUUserSettings();
+        const migrated = normalizeWebGPUUserSettings({
+            audio: { ...defaults.audio, outputDeviceId: SELECTED_OUTPUT_DEVICE_ID },
+            playback: defaults.playback,
+            render: defaults.render,
+            version: SETTINGS_VERSION_BEFORE_PRESENTATION
+        });
+
+        expect(migrated.audio.outputDeviceId).toBe(SELECTED_OUTPUT_DEVICE_ID);
+        expect(migrated.presentation).toEqual(defaults.presentation);
+        expect(migrated.version).toBe(WEBGPU_USER_SETTINGS_VERSION);
+    });
+
+    it('keeps valid stored shader passes in order and drops invalid passes and parameters', () => {
+        const defaults = createDefaultWebGPUUserSettings();
+        const normalized = normalizeWebGPUUserSettings({
+            ...defaults,
+            presentation: {
+                hdrOutput: true,
+                passes: [
+                    {
+                        parameters: {
+                            [SATURATION_PARAMETER_NAME]: STORED_SATURATION,
+                            [BLANK_PARAMETER_NAME]: STORED_SATURATION,
+                            [OVERSIZED_PARAMETER_NAME]: STORED_SATURATION,
+                            nonFinite: NON_FINITE_PARAMETER_VALUE,
+                            text: TEXT_PARAMETER_VALUE
+                        },
+                        source: SATURATION_PASS_SOURCE
+                    },
+                    { parameters: {}, source: BLANK_PASS_SOURCE },
+                    { parameters: {}, source: NULL_CHARACTER_PASS_SOURCE },
+                    { parameters: {}, source: OVERSIZED_PASS_SOURCE },
+                    { parameters: {} },
+                    INVERT_PASS_SOURCE,
+                    // Parameters that are not a record are dropped, not the pass
+                    { parameters: [ STORED_SATURATION ], source: INVERT_PASS_SOURCE }
+                ]
+            }
+        });
+        const malformed = normalizeWebGPUUserSettings({
+            ...defaults,
+            presentation: { hdrOutput: String(true), passes: INVERT_PASS_SOURCE }
+        });
+
+        expect(normalized.presentation).toEqual({
+            hdrOutput: true,
+            passes: [
+                { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE },
+                { parameters: {}, source: INVERT_PASS_SOURCE }
+            ]
+        });
+        expect(malformed.presentation).toEqual(defaults.presentation);
+    });
+
+    it('caps stored shader passes and their parameters at the first ones within the limits', () => {
+        const parameters: Record<string, number> = {};
+        for (let parameterIndex = 0; parameterIndex <= MAXIMUM_PARAMETER_COUNT; parameterIndex += 1) {
+            parameters[`parameter${parameterIndex}`] = parameterIndex;
+        }
+        const passes: PresentationPresetPass[] = [];
+        for (let passIndex = 0; passIndex <= MAXIMUM_PRESENTATION_PASS_COUNT; passIndex += 1) {
+            // A trailing comment keeps each source distinct, so the kept passes show their order
+            passes.push({ parameters, source: `${INVERT_PASS_SOURCE}// ${passIndex}\n` });
+        }
+        const normalized = normalizeWebGPUUserSettings({
+            ...createDefaultWebGPUUserSettings(),
+            presentation: { hdrOutput: false, passes }
+        });
+
+        expect(normalized.presentation.passes.map((pass: PresentationPresetPass): string => pass.source))
+            .toEqual(passes.slice(0, MAXIMUM_PRESENTATION_PASS_COUNT).map((pass: PresentationPresetPass): string => pass.source));
+        expect(Object.keys(normalized.presentation.passes[0].parameters))
+            .toEqual(Object.keys(parameters).slice(0, MAXIMUM_PARAMETER_COUNT));
     });
 
     it('enables both playback features unless this browser stored a boolean choice', () => {
@@ -173,15 +279,18 @@ describe('WebGPUUserSettings', () => {
         }).playback).toEqual({ enableCustomDecode: false, enableHDRToneMapping: true });
     });
 
-    it('keeps playback preferences across render and audio resets', () => {
+    it('keeps playback and presentation preferences across render and audio resets', () => {
         const defaults = createDefaultWebGPUUserSettings();
         const changed = normalizeWebGPUUserSettings({
             ...defaults,
-            playback: { enableCustomDecode: false, enableHDRToneMapping: false }
+            playback: { enableCustomDecode: false, enableHDRToneMapping: false },
+            presentation: { hdrOutput: true, passes: [ { parameters: {}, source: INVERT_PASS_SOURCE } ] }
         });
 
         expect(resetWebGPURenderSettings(changed).playback).toEqual(changed.playback);
         expect(resetWebGPUAudioSettings(changed).playback).toEqual(changed.playback);
+        expect(resetWebGPURenderSettings(changed).presentation).toEqual(changed.presentation);
+        expect(resetWebGPUAudioSettings(changed).presentation).toEqual(changed.presentation);
     });
 
     it('rejects malformed and synthetic output device IDs', () => {
@@ -236,7 +345,7 @@ describe('WebGPUUserSettings', () => {
                     version: 1
                 },
                 forceStereoDownmix: true,
-                outputDeviceId: 'selected-output'
+                outputDeviceId: SELECTED_OUTPUT_DEVICE_ID
             },
             render: {
                 automaticInputPeakNits: false,

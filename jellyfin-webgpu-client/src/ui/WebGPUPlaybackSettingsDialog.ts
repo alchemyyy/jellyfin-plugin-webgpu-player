@@ -7,6 +7,12 @@ import { handleCommand } from 'scripts/inputManager';
 import type { AddonStringKey } from '../host/globalize';
 import { webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
 import { scheduleSelectLabelFallback } from './SelectLabelFallback';
+import {
+    bindPresentationSection,
+    createPresentationSectionHTML,
+    type PresentationSectionController
+} from './PresentationSettingsSection';
+import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
 import 'elements/emby-button/emby-button';
 import 'elements/emby-button/paper-icon-button-light';
@@ -95,7 +101,6 @@ type ActivePanel = {
 // - shown: asked, and shown since
 type PlaybackInfoRequest = 'none' | 'pending' | 'shown';
 
-const HIDDEN_CLASS = 'hide';
 const PLAYBACK_INFO_GAP_PX = 8;
 const PLAYBACK_INFO_CLASS = 'playerStats';
 const PLAYBACK_INFO_SELECTOR = `.${PLAYBACK_INFO_CLASS}`;
@@ -283,22 +288,6 @@ function updateNumericSetting(
     }
 }
 
-/** Translates a key for the panel's HTML, escaped because translations may contain markup characters. */
-function translateToHTML(key: string, ...replacements: unknown[]): string {
-    return escapeHtml(globalize.translate(key, ...replacements));
-}
-
-function createDefaultButtonHTML(settingKey: DefaultSettingKey, settingName: string): string {
-    return `
-        <button
-            aria-label="${translateToHTML('WebGPURestoreSettingDefault', settingName)}"
-            class="raised webgpuSettingsDefaultButton"
-            data-default-setting="${settingKey}"
-            is="emby-button"
-            type="button"
-        >${translateToHTML('Default')}</button>`;
-}
-
 function createNumericControlHTML(configuration: NumericControlConfiguration): string {
     const settingKey = configuration.key;
     const range = configuration.range;
@@ -452,6 +441,8 @@ function createPanelHTML(): string {
                     >${translateToHTML('WebGPUResetToneMappingAndDisplay')}</button>
                 </section>
 
+                ${createPresentationSectionHTML()}
+
                 <section class="webgpuSettingsSection" aria-labelledby="webgpu-audio-title">
                     <h3 class="webgpuSettingsSectionTitle" id="webgpu-audio-title">
                         ${translateToHTML('WebGPUAudioOutputAndDownmix')}
@@ -567,10 +558,6 @@ function requireElement<ElementType extends Element>(parent: ParentNode, selecto
         throw new Error(`WebGPU settings panel is missing ${selector}`);
     }
     return element;
-}
-
-function setStatus(element: HTMLElement, message: string): void {
-    element.textContent = message;
 }
 
 function getAudioOutputMessageTranslationKey(messageCode: WebGPUAudioOutputMessageCode): AddonStringKey {
@@ -745,6 +732,8 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     let renderFrameRequest: number | null = null;
     let audioOutputSelectionRevision = 0;
     let panelActive = true;
+    // Bound once persistSettings exists, which its saves go through
+    let presentationSection: PresentationSectionController | null = null;
 
     const invalidatePendingAudioOutputSelection = (): void => {
         audioOutputSelectionRevision += 1;
@@ -815,6 +804,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         const inputPeakNumber = requireElement<HTMLInputElement>(panel, '[data-setting-number="inputPeakNits"]');
         inputPeakSlider.disabled = settings.render.automaticInputPeakNits;
         inputPeakNumber.disabled = settings.render.automaticInputPeakNits;
+        presentationSection?.synchronize();
     };
 
     const applyRenderSettings = (): void => {
@@ -851,6 +841,18 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         settings = saveWebGPUUserSettings(settings);
         synchronizeControls();
     };
+
+    presentationSection = bindPresentationSection({
+        cleanupCallbacks,
+        getSettings: (): WebGPUUserSettings => settings,
+        isActive: (): boolean => panelActive,
+        panel,
+        player,
+        saveSettings: (nextSettings: WebGPUUserSettings): void => {
+            settings = nextSettings;
+            persistSettings();
+        }
+    });
 
     const commitAudioOutputDevice = (deviceId: string | null): void => {
         settings = normalizeWebGPUUserSettings({
@@ -1134,6 +1136,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         synchronizeAudioOutputControls(audioOutputManager.getSnapshot());
         scheduleRenderSettings();
         applyAudioDownmixSettings(true);
+        presentationSection?.apply();
         setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
     };
     resetAllButton.addEventListener('click', onResetAll);

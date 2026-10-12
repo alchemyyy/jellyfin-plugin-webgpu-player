@@ -22,6 +22,13 @@ import type {
     NativeMediaAudioLayoutCapability
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
+import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import {
+    SATURATION_PARAMETER_NAME,
+    SATURATION_PASS_NAME,
+    SATURATION_PASS_SOURCE,
+    STORED_SATURATION
+} from './presentationPassSources';
 
 type MockAudioEligibilityOverride = {
     audioOutputMode?: 'native-media'
@@ -596,6 +603,10 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
             version: RENDER_SETTINGS_VERSION
         }));
         updateRenderSettings = vi.fn(() => true);
+        setHDROutputEnabled = vi.fn((): Promise<void> => Promise.resolve());
+        setPresentationPreset = vi.fn((): Promise<PlanReport> => Promise.resolve({ activePasses: [], inactivePasses: [] }));
+        setPresentationParameter = vi.fn();
+        getPresentationPlanReport = vi.fn((): PlanReport => ({ activePasses: [], inactivePasses: [] }));
         prewarmRawHDRPresentationAuthorization = vi.fn(() => Promise.resolve());
         prewarmRawSDRPresentationAuthorization = vi.fn(() => Promise.resolve());
         waitForRawHDRAuthorizationPrewarm = vi.fn(() => Promise.resolve());
@@ -858,6 +869,7 @@ type MockPresenter = {
     endSession: MockFunction
     fallbackHandler: (generation: number) => void
     getDolbyVisionAuthorizationTelemetry: MockFunction
+    getPresentationPlanReport: MockFunction
     getRenderSettings: MockFunction
     getTelemetry: MockFunction
     isRawDolbyVisionPresentationAuthorized: MockFunction
@@ -869,6 +881,9 @@ type MockPresenter = {
     prewarmDolbyVisionPresentationAuthorization: MockFunction
     prewarmExternalHDRPresentationAuthorization: MockFunction
     setDecodedFramePushMode: MockFunction
+    setHDROutputEnabled: MockFunction
+    setPresentationParameter: MockFunction
+    setPresentationPreset: MockFunction
     startSession: MockFunction
     updateRenderSettings: MockFunction
     waitForDolbyVisionAuthorizationPrewarm: MockFunction
@@ -1574,6 +1589,25 @@ describe('WebGPUPlayer HTML delegation', () => {
             fallbackBitrate: 25_000_000,
             purpose: 'transcode-output'
         })).toBe(25_000_000);
+    });
+
+    it('hands the stored HDR output and shader passes to its presenter and delegates live changes', () => {
+        const presentation = {
+            hdrOutput: true,
+            passes: [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE } ]
+        };
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({ ...createDefaultWebGPUUserSettings(), presentation });
+
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        expect(presenter.setHDROutputEnabled).toHaveBeenCalledWith(presentation.hdrOutput);
+        expect(presenter.setPresentationPreset).toHaveBeenCalledWith(presentation.passes);
+
+        player.setPresentationParameter(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, STORED_SATURATION);
+        player.getPresentationPlanReport();
+        expect(presenter.setPresentationParameter)
+            .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, STORED_SATURATION);
+        expect(presenter.getPresentationPlanReport).toHaveBeenCalledTimes(1);
     });
 
     it('keeps player selection synchronous and safe when called unbound', () => {

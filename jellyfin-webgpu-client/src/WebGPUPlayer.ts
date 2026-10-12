@@ -138,9 +138,11 @@ import WebGPUPresenter, {
     type DecodedPresentationFrame,
     type DolbyVisionReconstructionTarget,
     type PresentationFallbackReason,
+    type PresentationPresetPass,
     type PresentationSurface,
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
+import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 
 import type {
     DolbyVisionAuthorizationRoute,
@@ -982,6 +984,7 @@ export default class WebGPUPlayer {
         const audioOutputManager = initializeWebGPUAudioOutputManager();
         this.htmlDelegate = new HTMLPlayerDelegate(this, this.handleBackendStopped, this.handleBackendError, audioOutputManager);
         this.presenter = new WebGPUPresenter(this.handlePresentationFallback, this.handleDecodedPresentationRefresh);
+        this.applyPresentationSettings(loadWebGPUUserSettings());
         if (typeof document !== 'undefined') {
             document.addEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
@@ -1834,6 +1837,36 @@ export default class WebGPUPlayer {
     /** Returns the native Main10 external-texture authorization results per route key on the current GPU device and canvas format. */
     getExternalHDRAuthorizationTelemetry(): ExternalHDRAuthorizationTelemetry {
         return this.presenter.getExternalHDRAuthorizationTelemetry();
+    }
+
+    /** Hands the user's HDR output choice and shader passes to the presenter, which keeps them across sessions. */
+    private applyPresentationSettings(settings: WebGPUUserSettings): void {
+        void this.setHDROutputEnabled(settings.presentation.hdrOutput).catch((error: unknown): void => {
+            console.warn(`WebGPU HDR output failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        void this.setPresentationPreset(settings.presentation.passes).catch((error: unknown): void => {
+            console.warn(`WebGPU shader passes failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
+
+    /** Replaces the user's shader passes, in order; resolves with the report of the passes that run and those left out. */
+    setPresentationPreset(passes: readonly PresentationPresetPass[]): Promise<PlanReport> {
+        return this.presenter.setPresentationPreset(passes);
+    }
+
+    /** Changes one parameter of a running shader pass live; throws a RangeError naming what failed. */
+    setPresentationParameter(passName: string, parameterName: string, value: number): void {
+        this.presenter.setPresentationParameter(passName, parameterName, value);
+    }
+
+    /** Returns the passes the active plan runs and those it leaves out, with the failed check and a detail. */
+    getPresentationPlanReport(): PlanReport {
+        return this.presenter.getPresentationPlanReport();
+    }
+
+    /** Selects HDR output for HDR sources on HDR displays; resolves once the presenter runs it. */
+    setHDROutputEnabled(enabled: boolean): Promise<void> {
+        return this.presenter.setHDROutputEnabled(enabled);
     }
 
     /** Applies live HDR display controls without rebuilding the shader pipeline. */
@@ -3751,7 +3784,7 @@ export default class WebGPUPlayer {
         }, DEFERRED_RENEGOTIATION_ERROR_DELAY_MILLISECONDS);
     }
 
-    private readonly handlePresentationFallback = (generation: number, reason: PresentationFallbackReason): void => {
+    private readonly handlePresentationFallback = (generation: number, reason: PresentationFallbackReason, detail: string): void => {
         if (generation !== this.presentationGeneration) {
             return;
         }
@@ -3768,7 +3801,7 @@ export default class WebGPUPlayer {
                 preserveHTMLSession: true,
                 reason: 'lifecycle-failed'
             };
-            console.warn(`Custom playback presentation failed: ${reason}`);
+            console.warn(`Custom playback presentation failed: ${reason}: ${detail}`);
             void this.requestCustomPlaybackFallback(customPlaybackController, this.backendSessionGeneration, request);
         }
     };

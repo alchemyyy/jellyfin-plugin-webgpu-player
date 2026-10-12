@@ -55,9 +55,13 @@ The add-on supplies each one itself:
 
 Every setting is local to the browser profile.
 
-- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, and the playback preferences in localStorage under `<userId>-webGPUPlaybackSettings` (version 2).
+- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, and the presentation settings in localStorage under `<userId>-webGPUPlaybackSettings` (version 3).
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
+- The presentation settings are HDR output, off by default, and the user's WGSL shader passes in order, each with its source and parameter values.
+  A preset holds at most 16 passes of at most 262,144 characters each.
+  They apply live: `WebGPUPlayer` hands them to the engine's presenter at construction and on every change, and the presenter keeps them across sessions.
+- The settings panel shows each pass's state from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
 - The player preference (Auto, WebGPU, or HTML) is the user setting `preferredVideoPlayer`, stored as `<userId>-preferredVideoPlayer`.
 
 ## Build and check
