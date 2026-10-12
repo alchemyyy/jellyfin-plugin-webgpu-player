@@ -48,6 +48,8 @@ export const sharedConfigs = tseslint.config(
             // The WebGPU player engine and its hls.js fork are submodules that lint themselves
             toClientPattern(constants.WEBGPU_PLAYER_DIRECTORY),
             toClientPattern(constants.WEBGPU_PLAYER_HLS_DIRECTORY),
+            // The pinned Jellyfin Web is the read-only host source tree
+            toClientPattern(constants.DEFAULT_JELLYFIN_WEB_DIRECTORY),
             '.idea',
             '.vscode'
         ]
