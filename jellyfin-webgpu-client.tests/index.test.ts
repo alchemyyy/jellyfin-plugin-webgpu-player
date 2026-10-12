@@ -20,7 +20,7 @@ vi.mock('webgpu-player/EngineAssets', () => ({ configureEngineAssets: testState.
 vi.mock('webgpu-player/EngineConfiguration', () => ({
     configureEngineFeatureFlags: testState.configureEngineFeatureFlags
 }));
-vi.mock('webgpu-player/style.scss', () => ({}));
+vi.mock('webgpu-player/style.css', () => ({}));
 vi.mock('addons/webGPUPlayer/WebGPUPlaybackPreferences', () => ({
     getWebGPUHDRToneMappingEnabled: testState.getWebGPUHDRToneMappingEnabled
 }));
