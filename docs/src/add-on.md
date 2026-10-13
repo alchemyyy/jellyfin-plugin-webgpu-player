@@ -55,13 +55,20 @@ The add-on supplies each one itself:
 
 Every setting is local to the browser profile.
 
-- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, and the presentation settings in localStorage under `<userId>-webGPUPlaybackSettings` (version 3).
+- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, and the presentation settings in localStorage under `<userId>-webGPUPlaybackSettings` (version 4).
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
-- The presentation settings are HDR output, off by default, and the user's WGSL shader passes in order, each with its source and parameter values.
-  A preset holds at most 16 passes of at most 262,144 characters each.
-  They apply live: `WebGPUPlayer` hands them to the engine's presenter at construction and on every change, and the presenter keeps them across sessions.
-- The settings panel shows each pass's state from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
+- The presentation settings are HDR output, off by default, and the user's WGSL shader files in order, each with its parameter values and its source's key.
+  A file holds one or more passes, as an mpv user shader does, and its passes run in file order and share its parameter values.
+  A preset holds at most 16 files of at most 16,777,216 characters each; the limit only keeps a mistaken pick, such as a media file, out of storage.
+- The sources live in IndexedDB, in the `passSources` store of the `webGPUPlayerPresentation` database (`PresentationPassStore.ts`), since localStorage holds about 5 MB for everything on the origin.
+  Each added file's source gets a key that counts up from 1, and a source goes once neither the panel's settings nor the stored settings hold its key.
+- Settings of any other version are not read, so a stored value from another version loads as the defaults.
+- HDR output applies when `WebGPUPlayer` is constructed, at plugin load, while the stored files load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
+  Every change in the settings panel applies live, and the presenter keeps the preset across sessions; a stored preset that loads after a panel change yields to it.
+- The settings panel shows each file with the state of each of its passes from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
+  A file whose source the store does not hold shows `source-missing` with its key, stays out of the preset, and can be removed.
+  A source the store refuses, or a settings save the browser refuses, is reported in the section's status with the browser's error.
 - The player preference (Auto, WebGPU, or HTML) is the user setting `preferredVideoPlayer`, stored as `<userId>-preferredVideoPlayer`.
 
 ## Build and check

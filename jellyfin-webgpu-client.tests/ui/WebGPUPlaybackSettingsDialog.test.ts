@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 import { createHDRToSDRRenderSettings } from 'webgpu-player/presentation/RenderSettings';
-import type { PresentationPresetPass } from 'webgpu-player/presentation/WebGPUPresenter';
+import type { PresentationPresetFile } from 'webgpu-player/presentation/WebGPUPresenter';
 import type WebGPUPlayer from 'addons/webGPUPlayer/WebGPUPlayer';
 import {
     createDefaultWebGPUUserSettings,
-    MAXIMUM_PRESENTATION_PASS_COUNT,
+    MAXIMUM_PRESENTATION_FILE_COUNT,
     MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH,
+    type StoredPresentationFile,
     type WebGPUUserSettings
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
 import {
@@ -15,6 +16,7 @@ import {
     DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
 } from 'webgpu-player/audio/processing/CustomAudioDownmixAlgorithm';
 import { translateSourceString } from '../host/globalizeMock';
+import { installIndexedDBFake } from '../indexedDBFake';
 import {
     BLANK_PASS_SOURCE,
     INVERT_PASS_NAME,
@@ -42,6 +44,8 @@ type AudioOutputSnapshotMock = {
 
 const storageMockState = vi.hoisted(() => ({
     audioDownmixAlgorithm: 'standard-lo-ro',
+    // Makes local storage refuse writes, as a full quota does
+    refusedWriteError: null as DOMException | null,
     value: null as string | null
 }));
 
@@ -101,6 +105,9 @@ vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: {
         get: vi.fn((): string | null => storageMockState.value),
         set: vi.fn((_name: string, value: string): void => {
+            if (storageMockState.refusedWriteError) {
+                throw storageMockState.refusedWriteError;
+            }
             storageMockState.value = value;
         })
     }
@@ -209,6 +216,7 @@ vi.mock('scripts/inputManager', () => ({
 }));
 
 import { handleCommand } from 'scripts/inputManager';
+import { addPassSource } from 'addons/webGPUPlayer/PresentationPassStore';
 import {
     showWebGPUPlaybackSettingsPanel,
     toggleWebGPUPlaybackSettingsPanel
@@ -351,16 +359,29 @@ const HDR_OUTPUT_FAILURE = 'no HDR display';
 const SATURATION_PASS_FILE_NAME = 'saturation.wgsl';
 const INVERT_PASS_FILE_NAME = 'invert.wgsl';
 const BLANK_PASS_FILE_NAME = 'blank.wgsl';
+// One store for the file, since the pass source store keeps its connection for the page
+const indexedDBFake = installIndexedDBFake();
+// Where the pass source store keeps the sources, under keys counting up from 1
+const PASS_SOURCE_DATABASE_NAME = 'webGPUPlayerPresentation';
+const PASS_SOURCE_STORE_NAME = 'passSources';
+const FIRST_SOURCE_KEY = 1;
+const SECOND_SOURCE_KEY = 2;
+// A key the settings hold that the store has no source for
+const MISSING_SOURCE_KEY = 99;
+const QUOTA_ERROR = new DOMException('The quota has been exceeded', 'QuotaExceededError');
+// One file of the saturation pass, then the invert pass, as an mpv-style shader of several passes
+const SATURATION_THEN_INVERT_FILE_SOURCE = `${SATURATION_PASS_SOURCE}${INVERT_PASS_SOURCE}`;
+const SATURATION_THEN_INVERT_PASS_COUNT = 2;
 
 type PresentationPlayerMethods = Pick<
     WebGPUPlayer,
     'getPresentationPlanReport' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
 >;
 
-/** A pass the panel lists, as its name and its state text. */
+/** A file the panel lists, as its title and the state text of each of its passes. */
 type PassRow = Readonly<{
     name: string
-    state: string
+    states: readonly string[]
 }>;
 
 /** Builds the presentation calls the panel makes when it opens, which succeed without passes. */
@@ -400,16 +421,34 @@ function readSavedPresentation(): WebGPUUserSettings['presentation'] {
     return (JSON.parse(storageMockState.value ?? '{}') as WebGPUUserSettings).presentation;
 }
 
-/** Reads each pass the panel lists, in order. */
+/** Reads each file the panel lists, in order. */
 function readPassRows(panel: HTMLElement): PassRow[] {
     const rows: PassRow[] = [];
     for (const passElement of panel.querySelectorAll<HTMLElement>('.webgpuSettingsPass')) {
         rows.push({
             name: requirePanelElement<HTMLElement>(passElement, '.webgpuSettingsPassName').textContent,
-            state: requirePanelElement<HTMLElement>(passElement, '.webgpuSettingsPassState').textContent
+            states: Array.from(passElement.querySelectorAll<HTMLElement>('.webgpuSettingsPassState'), (state: HTMLElement): string => state.textContent)
         });
     }
     return rows;
+}
+
+/** Reads the sources the pass source store holds, by key. */
+function readStoredSources(): ReadonlyMap<number, unknown> {
+    return indexedDBFake.readStore(PASS_SOURCE_DATABASE_NAME, PASS_SOURCE_STORE_NAME);
+}
+
+/** Returns each saved file's store key. */
+function readSavedSourceKeys(): number[] {
+    return readSavedPresentation().files.map((file: StoredPresentationFile): number => file.sourceKey);
+}
+
+/** Opens the panel and lets it read the shader sources, which its pass list waits for. */
+async function openPanelWithSources(player: WebGPUPlayer): Promise<Readonly<{ panel: HTMLElement, panelPromise: Promise<void> }>> {
+    const panelPromise = showWebGPUPlaybackSettingsPanel(player);
+    const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+    await flushMicrotasks();
+    return { panel, panelPromise };
 }
 
 /** Chooses pass files in the panel's file input, as the file picker would. */
@@ -457,6 +496,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         }));
 
         const defaults = createDefaultWebGPUUserSettings();
+        // The suite unstubs its globals after each test
+        indexedDBFake.install();
+        indexedDBFake.clear();
+        storageMockState.refusedWriteError = null;
         storageMockState.audioDownmixAlgorithm = DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM;
         storageMockState.value = JSON.stringify({
             ...defaults,
@@ -1673,39 +1716,38 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ]
         });
         storePresentation({
-            hdrOutput: false,
-            passes: [
-                { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE },
-                { parameters: {}, source: INVERT_PASS_SOURCE },
-                { parameters: {}, source: SATURATION_PASS_SOURCE },
-                { parameters: {}, source: MISSING_SHAPE_PASS_SOURCE }
-            ]
+            files: [
+                { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, sourceKey: await addPassSource(SATURATION_PASS_SOURCE) },
+                { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) },
+                { parameters: {}, sourceKey: await addPassSource(SATURATION_PASS_SOURCE) },
+                { parameters: {}, sourceKey: await addPassSource(MISSING_SHAPE_PASS_SOURCE) }
+            ],
+            hdrOutput: false
         });
 
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
         expect(readPassRows(panel)).toEqual([
-            { name: SATURATION_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') },
-            { name: INVERT_PASS_NAME, state: `domain-unreachable: ${INVERT_REJECTION_DETAIL}` },
+            { name: SATURATION_PASS_NAME, states: [ translateSourceString('WebGPUShaderPassActive') ] },
+            { name: INVERT_PASS_NAME, states: [ `domain-unreachable: ${INVERT_REJECTION_DETAIL}` ] },
             // The plan leaves out the later of two passes with one name
-            { name: SATURATION_PASS_NAME, state: `duplicate-name: ${DUPLICATE_REJECTION_DETAIL}` },
-            { name: MISSING_SHAPE_PASS_NAME, state: MISSING_SHAPE_HEADER_FAILURE }
+            { name: SATURATION_PASS_NAME, states: [ `duplicate-name: ${DUPLICATE_REJECTION_DETAIL}` ] },
+            { name: MISSING_SHAPE_PASS_NAME, states: [ MISSING_SHAPE_HEADER_FAILURE ] }
         ]);
         const parameterSelector = `[data-parameter-name="${SATURATION_PARAMETER_NAME}"]`;
-        const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-pass-index="0"]${parameterSelector}`);
+        const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-file-index="0"]${parameterSelector}`);
         expect(parameterInput.min).toBe(String(SATURATION_PARAMETER_MINIMUM));
         expect(parameterInput.max).toBe(String(SATURATION_PARAMETER_MAXIMUM));
         expect(parameterInput.step).toBe(FLOAT_PARAMETER_STEP);
         expect(parameterInput.value).toBe(String(STORED_SATURATION));
-        expect(requirePanelElement<HTMLInputElement>(panel, `[data-pass-index="2"]${parameterSelector}`).value)
+        expect(requirePanelElement<HTMLInputElement>(panel, `[data-file-index="2"]${parameterSelector}`).value)
             .toBe(String(SATURATION_PARAMETER_DEFAULT));
 
         parameterInput.value = String(CHANGED_SATURATION);
         parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
         expect(presentationMethods.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
-        expect(readSavedPresentation().passes[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
+        expect(readSavedPresentation().files[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
         expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassParameterApplied'));
         // The save keeps the list as it is, so the edited input keeps its focus
         expect(parameterInput.isConnected).toBe(true);
@@ -1716,9 +1758,39 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         });
         parameterInput.value = String(SATURATION_PARAMETER_MAXIMUM);
         parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
-        expect(readSavedPresentation().passes[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: SATURATION_PARAMETER_MAXIMUM });
+        expect(readSavedPresentation().files[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: SATURATION_PARAMETER_MAXIMUM });
         expect(presentationStatus.textContent)
             .toBe(translateSourceString('WebGPUShaderPassParameterPending', PARAMETER_PENDING_ERROR));
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('lists a file of several passes as one entry, with a named state per pass and parameters every declaring pass takes', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        vi.mocked(presentationMethods.getPresentationPlanReport).mockReturnValue({
+            activePasses: [ SATURATION_PASS_NAME ],
+            inactivePasses: [ { detail: INVERT_REJECTION_DETAIL, name: INVERT_PASS_NAME, reason: 'domain-unreachable' } ]
+        });
+        storePresentation({ files: [ { parameters: {}, sourceKey: await addPassSource(SATURATION_THEN_INVERT_FILE_SOURCE) } ], hdrOutput: false });
+
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        expect(readPassRows(panel)).toEqual([ {
+            name: translateSourceString('WebGPUShaderPassFile', SATURATION_PASS_NAME, SATURATION_THEN_INVERT_PASS_COUNT),
+            states: [
+                `${SATURATION_PASS_NAME}: ${translateSourceString('WebGPUShaderPassActive')}`,
+                `${INVERT_PASS_NAME}: domain-unreachable: ${INVERT_REJECTION_DETAIL}`
+            ]
+        } ]);
+
+        const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-file-index="0"][data-parameter-name="${SATURATION_PARAMETER_NAME}"]`);
+        parameterInput.value = String(CHANGED_SATURATION);
+        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // Only the pass that declares the parameter takes it
+        expect(presentationMethods.setPresentationParameter).toHaveBeenCalledTimes(1);
+        expect(presentationMethods.setPresentationParameter)
+            .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
+        expect(readSavedPresentation().files[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
@@ -1729,8 +1801,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         vi.mocked(presentationMethods.setPresentationPreset)
             .mockResolvedValueOnce({ activePasses: [ SATURATION_PASS_NAME, INVERT_PASS_NAME ], inactivePasses: [] })
             .mockResolvedValueOnce({ activePasses: [ INVERT_PASS_NAME ], inactivePasses: [] });
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const passFileInput = requirePanelElement<HTMLInputElement>(panel, '[data-presentation-pass-files]');
         const removePassesButton = requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsRemovePasses');
         const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
@@ -1746,39 +1817,47 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         ]);
         await flushMicrotasks();
 
-        const addedPasses: PresentationPresetPass[] = [
+        const addedFiles: PresentationPresetFile[] = [
             { parameters: {}, source: SATURATION_PASS_SOURCE },
             { parameters: {}, source: INVERT_PASS_SOURCE }
         ];
-        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(addedPasses);
-        expect(readSavedPresentation().passes).toEqual(addedPasses);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(addedFiles);
+        // The settings hold each file's key, and the store its source
+        expect(readSavedPresentation().files).toEqual([
+            { parameters: {}, sourceKey: FIRST_SOURCE_KEY },
+            { parameters: {}, sourceKey: SECOND_SOURCE_KEY }
+        ]);
+        expect(readStoredSources()).toEqual(new Map([ [ FIRST_SOURCE_KEY, SATURATION_PASS_SOURCE ], [ SECOND_SOURCE_KEY, INVERT_PASS_SOURCE ] ]));
         expect(readPassRows(panel)).toEqual([
-            { name: SATURATION_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') },
-            { name: INVERT_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') }
+            { name: SATURATION_PASS_NAME, states: [ translateSourceString('WebGPUShaderPassActive') ] },
+            { name: INVERT_PASS_NAME, states: [ translateSourceString('WebGPUShaderPassActive') ] }
         ]);
         expect(presentationStatus.textContent).toBe(translateSourceString(
             'WebGPUJoinedSentences',
             translateSourceString(
                 'WebGPUShaderPassFilesSkipped',
                 BLANK_PASS_FILE_NAME,
-                MAXIMUM_PRESENTATION_PASS_COUNT,
+                MAXIMUM_PRESENTATION_FILE_COUNT,
                 MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH
             ),
-            translateSourceString('WebGPUShaderPassesSummary', addedPasses.length, 0)
+            translateSourceString('WebGPUShaderPassesSummary', addedFiles.length, 0)
         ));
         expect(removePassesButton.disabled).toBe(false);
 
-        requirePanelElement<HTMLButtonElement>(panel, '[data-remove-pass="0"]').click();
+        requirePanelElement<HTMLButtonElement>(panel, '[data-remove-file="0"]').click();
         await flushMicrotasks();
-        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(addedPasses.slice(1));
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(addedFiles.slice(1));
         expect(readPassRows(panel)).toEqual([
-            { name: INVERT_PASS_NAME, state: translateSourceString('WebGPUShaderPassActive') }
+            { name: INVERT_PASS_NAME, states: [ translateSourceString('WebGPUShaderPassActive') ] }
         ]);
+        // A removed file's source goes with it
+        expect(readStoredSources()).toEqual(new Map([ [ SECOND_SOURCE_KEY, INVERT_PASS_SOURCE ] ]));
 
         removePassesButton.click();
         await flushMicrotasks();
         expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([]);
-        expect(readSavedPresentation().passes).toEqual([]);
+        expect(readSavedPresentation().files).toEqual([]);
+        expect(readStoredSources().size).toBe(0);
         expect(readPassRows(panel)).toEqual([]);
         expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassesNone'));
         expect(removePassesButton.disabled).toBe(true);
@@ -1797,8 +1876,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
                 resolveAddedPreset = resolve;
             })
         ));
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
         choosePassFiles(
             requirePanelElement<HTMLInputElement>(panel, '[data-presentation-pass-files]'),
@@ -1820,8 +1898,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
     it('saves HDR output, applies it live, and restores its default', async () => {
         const presentationMethods = createPresentationPlayerMethods();
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
         const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
         expect(HDROutputCheckbox.checked).toBe(false);
@@ -1847,9 +1924,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
     it('restores and reapplies the presentation defaults on reset all', async () => {
         const presentationMethods = createPresentationPlayerMethods();
-        storePresentation({ hdrOutput: true, passes: [ { parameters: {}, source: INVERT_PASS_SOURCE } ] });
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPresentationTestPlayer(presentationMethods));
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        storePresentation({ files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ], hdrOutput: true });
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
         expect(HDROutputCheckbox.checked).toBe(true);
         expect(readPassRows(panel)).toHaveLength(1);
@@ -1860,9 +1936,91 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const defaultPresentation = createDefaultWebGPUUserSettings().presentation;
         expect(readSavedPresentation()).toEqual(defaultPresentation);
         expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(defaultPresentation.hdrOutput);
-        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(defaultPresentation.passes);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(defaultPresentation.files);
         expect(HDROutputCheckbox.checked).toBe(defaultPresentation.hdrOutput);
         expect(readPassRows(panel)).toEqual([]);
+        // The reset files' sources go with them
+        expect(readStoredSources().size).toBe(0);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('lists a stored file whose source is missing, leaves it out of the preset, and removes it', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const invertSourceKey = await addPassSource(INVERT_PASS_SOURCE);
+        storePresentation({
+            files: [ { parameters: {}, sourceKey: MISSING_SOURCE_KEY }, { parameters: {}, sourceKey: invertSourceKey } ],
+            hdrOutput: false
+        });
+
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        expect(readPassRows(panel)).toEqual([
+            { name: translateSourceString('WebGPUShaderPassSourceMissing'), states: [ `source-missing: key ${MISSING_SOURCE_KEY}` ] },
+            { name: INVERT_PASS_NAME, states: [ translateSourceString('WebGPUShaderPassWaiting') ] }
+        ]);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-remove-file="0"]').click();
+        await flushMicrotasks();
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([ { parameters: {}, source: INVERT_PASS_SOURCE } ]);
+        expect(readSavedSourceKeys()).toEqual([ invertSourceKey ]);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('names a file the store refuses, and adds the files it takes', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        indexedDBFake.failNextWrite(QUOTA_ERROR);
+
+        choosePassFiles(requirePanelElement<HTMLInputElement>(panel, '[data-presentation-pass-files]'), [
+            new File([ SATURATION_PASS_SOURCE ], SATURATION_PASS_FILE_NAME),
+            new File([ INVERT_PASS_SOURCE ], INVERT_PASS_FILE_NAME)
+        ]);
+        await flushMicrotasks();
+
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([ { parameters: {}, source: INVERT_PASS_SOURCE } ]);
+        expect(readStoredSources()).toEqual(new Map([ [ FIRST_SOURCE_KEY, INVERT_PASS_SOURCE ] ]));
+        const notice = translateSourceString(
+            'WebGPUJoinedSentences',
+            translateSourceString(
+                'WebGPUShaderPassFilesSkipped',
+                SATURATION_PASS_FILE_NAME,
+                MAXIMUM_PRESENTATION_FILE_COUNT,
+                MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH
+            ),
+            translateSourceString('WebGPUShaderPassesStorageFailed', `source-add-failed: ${QUOTA_ERROR.name}: ${QUOTA_ERROR.message}`)
+        );
+        expect(presentationStatus.textContent).toBe(translateSourceString(
+            'WebGPUJoinedSentences',
+            notice,
+            translateSourceString('WebGPUShaderPassesSummary', 0, 0)
+        ));
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('reports a settings save the browser refuses, keeps the change for this page, and keeps the stored source', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        storageMockState.refusedWriteError = QUOTA_ERROR;
+
+        choosePassFiles(
+            requirePanelElement<HTMLInputElement>(panel, '[data-presentation-pass-files]'),
+            [ new File([ INVERT_PASS_SOURCE ], INVERT_PASS_FILE_NAME) ]
+        );
+        await flushMicrotasks();
+
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([ { parameters: {}, source: INVERT_PASS_SOURCE } ]);
+        expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ INVERT_PASS_NAME ]);
+        expect(presentationStatus.textContent).toBe(translateSourceString(
+            'WebGPUJoinedSentences',
+            translateSourceString('WebGPUSettingsSaveFailed', `settings-save-failed: ${QUOTA_ERROR.name}: ${QUOTA_ERROR.message}`),
+            translateSourceString('WebGPUShaderPassesSummary', 0, 0)
+        ));
+        // The page still uses the file, so its source stays
+        expect(readStoredSources()).toEqual(new Map([ [ FIRST_SOURCE_KEY, INVERT_PASS_SOURCE ] ]));
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
     });
