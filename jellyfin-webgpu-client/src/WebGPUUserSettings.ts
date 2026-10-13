@@ -13,21 +13,23 @@ import {
     type AudioDownmixSettings
 } from 'webgpu-player/audio/processing/CustomAudioDownmix';
 import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
-import type { PresentationPresetPass } from 'webgpu-player/presentation/WebGPUPresenter';
 
-export const WEBGPU_USER_SETTINGS_VERSION = 3;
+export const WEBGPU_USER_SETTINGS_VERSION = 4;
 export const WEBGPU_USER_SETTINGS_STORAGE_KEY = 'webGPUPlaybackSettings';
-// The versions the settings migrate from: version 1 had no audio output device, and neither had presentation settings
-const PREVIOUS_WEBGPU_USER_SETTINGS_VERSIONS: readonly unknown[] = [ 1, 2 ];
-const FIRST_AUDIO_OUTPUT_DEVICE_SETTINGS_VERSION = 2;
 const MAXIMUM_AUDIO_OUTPUT_DEVICE_ID_LENGTH = 1_024;
-/** The shader passes a preset holds at most. */
-export const MAXIMUM_PRESENTATION_PASS_COUNT = 16;
-/** The characters one pass's source holds at most, which keeps a full preset well inside local storage. */
-export const MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH = 262_144;
+/** The shader files a preset holds at most. */
+export const MAXIMUM_PRESENTATION_FILE_COUNT = 16;
+/** The characters one shader file holds at most; sources live in IndexedDB, so this only keeps a mistaken pick, such as a media file, out of it. */
+export const MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH = 16_777_216;
 /** The characters a stored parameter name holds at most; a longer name is no identifier a pass would declare, so it is dropped. */
 export const MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH = 256;
 const NULL_CHARACTER = '\0';
+
+/** One shader file of the user's preset as the settings keep it: its parameter values, and its source's key in the pass source store. */
+export type StoredPresentationFile = Readonly<{
+    parameters: Readonly<Record<string, number>>
+    sourceKey: number
+}>;
 
 export type WebGPUUserSettings = Readonly<{
     audio: Readonly<{
@@ -42,8 +44,8 @@ export type WebGPUUserSettings = Readonly<{
     }>
     // Both apply live: the presenter replans the active session and keeps them for later ones
     presentation: Readonly<{
+        files: readonly StoredPresentationFile[]
         hdrOutput: boolean
-        passes: readonly PresentationPresetPass[]
     }>
     render: Readonly<{
         automaticInputPeakNits: boolean
@@ -105,6 +107,11 @@ export function isPresentationPassSource(value: unknown): value is string {
         && !value.includes(NULL_CHARACTER);
 }
 
+/** Returns whether a value can be a key of the pass source store, whose keys count up from 1. */
+export function isPresentationPassSourceKey(value: unknown): value is number {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
 /** Keeps a pass's finite parameter values under nonblank names, up to the parameters a pass declares at most. */
 function normalizePresentationParameters(value: unknown): Readonly<Record<string, number>> {
     const parameterEntries: Array<[string, number]> = [];
@@ -126,22 +133,21 @@ function normalizePresentationParameters(value: unknown): Readonly<Record<string
     return Object.fromEntries(parameterEntries);
 }
 
-/** Keeps the stored passes that hold a valid source, in order, up to the passes a preset holds at most. */
-function normalizePresentationPasses(value: unknown): PresentationPresetPass[] {
-    const passes: PresentationPresetPass[] = [];
+/** Keeps the stored files with a valid source key, in order, up to the files a preset holds at most. */
+function normalizePresentationFiles(value: unknown): StoredPresentationFile[] {
+    const files: StoredPresentationFile[] = [];
     if (!Array.isArray(value)) {
-        return passes;
+        return files;
     }
     for (const candidate of value) {
-        if (passes.length >= MAXIMUM_PRESENTATION_PASS_COUNT) {
+        if (files.length >= MAXIMUM_PRESENTATION_FILE_COUNT) {
             break;
         }
-        if (!isRecord(candidate) || !isPresentationPassSource(candidate.source)) {
-            continue;
+        if (isRecord(candidate) && isPresentationPassSourceKey(candidate.sourceKey)) {
+            files.push({ parameters: normalizePresentationParameters(candidate.parameters), sourceKey: candidate.sourceKey });
         }
-        passes.push({ parameters: normalizePresentationParameters(candidate.parameters), source: candidate.source });
     }
-    return passes;
+    return files;
 }
 
 function normalizeToneMapOperator(value: unknown, fallback: ToneMapOperator): ToneMapOperator {
@@ -168,8 +174,8 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
             enableHDRToneMapping: true
         },
         presentation: {
-            hdrOutput: false,
-            passes: []
+            files: [],
+            hdrOutput: false
         },
         render: {
             automaticInputPeakNits: true,
@@ -182,9 +188,8 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
 /** Normalizes persisted input through the same ranges consumed by renderer validation. */
 export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings {
     const defaults = createDefaultWebGPUUserSettings();
-    if (!isRecord(value)
-        || (value.version !== WEBGPU_USER_SETTINGS_VERSION
-            && !PREVIOUS_WEBGPU_USER_SETTINGS_VERSIONS.includes(value.version))) {
+    // Settings of any other version are not read
+    if (!isRecord(value) || value.version !== WEBGPU_USER_SETTINGS_VERSION) {
         return defaults;
     }
 
@@ -286,9 +291,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
                 audio.forceStereoDownmix,
                 defaults.audio.forceStereoDownmix
             ),
-            outputDeviceId: typeof value.version === 'number' && value.version >= FIRST_AUDIO_OUTPUT_DEVICE_SETTINGS_VERSION ?
-                normalizeAudioOutputDeviceId(audio.outputDeviceId) :
-                null
+            outputDeviceId: normalizeAudioOutputDeviceId(audio.outputDeviceId)
         },
         playback: {
             enableCustomDecode: normalizeBoolean(
@@ -301,8 +304,8 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
             )
         },
         presentation: {
-            hdrOutput: normalizeBoolean(presentation.hdrOutput, defaults.presentation.hdrOutput),
-            passes: normalizePresentationPasses(presentation.passes)
+            files: normalizePresentationFiles(presentation.files),
+            hdrOutput: normalizeBoolean(presentation.hdrOutput, defaults.presentation.hdrOutput)
         },
         render: {
             automaticInputPeakNits: normalizeBoolean(

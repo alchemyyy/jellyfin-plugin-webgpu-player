@@ -46,6 +46,7 @@ import {
     type HDRToSDRRenderSettings,
     type RenderSettings
 } from 'webgpu-player/presentation/RenderSettings';
+import { loadStoredPresentationPreset, type StoredPresentationPreset } from './PresentationPassStore';
 import {
     createConfiguredHDRRenderSettings,
     loadWebGPUUserSettings,
@@ -149,7 +150,7 @@ import {
 import WebGPUPresenter, {
     type DolbyVisionReconstructionTarget,
     type PresentationFallbackReason,
-    type PresentationPresetPass,
+    type PresentationPresetFile,
     type PresentationSurface,
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
@@ -866,6 +867,9 @@ export default class WebGPUPlayer {
     private backendSessionGeneration = 0;
     private ownedBackendSessionGeneration: number | null = null;
     private lastKnownTimeMicroseconds: Microseconds = millisecondsToMicroseconds(0);
+    // Counts the presets handed to the presenter, so a stored preset that loads late never replaces a newer one
+    private presentationPresetRevision = 0;
+    private storedPresentationPresetRequested = false;
 
     constructor() {
         const audioOutputManager = initializeWebGPUAudioOutputManager();
@@ -1104,6 +1108,7 @@ export default class WebGPUPlayer {
         this.currentPresentationInput = readPresentationInput(options);
         this.webGPUPresentationEnabled = isWebGPUPresentationInput(options, this.currentPresentationInput, isWebGPUCustomDecodeEnabled());
         if (this.webGPUPresentationEnabled) {
+            this.loadStoredPresentationPreset();
             this.presenter.startSession(generation);
         } else {
             this.presenter.endSession(generation);
@@ -1709,19 +1714,38 @@ export default class WebGPUPlayer {
         return this.presenter.getExternalHDRAuthorizationTelemetry();
     }
 
-    /** Hands the user's HDR output choice and shader passes to the presenter, which keeps them across sessions. */
+    /** Hands the user's HDR output choice to the presenter, which keeps it across sessions; the shader files follow at the first WebGPU play. */
     private applyPresentationSettings(settings: WebGPUUserSettings): void {
         void this.setHDROutputEnabled(settings.presentation.hdrOutput).catch((error: unknown): void => {
             console.warn(`WebGPU HDR output failed: ${error instanceof Error ? error.message : String(error)}`);
         });
-        void this.setPresentationPreset(settings.presentation.passes).catch((error: unknown): void => {
+    }
+
+    /**
+     * Hands the stored shader files to the presenter once, at the first play that presents through WebGPU, since their sources load from IndexedDB.
+     * A preset the settings panel applies first is newer, so the stored one yields to it; a failed load is tried again at the next play.
+     */
+    private loadStoredPresentationPreset(): void {
+        if (this.storedPresentationPresetRequested) {
+            return;
+        }
+        this.storedPresentationPresetRequested = true;
+        const revision = this.presentationPresetRevision;
+        void loadStoredPresentationPreset(loadWebGPUUserSettings().presentation.files).then((preset: StoredPresentationPreset): Promise<PlanReport> | undefined => {
+            if (preset.missingSourceKeys.length > 0) {
+                console.warn(`WebGPU shader files: source-missing: keys ${preset.missingSourceKeys.join(', ')}`);
+            }
+            return revision === this.presentationPresetRevision ? this.setPresentationPreset(preset.files) : undefined;
+        }).catch((error: unknown): void => {
+            this.storedPresentationPresetRequested = false;
             console.warn(`WebGPU shader passes failed: ${error instanceof Error ? error.message : String(error)}`);
         });
     }
 
-    /** Replaces the user's shader passes, in order; resolves with the report of the passes that run and those left out. */
-    setPresentationPreset(passes: readonly PresentationPresetPass[]): Promise<PlanReport> {
-        return this.presenter.setPresentationPreset(passes);
+    /** Replaces the user's shader files, in order; resolves with the report of the passes that run and those left out. */
+    setPresentationPreset(files: readonly PresentationPresetFile[]): Promise<PlanReport> {
+        this.presentationPresetRevision += 1;
+        return this.presenter.setPresentationPreset(files);
     }
 
     /** Changes one parameter of a running shader pass live; throws a RangeError naming what failed. */

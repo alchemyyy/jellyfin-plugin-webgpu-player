@@ -837,9 +837,20 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         renderFrameRequest = requestAnimationFrame(applyRenderSettings);
     };
 
-    const persistSettings = (): void => {
-        settings = saveWebGPUUserSettings(settings);
+    /** Persists the settings, which apply to this page either way; returns what failed when the browser refused the write, else null. */
+    const persistSettings = (): string | null => {
+        settings = normalizeWebGPUUserSettings(settings);
+        let failure: string | null = null;
+        try {
+            saveWebGPUUserSettings(settings);
+        } catch (error) {
+            // Local storage refuses a write once the origin's quota is full
+            const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+            failure = `settings-save-failed: ${detail}`;
+            console.warn(`WebGPU ${failure}`);
+        }
         synchronizeControls();
+        return failure;
     };
 
     presentationSection = bindPresentationSection({
@@ -848,9 +859,9 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         isActive: (): boolean => panelActive,
         panel,
         player,
-        saveSettings: (nextSettings: WebGPUUserSettings): void => {
+        saveSettings: (nextSettings: WebGPUUserSettings): string | null => {
             settings = nextSettings;
-            persistSettings();
+            return persistSettings();
         }
     });
 

@@ -23,12 +23,18 @@ import type {
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import { addPassSource } from 'addons/webGPUPlayer/PresentationPassStore';
+import { installIndexedDBFake } from './indexedDBFake';
 import {
+    INVERT_PASS_SOURCE,
     SATURATION_PARAMETER_NAME,
     SATURATION_PASS_NAME,
     SATURATION_PASS_SOURCE,
     STORED_SATURATION
 } from './presentationPassSources';
+
+// One store for the file, since the pass source store keeps its connection for the page
+const indexedDBFake = installIndexedDBFake();
 
 type MockAudioEligibilityOverride = {
     audioOutputMode?: 'native-media'
@@ -1594,23 +1600,56 @@ describe('WebGPUPlayer HTML delegation', () => {
         })).toBe(25_000_000);
     });
 
-    it('hands the stored HDR output and shader passes to its presenter and delegates live changes', () => {
+    it('hands the stored HDR output to its presenter at once, the stored shader files at the first WebGPU play, and delegates live changes', async () => {
+        indexedDBFake.clear();
+        const parameters = { [SATURATION_PARAMETER_NAME]: STORED_SATURATION };
         const presentation = {
-            hdrOutput: true,
-            passes: [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE } ]
+            files: [
+                { parameters, sourceKey: await addPassSource(SATURATION_PASS_SOURCE) },
+                { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) }
+            ],
+            hdrOutput: true
         };
         userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({ ...createDefaultWebGPUUserSettings(), presentation });
 
         const player = new WebGPUPlayer();
         const presenter = getPresenter();
         expect(presenter.setHDROutputEnabled).toHaveBeenCalledWith(presentation.hdrOutput);
-        expect(presenter.setPresentationPreset).toHaveBeenCalledWith(presentation.passes);
+        // The sources stay in IndexedDB until a play needs them
+        expect(presenter.setPresentationPreset).not.toHaveBeenCalled();
+
+        await player.play(createKnownSDRPlayOptions());
+        await vi.waitFor(() => expect(presenter.setPresentationPreset).toHaveBeenCalledWith([
+            { parameters, source: SATURATION_PASS_SOURCE },
+            { parameters: {}, source: INVERT_PASS_SOURCE }
+        ]));
 
         player.setPresentationParameter(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, STORED_SATURATION);
         player.getPresentationPlanReport();
         expect(presenter.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, STORED_SATURATION);
         expect(presenter.getPresentationPlanReport).toHaveBeenCalledTimes(1);
+
+        // Later plays reuse what the presenter keeps
+        await player.play(createKnownSDRPlayOptions());
+        expect(presenter.setPresentationPreset).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a preset the settings panel applies before the stored one loads stand', async () => {
+        indexedDBFake.clear();
+        const presentation = { files: [ { parameters: {}, sourceKey: await addPassSource(SATURATION_PASS_SOURCE) } ], hdrOutput: false };
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({ ...createDefaultWebGPUUserSettings(), presentation });
+        const panelPreset = [ { parameters: {}, source: INVERT_PASS_SOURCE } ];
+
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        const playPromise = player.play(createKnownSDRPlayOptions());
+        // The panel's preset arrives while the stored sources are still being read
+        void player.setPresentationPreset(panelPreset);
+        await playPromise;
+
+        await vi.waitFor(() => expect(presenter.setPresentationPreset).toHaveBeenCalledWith(panelPreset));
+        expect(presenter.setPresentationPreset).toHaveBeenCalledTimes(1);
     });
 
     it('keeps player selection synchronous and safe when called unbound', () => {
