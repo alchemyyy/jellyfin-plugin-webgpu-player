@@ -36,8 +36,10 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     That alone plays MPEG-4 Part 2 in Matroska and MP4.
   - Demux: an AVI demuxer that feeds the worker's packet sinks, covering RIFF chunks with `idx1` or OpenDML indexes, timestamps from each stream's rate and scale, DivX packed B-frames, and VBR MP3 or AC-3 audio chunks.
 - Interlaced video.
-  The prefilter, eligibility, and the measured route profiles all require `IsInterlaced` false, so interlaced MPEG-2, H.264, HEVC, and VC-1 go to the HTML player and the server transcodes them.
-  Closing it needs a deinterlacer on the custom path before those conditions can drop, such as a field-adaptive WebGPU pass over decoded frames that follows the stream's field order, or FFmpeg's filter in the MPEG-2/VC-1 kit.
+  Since 10-15 the engine deinterlaces in presentation (yadif, double rate by default), and its prefilter and eligibility accept interlaced H.264, MPEG-2, VC-1, and WMV3; only interlaced HEVC, interlaced JPEG 2000, and the Dolby Vision routes stay refused.
+  The add-on still adds `IsInterlaced` equals false to its widened codec conditions and to its measured route profiles (`CustomDeviceProfile.ts`), so the server still transcodes interlaced sources instead of direct-playing them to the custom path.
+  Closing it: drop that condition for the codecs the engine now presents interlaced, keep it for HEVC, JPEG 2000, and the Dolby Vision profiles, and test the negotiation with interlaced MPEG-2 and H.264 items.
+  Jellyfin's MediaStream reports `IsInterlaced` but no field order, so each frame's order comes from its decoder, parser, or container, else top field first; a deinterlacing choice in the add-on's settings would call `WebGPUPresenter.setDeinterlaceMode` (double rate, single rate, or off).
 - VobSub (`dvdsub`) subtitles.
   The augmented profile lists vtt, ass, ssa, and pgssub only, so the server burns a selected VobSub track in, the play method becomes Transcode, and the custom path is ineligible.
   A 4K source is then re-encoded just to burn in a bitmap.
