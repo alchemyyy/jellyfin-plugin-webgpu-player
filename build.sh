@@ -125,7 +125,7 @@ if [ "$skip_npm" = false ]; then
         jellyfin_web_path="$script_directory/$jellyfin_web_submodule_path"
     fi
 
-    # Not recursive: the decoder build fetches the engine's codec source submodules itself, shallow and pinned
+    # Not recursive: the engine's codec source submodules serve only its decoder projects, which this build does not build
     for submodule_path in "${submodule_paths[@]}"; do
         if [ ! -e "$script_directory/$submodule_path/.git" ]; then
             git -C "$script_directory" submodule update --init -- "$submodule_path" \
@@ -138,17 +138,17 @@ if [ "$skip_npm" = false ]; then
     [ -d "$jellyfin_web_directory/src" ] \
         || fail "No Jellyfin Web source tree at $jellyfin_web_directory (src is missing)"
 
-    # The decoders are build outputs of their own toolchain, so only a checkout without them builds them.
+    # The engine's WebAssembly modules are build outputs of their own toolchain, so only a checkout without them builds them.
     # Only npm run build reads them, so they build in the background while npm ci and the hls.js fork build run
     wasm_output_directory="$engine_directory/$(engine_layout wasmOutputDirectory)" \
         || fail 'Cannot read the engine layout (Node.js is required)'
-    decoder_build_process_id=''
+    wasm_build_process_id=''
     if [ ! -d "$wasm_output_directory" ]; then
-        printf 'Building the engine WebAssembly decoders into %s\n' "$wasm_output_directory"
+        printf 'Building the engine WebAssembly modules into %s\n' "$wasm_output_directory"
         wasm_directory="$(native_path "$engine_directory/wasm")"
-        # The sources first, then one job per decoder kit
-        (make -C "$wasm_directory" sources && make -C "$wasm_directory" -j5 all) &
-        decoder_build_process_id=$!
+        # One job per module
+        make -C "$wasm_directory" -j2 all &
+        wasm_build_process_id=$!
     fi
 
     if [ ! -d "$client_directory/node_modules" ]; then
@@ -158,9 +158,9 @@ if [ "$skip_npm" = false ]; then
     # npm run build builds the fork too, but only after the decoders; it finds the bundle built here and skips it
     (cd "$client_directory" && node scripts/build-hls.js) || fail 'The hls.js fork build failed'
 
-    if [ -n "$decoder_build_process_id" ]; then
-        wait "$decoder_build_process_id" \
-            || fail "The engine decoder build failed; see the engine's docs/src/decoders.md for the toolchain"
+    if [ -n "$wasm_build_process_id" ]; then
+        wait "$wasm_build_process_id" \
+            || fail "The engine WebAssembly build failed; see the engine's docs/src/decoders.md for the toolchain"
     fi
 
     # The variable is scoped to the build command, so the caller's environment is left as it was

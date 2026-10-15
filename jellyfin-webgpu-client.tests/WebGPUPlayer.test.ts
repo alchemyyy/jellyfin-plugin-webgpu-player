@@ -45,6 +45,8 @@ type MockAudioEligibilityOverride = {
 };
 
 type MockEligibilityOptions = {
+    audioDecoders?: readonly object[]
+    gpuVideoDecoders?: ReadonlyArray<{ decoderId: string, package: object }>
     allowDolbyVision?: boolean
     allowDolbyVisionProfile7?: boolean
     allowNativeDolbyVision?: boolean
@@ -145,6 +147,20 @@ const audioPrewarmMockState = vi.hoisted(() => ({
 const nativeAudioCapabilityMockState = vi.hoisted(() => ({
     capabilities: null as object | null
 }));
+// What the eligibility mock selects from the decoder packages: the codec an audio package decodes, and a GPU decoder's codec and output format
+const DECODER_PACKAGE_SELECTION = vi.hoisted(() => ({
+    audioDecoderCodec: 'dts',
+    gpuVideoDecodeFormat: 'I420',
+    gpuVideoDecoderCodec: 'hevc'
+}));
+// The user's audio packages, and the GPU decoders a playback is offered, which the eligibility mock selects from
+const decoderPackageMockState = vi.hoisted(() => ({
+    audioDecoders: [] as object[],
+    gpuVideoDecodeSessionFactory: vi.fn(),
+    gpuVideoDecoderOffers: [] as Array<{ decoderId: string, package: object }>,
+    gpuVideoDecoderOffersFailure: null as Error | null,
+    sourceLoadCount: 0
+}));
 
 vi.mock('lib/globalize', async () => {
     const { translateSourceString } = await import('./host/globalizeMock');
@@ -216,6 +232,12 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
         }
         return customDecodeMockState.dolbyVisionProfile7 ? 7 : 8;
     };
+    const getMockRawVideoFrameFormat = (gpuVideoDecoderSelected: boolean): string | null => {
+        if (gpuVideoDecoderSelected) {
+            return DECODER_PACKAGE_SELECTION.gpuVideoDecodeFormat;
+        }
+        return customDecodeMockState.videoOutputMode === 'raw-planes' ? 'I420P10' : null;
+    };
 
     return {
         ...originalModule,
@@ -232,7 +254,21 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
             const eligible = customDecodeMockState.eligible
                 && (!customDecodeMockState.hdr || HDRPresentationAllowed)
                 && audioEligibilityOverride?.eligible !== false;
+            const audioDecoderPackage = eligibilityOptions.audioDecoders?.[0];
+            const gpuVideoDecoderOffer = eligibilityOptions.gpuVideoDecoders?.[0];
             return eligible ? {
+                ...(audioDecoderPackage ?
+                    { audioDecoder: { codec: DECODER_PACKAGE_SELECTION.audioDecoderCodec, source: audioDecoderPackage } } :
+                    {}),
+                ...(gpuVideoDecoderOffer ?
+                    {
+                        gpuVideoDecoder: {
+                            codec: DECODER_PACKAGE_SELECTION.gpuVideoDecoderCodec,
+                            decoderId: gpuVideoDecoderOffer.decoderId,
+                            package: gpuVideoDecoderOffer.package
+                        }
+                    } :
+                    {}),
                 audioOutputMode: audioEligibilityOverride?.audioOutputMode
                     ?? (customDecodeMockState.audioTrackIndex === null ?
                         null :
@@ -252,13 +288,11 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                 maximumCodedWidth: customDecodeMockState.maximumCodedWidth,
                 nativeHDRTransfer: customDecodeMockState.nativeHDRTransfer,
                 neutralizeHDRColorMetadata: customDecodeMockState.neutralizeHDRColorMetadata,
-                rawVideoFrameFormat: customDecodeMockState.videoOutputMode === 'raw-planes' ?
-                    'I420P10' :
-                    null,
+                rawVideoFrameFormat: getMockRawVideoFrameFormat(gpuVideoDecoderOffer !== undefined),
                 source: { kind: 'url', url: 'http://localhost/video.mp4?api_key=custom-decode-secret' },
                 startTimeMicroseconds: 1_000_000,
-                videoDecoderBackend: customDecodeMockState.videoDecoderBackend,
-                videoOutputMode: customDecodeMockState.videoOutputMode,
+                videoDecoderBackend: gpuVideoDecoderOffer ? 'gpu' : customDecodeMockState.videoDecoderBackend,
+                videoOutputMode: gpuVideoDecoderOffer ? 'frame-pool' : customDecodeMockState.videoOutputMode,
                 videoTrackIndex: 0
             } : {
                 eligible: false,
@@ -308,6 +342,28 @@ vi.mock('webgpu-player/capability/NativeMediaAudioCapabilities', () => ({
     ))
 }));
 
+vi.mock('addons/webGPUPlayer/DecoderPackages', () => ({
+    getAudioDecoderPackages: vi.fn(() => decoderPackageMockState.audioDecoders),
+    loadGPUVideoDecoderSources: vi.fn(() => {
+        decoderPackageMockState.sourceLoadCount += 1;
+        return Promise.resolve([]);
+    }),
+    loadPlaybackDecoderPackages: vi.fn(() => Promise.resolve({ failures: [], packages: [] }))
+}));
+
+vi.mock('webgpu-player/presentation/PresentationSetup', async importOriginal => {
+    const originalModule = await importOriginal<
+        typeof import('webgpu-player/presentation/PresentationSetup')
+    >();
+    return {
+        ...originalModule,
+        createGPUVideoDecodeSessionFactory: vi.fn(() => decoderPackageMockState.gpuVideoDecodeSessionFactory),
+        getGPUVideoDecoderOffers: vi.fn(() => (decoderPackageMockState.gpuVideoDecoderOffersFailure ?
+            Promise.reject(decoderPackageMockState.gpuVideoDecoderOffersFailure) :
+            Promise.resolve(decoderPackageMockState.gpuVideoDecoderOffers)))
+    };
+});
+
 vi.mock('addons/webGPUPlayer/custom/CustomDeviceProfile', () => ({
     augmentDeviceProfileForCustomDecode: vi.fn((profile: object, _capabilities: object, options: unknown) => {
         customProfileMockState.augmentationCalls.push({ options, profile });
@@ -347,6 +403,7 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
     class MockCustomPlaybackController {
         readonly eventHandler: (event: object) => void;
         readonly fallbackHook: (request: object) => Promise<void>;
+        readonly gpuVideoDecodeSessionFactory: unknown;
         readonly nativeAudioBridgeFactory: (() => object) | undefined;
         currentTimeMicroseconds = 1_000_000;
         durationMicroseconds: number | null = 60_000_000;
@@ -358,10 +415,12 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
         constructor(options: {
             eventHandler: (event: object) => void
             fallbackHook: (request: object) => Promise<void>
+            gpuVideoDecodeSessionFactory?: unknown
             nativeAudioBridgeFactory?: () => object
         }) {
             this.eventHandler = options.eventHandler;
             this.fallbackHook = options.fallbackHook;
+            this.gpuVideoDecodeSessionFactory = options.gpuVideoDecodeSessionFactory;
             this.nativeAudioBridgeFactory = options.nativeAudioBridgeFactory;
             customDecodeMockState.instances.push(this);
         }
@@ -902,6 +961,7 @@ type MockPresenter = {
 type MockCustomPlaybackController = {
     eventHandler: (event: object) => void
     fallbackHook: (request: object) => Promise<void>
+    gpuVideoDecodeSessionFactory: unknown
     nativeAudioBridgeFactory: (() => object) | undefined
     getTelemetry: MockFunction
     play: MockFunction
@@ -942,6 +1002,14 @@ function getPresenter(): MockPresenter {
 function getCustomPlaybackController(): MockCustomPlaybackController {
     const sessionIndex = customDecodeMockState.instances.length - 1;
     return customDecodeMockState.instances[sessionIndex] as MockCustomPlaybackController;
+}
+
+/** Gives the backend the surface custom playback presents on: a container holding a video element. */
+function attachPresentationSurface(backend: MockHTMLPlayer): void {
+    const container = document.createElement('div');
+    const video = document.createElement('video');
+    container.appendChild(video);
+    backend.presentationSurface = { container, video };
 }
 
 type Deferred<Value> = {
@@ -1477,6 +1545,16 @@ const EXTERNAL_PQ_ROUTE_KEY = 'external-hevc-main10-bt709-limited:pq-v1';
 const EXTERNAL_HLG_ROUTE_KEY = 'external-hevc-main10-bt709-limited:hlg-v1';
 // The API key in the stream URL of the mocked eligibility's source
 const STREAM_URL_API_KEY = 'custom-decode-secret';
+// A stream URL Jellyfin chooses for direct play, whose cross-origin 206 responses hide Content-Range, and a path outside its stream endpoint
+const JELLYFIN_STREAM_URL = 'https://jellyfin.example/Videos/item-id/stream.mkv?static=true';
+const JELLYFIN_DOWNLOAD_PATH = '/Items/item-id/Download';
+// A GPU decoder offer and an audio decoder package, which the player hands on without reading them
+const GPU_VIDEO_DECODER_PACKAGE = { name: 'Test HEVC decoder' };
+const GPU_VIDEO_DECODER_OFFER = { decoderId: 'test-hevc-decoder-id', package: GPU_VIDEO_DECODER_PACKAGE };
+const AUDIO_DECODER_PACKAGE = { name: 'Test DTS decoder' };
+const GPU_VIDEO_DECODER_OFFERS_FAILURE = new Error('device-unavailable: the presenter has no device');
+const OFFERS_FAILED_WARNING = 'WebGPU decoder packages: offers-failed:';
+const SWITCHED_AUDIO_STREAM_INDEX = 3;
 
 function getLastEligibilityOptions(): Record<string, unknown> | undefined {
     return vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[2];
@@ -1566,6 +1644,10 @@ describe('WebGPUPlayer HTML delegation', () => {
         audioPrewarmMockState.maximumChannelCount = 2;
         audioPrewarmMockState.sampleRates.length = 0;
         nativeAudioCapabilityMockState.capabilities = null;
+        decoderPackageMockState.audioDecoders = [];
+        decoderPackageMockState.gpuVideoDecoderOffers = [];
+        decoderPackageMockState.gpuVideoDecoderOffersFailure = null;
+        decoderPackageMockState.sourceLoadCount = 0;
         vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback): number => {
             const identifier = animationFrameMockState.nextIdentifier;
             animationFrameMockState.nextIdentifier += 1;
@@ -2885,6 +2967,24 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         expect(trace?.metadata.eligibility).toMatchObject({ eligible: true, source: { kind: 'url' } });
         expect(JSON.stringify(trace?.metadata)).not.toContain(STREAM_URL_API_KEY);
+    });
+
+    it('hands the eligibility the stream URL as a source whose stream endpoint responses may hide Content-Range', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay', url: JELLYFIN_STREAM_URL }));
+
+        const playbackOptions = vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[0] as { source?: { hiddenContentRangePathPattern?: RegExp, kind: string, url: string } };
+        expect(playbackOptions.source).toMatchObject({ kind: 'url', url: JELLYFIN_STREAM_URL });
+        expect(playbackOptions.source?.hiddenContentRangePathPattern?.test(new URL(JELLYFIN_STREAM_URL).pathname)).toBe(true);
+        expect(playbackOptions.source?.hiddenContentRangePathPattern?.test(JELLYFIN_DOWNLOAD_PATH)).toBe(false);
     });
 
     it('uses eligible custom playback without starting the native media source', async () => {
@@ -6587,6 +6687,83 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(player.supports('AirPlay')).toBe(true);
         expect(player.supports('SetBrightness')).toBe(true);
         expect(player.getBufferedRanges()).toBe(bufferedRanges);
+    });
+
+    it('downloads no GPU decoder for a direct play the native video route plays', async () => {
+        const player = new WebGPUPlayer();
+        attachPresentationSurface(getBackend());
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        decoderPackageMockState.gpuVideoDecoderOffers = [ GPU_VIDEO_DECODER_OFFER ];
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+
+        expect(decoderPackageMockState.sourceLoadCount).toBe(0);
+        expect(getLastEligibilityOptions()).not.toHaveProperty('gpuVideoDecoders');
+        expect(getCustomPlaybackController().play).toHaveBeenCalledWith(expect.objectContaining({ videoDecoderBackend: 'native' }));
+        expect(getCustomPlaybackController().play.mock.lastCall?.[0]).not.toHaveProperty('gpuVideoDecoder');
+    });
+
+    it('offers GPU decoders to a direct play without a native video route, and plays the one the eligibility selects', async () => {
+        const player = new WebGPUPlayer();
+        attachPresentationSurface(getBackend());
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
+        decoderPackageMockState.gpuVideoDecoderOffers = [ GPU_VIDEO_DECODER_OFFER ];
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+
+        const customPlaybackController = getCustomPlaybackController();
+        expect(decoderPackageMockState.sourceLoadCount).toBe(1);
+        expect(getLastEligibilityOptions()).toMatchObject({ gpuVideoDecoders: [ GPU_VIDEO_DECODER_OFFER ] });
+        expect(customPlaybackController.gpuVideoDecodeSessionFactory).toBe(decoderPackageMockState.gpuVideoDecodeSessionFactory);
+        expect(customPlaybackController.play).toHaveBeenCalledWith(expect.objectContaining({
+            gpuVideoDecoder: {
+                codec: DECODER_PACKAGE_SELECTION.gpuVideoDecoderCodec,
+                decoderId: GPU_VIDEO_DECODER_OFFER.decoderId,
+                package: GPU_VIDEO_DECODER_PACKAGE
+            },
+            rawVideoFrameFormat: DECODER_PACKAGE_SELECTION.gpuVideoDecodeFormat,
+            videoDecoderBackend: 'gpu',
+            videoOutputMode: 'frame-pool'
+        }));
+    });
+
+    it('keeps the route the first eligibility chose when the GPU decoder offers fail', async () => {
+        const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const player = new WebGPUPlayer();
+        attachPresentationSurface(getBackend());
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
+        decoderPackageMockState.gpuVideoDecoderOffersFailure = GPU_VIDEO_DECODER_OFFERS_FAILURE;
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+
+        expect(consoleWarning).toHaveBeenCalledWith(OFFERS_FAILED_WARNING, GPU_VIDEO_DECODER_OFFERS_FAILURE);
+        expect(getCustomPlaybackController().play).toHaveBeenCalledWith(expect.objectContaining({ videoDecoderBackend: 'bundled-hevc' }));
+        expect(getCustomPlaybackController().play.mock.lastCall?.[0]).not.toHaveProperty('gpuVideoDecoder');
+        consoleWarning.mockRestore();
+    });
+
+    it('plays and switches audio tracks with the audio decoder package the eligibility selects', async () => {
+        const player = new WebGPUPlayer();
+        attachPresentationSurface(getBackend());
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.audioTrackIndex = 1;
+        decoderPackageMockState.audioDecoders = [ AUDIO_DECODER_PACKAGE ];
+        const audioDecoder = { codec: DECODER_PACKAGE_SELECTION.audioDecoderCodec, source: AUDIO_DECODER_PACKAGE };
+
+        await player.play(createKnownSDRAudioPlayOptions());
+        const customPlaybackController = getCustomPlaybackController();
+        player.setAudioStreamIndex(SWITCHED_AUDIO_STREAM_INDEX);
+        await vi.waitFor(() => expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledOnce());
+
+        expect(getLastEligibilityOptions()).toMatchObject({ audioDecoders: [ AUDIO_DECODER_PACKAGE ] });
+        expect(customPlaybackController.play).toHaveBeenCalledWith(expect.objectContaining({ audioDecoder }));
+        expect(customPlaybackController.setAudioStreamIndex.mock.lastCall?.[4]).toEqual(audioDecoder);
     });
 });
 

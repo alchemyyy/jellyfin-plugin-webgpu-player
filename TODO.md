@@ -43,6 +43,12 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
   A 4K source is then re-encoded just to burn in a bitmap.
   The host's libbitsub already renders VobSub.
   Closing it needs a `dvdsub` subtitle profile and a delivery the server supports for an external `.idx`/`.sub` pair (not yet checked), then libbitsub's VobSub path on both backends.
+- AV1 above level 5.x, 8K included.
+  The AV1 decoder package accepts pictures up to 8192x4352 and 8,912,896 samples, so level 6 streams have no route; 239 of AOM's Argon conformance streams are past that limit.
+  Closing it needs a frame store above 1 GB at 8K (ten frame buffers of 16-bit samples; one byte per sample for 8-bit content would halve it), records past the 64 MiB packet bound in the worst case (the engine now takes `packet:` up to 512 MiB where the device holds the ring), the package's `accepts` raised to level 6, and a conformance run over those Argon streams.
+- MPEG-2 and VC-1 in MPEG-TS and M2TS.
+  Mediabunny 1.52.2 drops VC-1's stream type 0xEA, and its video setup and packet splitter handle only AVC and HEVC, in private methods the engine cannot wrap, so neither codec is reachable in a transport stream.
+  Closing it needs Mediabunny to surface those streams, through an upstream change (a public action that needs the project owner's decision) or an engine input format of its own like the Matroska and Motion JPEG 2000 fixes; the engine then needs only the codec ID, extradata from the first key packet, and both codecs in the transport stream rule.
 
 ## Startup performance
 
@@ -143,6 +149,18 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 - Report the Mediabunny defects the engine contains upstream.
   Header-stripped laced Matroska blocks (`CustomDecodeInputFormats.ts`) and the unhandled `close()` after a custom decoder fails (`HandledDecodeFailures.ts`) both remain in Mediabunny 1.61.3; the engine book's `decisions.md` describes them.
   Reporting them is a public action and needs the project owner's decision.
+
+## Jellyfin integration
+
+- The device profile advertises only what native routes decode.
+  The add-on stores the decoder packages a user adds in its settings and offers them to each playback, but `CustomDeviceProfile.ts` still lists AV1's Main profile alone and no 4:0:0 HEVC.
+  Jellyfin therefore transcodes High and Professional AV1 (4:2:2, 4:4:4, 12-bit) and monochrome HEVC before the engine's package fallback ever sees them.
+  Closing it needs the profile built from the stored packages as well: the codecs, profiles, pixel formats, and bit depths their `accepts`, `output`, and `monochrome` lines take.
+- The add-on's tests do not build.
+  `jellyfin-webgpu-client.tests` has 54 typecheck errors from the engine's removals and moves, and `WebGPUPlayer.test.ts` fails 14 tests: its mock of `src/DecoderPackages.ts` lacks `getVideoDecoderPackages`, and some tests still expect the removed `bundled-hevc` backend.
+  Closing it needs the tests rewritten against the package-based engine.
+- The plugin's last build predates the decoder packages.
+  The add-on output in `bin/` still embeds the removed CPU decoders, so deploying it without `./build.sh` ships the old player.
 
 ## Settled decisions
 

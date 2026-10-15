@@ -252,7 +252,7 @@ function getDolbyVisionVideoRangeTypes(
         // RPU reconstruction presents every compatibility ID, including the ones Jellyfin labels DOVIInvalid
         rangeTypes.push(DOLBY_VISION_INVALID_VIDEO_RANGE_TYPE);
     }
-    // Without the bundled Main 10 qualification, which decodes the EL, Profile 7 still reconstructs from its BL
+    // No decoder decodes the EL, so Profile 7 reconstructs from its BL
     if (allowRawDolbyVisionProfile7) {
         rangeTypes.push(...DOLBY_VISION_PROFILE_7_VIDEO_RANGE_TYPES);
         if (allowRawDolbyVisionProfile7HDR10Base) {
@@ -437,24 +437,17 @@ function getDolbyVisionItemVideoRoute(
     };
 }
 
-function hasSupportedBundledHEVCProfile(
-    capabilities: CustomDecodeCapabilities,
-    profile: 'main' | 'main10'
-): boolean {
-    return Object.values(capabilities.bundledHEVC?.qualifications ?? {}).some(qualification => (
-        qualification.profile === profile && qualification.status === 'supported'
-    ));
-}
-
 const NATIVE_VIDEO_PROFILES: Readonly<Record<CustomVideoCodec, readonly string[]>> = {
     av1: [ 'main' ],
     h264: [],
     hevc: [ 'main' ],
     jpeg2000: [],
+    mpeg1video: [],
     mpeg2video: [ 'main' ],
     vc1: [ 'advanced' ],
     vp8: [],
-    vp9: [ 'profile 0' ]
+    vp9: [ 'profile 0' ],
+    wmv3: [ 'simple', 'main', 'complex' ]
 };
 
 function getNativeVideoProfiles(
@@ -477,18 +470,17 @@ function supportsNativeVideoCodec(
     switch (codec) {
         case 'h264':
             return getNativeVideoProfiles(codec, capabilities).length > 0;
-        case 'hevc':
-            return hasSupportedNativeSDRVideoCodec(codec, capabilities)
-                || hasSupportedBundledHEVCProfile(capabilities, 'main');
         case 'av1':
+        case 'hevc':
         case 'vp9':
             return hasSupportedNativeSDRVideoCodec(codec, capabilities);
         case 'jpeg2000':
-            return capabilities.bundledJPEG2000?.status === 'supported';
+        case 'mpeg1video':
         case 'mpeg2video':
-            return capabilities.bundledMPEG2?.status === 'supported';
         case 'vc1':
-            return capabilities.bundledVC1?.status === 'supported';
+        case 'wmv3':
+            // Only a decoder package decodes these
+            return false;
         case 'vp8':
             return capabilities.video[codec].status === 'supported';
     }
@@ -692,13 +684,6 @@ function getSupportedAudioCodecs(
 ): CustomAudioCodec[] {
     const supportedCodecs: CustomAudioCodec[] = [];
     for (const codec of CUSTOM_AUDIO_CODECS) {
-        if (codec === 'dts' && capabilities.bundledDTS?.status !== 'supported') {
-            continue;
-        }
-        if ((codec === 'mlp' || codec === 'truehd')
-            && capabilities.bundledTrueHD?.status !== 'supported') {
-            continue;
-        }
         const nativeMediaSupported = (codec === 'ac3' || codec === 'eac3')
             && nativeMediaAudioCapabilities?.audio[codec].status === 'supported';
         if (capabilities.audio[codec].status === 'supported' || nativeMediaSupported) {
@@ -1312,10 +1297,6 @@ function hasRawHDRCapabilities(
         if (capability.status !== 'supported') {
             return false;
         }
-        if (capability.reason === 'bundled-software-decoder'
-            && !hasSupportedBundledHEVCProfile(capabilities, 'main10')) {
-            return false;
-        }
     }
     return rawHDRCodecs.length > 0;
 }
@@ -1617,34 +1598,6 @@ function createNativeMeasuredVideoRoute(
         return null;
     }
 
-    if (codec === 'jpeg2000') {
-        const capability = capabilities.bundledJPEG2000;
-        if (capability?.status !== 'supported') {
-            return null;
-        }
-        return {
-            bitDepths: [ capability.bitDepth ],
-            codec,
-            profiles: [],
-            rangeTypes: [ 'SDR' ]
-        };
-    }
-
-    if (codec === 'mpeg2video' || codec === 'vc1') {
-        const capability = codec === 'vc1' ?
-            capabilities.bundledVC1 :
-            capabilities.bundledMPEG2;
-        if (capability?.status !== 'supported') {
-            return null;
-        }
-        return {
-            bitDepths: [ CUSTOM_NATIVE_VIDEO_BIT_DEPTH ],
-            codec,
-            profiles: NATIVE_VIDEO_PROFILES[codec],
-            rangeTypes: [ 'SDR' ]
-        };
-    }
-
     return {
         bitDepths: [ CUSTOM_NATIVE_VIDEO_BIT_DEPTH ],
         codec,
@@ -1665,10 +1618,6 @@ function createRawHDRMeasuredVideoRoute(
 
     const rawCapability = capabilities.rawHDRVideo[codec];
     if (rawCapability.status !== 'supported') {
-        return null;
-    }
-    if (rawCapability.reason === 'bundled-software-decoder'
-        && !hasSupportedBundledHEVCProfile(capabilities, 'main10')) {
         return null;
     }
     return {
@@ -2762,13 +2711,12 @@ function hasQualifiedDecodedSurroundRoute(
     }
     switch (codec) {
         case 'ac3':
-        case 'eac3':
-            return true;
         case 'dts':
-            return capabilities.bundledDTS?.status === 'supported';
+        case 'eac3':
         case 'mlp':
         case 'truehd':
-            return capabilities.bundledTrueHD?.status === 'supported';
+            // No engine decoder decodes these to PCM
+            return false;
         case 'aac':
         case 'flac':
         case 'opus':

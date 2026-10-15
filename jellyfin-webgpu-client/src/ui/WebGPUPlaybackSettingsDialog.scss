@@ -189,34 +189,43 @@
         display: none;
     }
 
-    .webgpuSettingsPasses {
+    .webgpuSettingsPasses,
+    .webgpuSettingsDecoders {
         display: flex;
         gap: 0.4em;
         margin: 0.35em 0;
         flex-direction: column;
     }
 
-    .webgpuSettingsPass {
+    .webgpuSettingsDecoders:empty {
+        display: none;
+    }
+
+    .webgpuSettingsPass,
+    .webgpuSettingsDecoder {
         padding: 0.35em 0.5em;
         background: rgba(255, 255, 255, 0.06);
         border-radius: 0.2em;
     }
 
-    .webgpuSettingsPassHeader {
+    .webgpuSettingsPassHeader,
+    .webgpuSettingsDecoderHeader {
         display: flex;
         gap: 0.5em;
         align-items: center;
         justify-content: space-between;
     }
 
-    .webgpuSettingsPassName {
+    .webgpuSettingsPassName,
+    .webgpuSettingsDecoderName {
         overflow: hidden;
         font-weight: 600;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
-    .webgpuSettingsPassState {
+    .webgpuSettingsPassState,
+    .webgpuSettingsDecoderState {
         overflow-wrap: anywhere;
     }
 
