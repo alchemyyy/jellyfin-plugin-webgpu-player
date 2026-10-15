@@ -6,6 +6,7 @@ import { handleCommand } from 'scripts/inputManager';
 
 import type { AddonStringKey } from '../host/globalize';
 import { webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
+import { bindDecoderPackageSection, createDecoderPackageSectionHTML } from './DecoderPackageSection';
 import { scheduleSelectLabelFallback } from './SelectLabelFallback';
 import {
     bindPresentationSection,
@@ -542,6 +543,8 @@ function createPanelHTML(): string {
                     >${translateToHTML('WebGPUResetAudio')}</button>
                 </section>
 
+                ${createDecoderPackageSectionHTML()}
+
                 <div class="webgpuSettingsFooter">
                     <button
                         class="raised webgpuSettingsResetAll"
@@ -863,6 +866,11 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             settings = nextSettings;
             return persistSettings();
         }
+    });
+    bindDecoderPackageSection({
+        cleanupCallbacks,
+        isActive: (): boolean => panelActive,
+        panel
     });
 
     const commitAudioOutputDevice = (deviceId: string | null): void => {

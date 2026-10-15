@@ -419,8 +419,6 @@ def release_notes(tag: str, repository: str, changelog: str | None, target: str,
         f"To install, add {manifest_url} as a plugin repository (Dashboard > Plugins),"
         f" then install {configuration['name']} from the catalog.",
         "",
-        "The tarballs are the corresponding source of the LGPL decoders built into the plugin.",
-        "",
         "## Pull Requests",
         "",
         *format_pull_request_lines(pull_requests),

@@ -53,20 +53,18 @@ export function translateAudioPath(audioPath: CustomPlaybackTelemetry['audioPath
 /** Translates the video decoder the custom path chose. */
 export function translateVideoDecoderBackend(backend: CustomDecodeVideoDecoderBackend): string {
     switch (backend) {
-        case 'bundled-hevc':
-            return globalize.translate('WebGPUVideoDecoderBundledHEVC');
-        case 'ffmpeg-mpeg2-vc1':
-            return globalize.translate('WebGPUVideoDecoderFFmpegMPEG2VC1');
+        case 'gpu':
+            return globalize.translate('WebGPUVideoDecoderGPU');
         case 'native':
             return globalize.translate('WebGPUVideoDecoderNative');
-        case 'openjpeg':
-            return globalize.translate('WebGPUVideoDecoderOpenJPEG');
     }
 }
 
 /** Translates how decoded video reaches the presenter. */
 export function translateVideoOutputMode(outputMode: CustomDecodeVideoOutputMode): string {
     switch (outputMode) {
+        case 'frame-pool':
+            return globalize.translate('WebGPUVideoOutputFramePool');
         case 'raw-planes':
             return globalize.translate('WebGPUVideoOutputRawPlanes');
         case 'video-frame':

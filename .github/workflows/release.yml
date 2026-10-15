@@ -1,5 +1,5 @@
 # Releases the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
-# The release job sets the version, builds and packages the plugin, publishes the GitHub release with the zip and the LGPL decoder sources, and then commits the version and manifest.json to main.
+# The release job sets the version, builds and packages the plugin, publishes the GitHub release with the zip, and then commits the version and manifest.json to main.
 # The release notes list the merged pull requests and the commits since the previous release tag.
 name: Release
 
@@ -90,26 +90,22 @@ jobs:
       - name: Set the version and changelog
         run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG"
 
-      - name: Read the engine's decoder build settings
+      - name: Read the engine's WebAssembly build settings
         run: |
           engine_directory="$(git config --file .gitmodules --get submodule.webgpu-player.path)"
           # The engine names its folders in tools/constants.json
           wasm_directory="$engine_directory/$(node -p 'require(process.argv[1])[process.argv[2]]' \
             "$PWD/$engine_directory/tools/constants.json" wasmDirectory)"
-          # The decoder Makefile pins the toolchain and names the source archive folder
-          make_variable() {
-            make --no-print-directory --silent -C "$wasm_directory" --eval "print-variable: ; @echo \$($1)" print-variable
-          }
-          emscripten_version="$(make_variable EMSCRIPTEN_VERSION)"
-          source_archives_directory="$(make_variable ARCHIVES)"
-          if [[ -z "$emscripten_version" || -z "$source_archives_directory" ]]; then
-            echo "::error::The decoder Makefile in $wasm_directory no longer defines EMSCRIPTEN_VERSION or ARCHIVES"
+          # The engine's WebAssembly Makefile pins the toolchain
+          emscripten_version="$(make --no-print-directory --silent -C "$wasm_directory" \
+            --eval "print-variable: ; @echo \$(EMSCRIPTEN_VERSION)" print-variable)"
+          if [[ -z "$emscripten_version" ]]; then
+            echo "::error::The WebAssembly Makefile in $wasm_directory no longer defines EMSCRIPTEN_VERSION"
             exit 1
           fi
           {
             echo "WASM_DIRECTORY=$wasm_directory"
             echo "PINNED_EMSCRIPTEN_VERSION=$emscripten_version"
-            echo "SOURCE_ARCHIVES_DIRECTORY=$source_archives_directory"
           } >> "$GITHUB_ENV"
 
       # Both installs are mostly downloads, so the Rust toolchain installs in the background while Emscripten does
@@ -123,14 +119,11 @@ jobs:
           "$emsdk_directory/emsdk" install "$PINNED_EMSCRIPTEN_VERSION"
           "$emsdk_directory/emsdk" activate "$PINNED_EMSCRIPTEN_VERSION"
           wait "$rust_install_process_id"
-          # The decoder Makefile finds emcc through EMSDK
+          # The WebAssembly Makefile finds emcc through EMSDK
           echo "EMSDK=$emsdk_directory" >> "$GITHUB_ENV"
 
       - name: Build the plugin
         run: ./build.sh --publish
-
-      - name: Write the corresponding source of the LGPL decoders
-        run: make -C "$WASM_DIRECTORY" source-archives
 
       - name: Package the plugin and record it in manifest.json
         run: |
@@ -164,7 +157,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git push origin "refs/tags/$TAG"
-          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip "$SOURCE_ARCHIVES_DIRECTORY"/*.tar.gz \
+          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip \
             --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
 
       # Commits pushed to main during the build go under the release commit; the tag keeps the commit that was built

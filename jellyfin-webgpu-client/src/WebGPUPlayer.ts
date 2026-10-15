@@ -47,6 +47,7 @@ import {
     type RenderSettings
 } from 'webgpu-player/presentation/RenderSettings';
 import { loadStoredPresentationPreset, type StoredPresentationPreset } from './PresentationPassStore';
+import { getAudioDecoderPackages, getVideoDecoderPackages, loadPlaybackDecoderPackages } from './DecoderPackages';
 import {
     createConfiguredHDRRenderSettings,
     loadWebGPUUserSettings,
@@ -74,6 +75,7 @@ import {
     getCustomPlaybackEligibility,
     hasPotentialCustomPlaybackVideoRoute,
     type CustomPlaybackEligibility,
+    type CustomPlaybackEligibilityOptions,
     type CustomPlaybackIneligibilityReason,
     type EligibleCustomPlayback
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
@@ -101,7 +103,7 @@ import type {
 } from 'webgpu-player/pipeline/DecodeWorkerProtocol';
 import {
     type RawDolbyVisionVideoFrameFormat
-} from 'webgpu-player/video/RawVideoFrameCopy';
+} from 'webgpu-player/decode/video/RawVideoFrameCopy';
 import {
     probeCachedNativeMediaAudioCapabilities,
     type NativeMediaAudioCapabilities
@@ -109,7 +111,7 @@ import {
 import { selectCustomAudioOutputChannelCountForMaximum } from 'webgpu-player/audio/NativeMultichannelAudioOutput';
 import {
     type StaticHDRMetadata
-} from 'webgpu-player/video/hdr/StaticHDRMetadata';
+} from 'webgpu-player/demux/hdr/StaticHDRMetadata';
 import {
     augmentDeviceProfileForCustomDecode,
     createBitrateIndependentDeviceProfile,
@@ -122,11 +124,12 @@ import {
     getCustomPlaybackRuntimeAvailability,
     type CustomPlaybackRuntimeAvailability
 } from 'webgpu-player/capability/CustomPlaybackRuntime';
-import type { CustomDecodeMediaSource } from 'webgpu-player/pipeline/CustomDecodeMediaSource';
+import type { CustomDecodeMediaSource } from 'webgpu-player/demux/CustomDecodeMediaSource';
 import CustomPlaybackFrameLoop from 'webgpu-player/pipeline/CustomPlaybackFrameLoop';
 import {
     alignPresentationInputBitDepth,
     configurePresentationColorPipeline,
+    createGPUVideoDecodeSessionFactory,
     DEFAULT_DOLBY_VISION_RAW_FRAME_FORMAT,
     DOLBY_VISION_HDR10_BASE_COLOR_METADATA,
     DOLBY_VISION_HLG_BASE_COLOR_METADATA,
@@ -134,6 +137,7 @@ import {
     getCustomPresentationEligibilityOptions,
     getDolbyVisionReconstructionTarget,
     getDualLayerDolbyVisionRawFrameFormat,
+    getGPUVideoDecoderOffers,
     getSingleLayerDolbyVisionRawFrameFormat,
     getStaticHDRRenderSettings,
     hasAuthorizedDolbyVisionBaseRoute,
@@ -155,6 +159,8 @@ import WebGPUPresenter, {
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import type { StoredDecoderPackages } from 'webgpu-player/decode/packages/DecoderPackageStore';
+import type { GPUVideoDecoderOffer } from 'webgpu-player/decode/video/gpu/GPUVideoDecoderCatalog';
 
 import type {
     DolbyVisionAuthorizationRoute,
@@ -172,6 +178,9 @@ import type {
     RawHDRAuthorizationTelemetry
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
 
+// Jellyfin's stream endpoint, whose cross-origin 206 responses hide Content-Range; the engine accepts them on a bounded Content-Length
+const JELLYFIN_MEDIA_STREAM_PATH_PATTERN = /\/Videos\/[^/]+\/stream(?:\.[^/]+)?$/i;
+
 /** Returns play options with the stream URL Jellyfin chose as the engine's media source, which the eligibility reads. */
 function withStreamURLSource(options: unknown): unknown {
     if (!options || typeof options !== 'object') {
@@ -181,7 +190,7 @@ function withStreamURLSource(options: unknown): unknown {
     if (typeof url !== 'string') {
         return options;
     }
-    const source: CustomDecodeMediaSource = { kind: 'url', url };
+    const source: CustomDecodeMediaSource = { hiddenContentRangePathPattern: JELLYFIN_MEDIA_STREAM_PATH_PATTERN, kind: 'url', url };
     return { ...options, source };
 }
 
@@ -536,6 +545,7 @@ const CUSTOM_PLAYBACK_INELIGIBLE_RENEGOTIATION_MESSAGE = 'Custom playback is ine
 // Logged reasons for declines that carry no engine ineligibility reason
 const CUSTOM_PLAYBACK_ELIGIBILITY_UNAVAILABLE_REASON = 'eligibility-unavailable';
 const WEBGPU_PRESENTATION_DISABLED_REASON = 'webgpu-presentation-disabled';
+const NATIVE_VIDEO_DECODER_BACKEND: CustomDecodeVideoDecoderBackend = 'native';
 
 function isDocumentVisible(): boolean {
     // eslint-disable-next-line compat/compat -- WebGPU playback is capability-gated
@@ -788,9 +798,12 @@ function getDecodedAudioDownmixSettings(
     return eligibility.audioOutputMode === 'decoded-pcm' ? settings.audio.downmix : undefined;
 }
 
-/** Returns the play option of a dual-layer route that reconstructs without its EL. */
-function getDiscardedEnhancementLayerPlayOption(eligibility: EligibleCustomPlayback): { discardDolbyVisionEnhancementLayer?: true } {
-    return eligibility.discardDolbyVisionEnhancementLayer ? { discardDolbyVisionEnhancementLayer: true } : {};
+/** Returns the play options of the decoder packages a route chose: the audio track's package, and the frame-pool route's GPU decoder. */
+function getDecoderPackagePlayOptions(eligibility: EligibleCustomPlayback): Pick<EligibleCustomPlayback, 'audioDecoder' | 'gpuVideoDecoder'> {
+    return {
+        ...(eligibility.audioDecoder ? { audioDecoder: eligibility.audioDecoder } : {}),
+        ...(eligibility.gpuVideoDecoder ? { gpuVideoDecoder: eligibility.gpuVideoDecoder } : {})
+    };
 }
 
 function initializeWebGPUAudioOutputManager(): WebGPUAudioOutputManager {
@@ -2141,6 +2154,8 @@ export default class WebGPUPlayer {
                     request
                 ).then(() => undefined);
             },
+            // The frame-pool route decodes on the presenter's device
+            gpuVideoDecodeSessionFactory: createGPUVideoDecodeSessionFactory(this.presenter),
             nativeAudioBridgeFactory
         });
         controllerReference.controller = customPlaybackController;
@@ -2332,12 +2347,12 @@ export default class WebGPUPlayer {
             this.customPlaybackAudioDownmixAlgorithm = audioDownmixAlgorithm ?? null;
 
             const startResult = await customPlaybackController.play({
+                ...getDecoderPackagePlayOptions(eligibility),
                 audioDownmixAlgorithm,
                 audioDownmixSettings: getDecodedAudioDownmixSettings(eligibility, webGPUUserSettings),
                 audioOutputMode: eligibility.audioOutputMode ?? undefined,
                 audioTrackIndex: eligibility.audioTrackIndex,
                 decodedAudioOutputChannelCount,
-                ...getDiscardedEnhancementLayerPlayOption(eligibility),
                 durationMicroseconds: eligibility.durationMicroseconds,
                 dolbyVisionProfile: eligibility.dolbyVisionProfile,
                 maximumCodedHeight: eligibility.maximumCodedHeight,
@@ -2482,9 +2497,10 @@ export default class WebGPUPlayer {
 
         const runtimeAvailability = getCustomPlaybackRuntimeAvailability();
         this.lastCustomPlaybackRuntimeAvailability = runtimeAvailability;
-        const [ capabilities, nativeMediaAudioCapabilities ] = await Promise.all([
+        const [ capabilities, nativeMediaAudioCapabilities, decoderPackages ] = await Promise.all([
             this.getCustomDecodeCapabilitiesForOptions(options),
-            this.lastNativeMediaAudioCapabilities ?? probeCachedNativeMediaAudioCapabilities()
+            this.lastNativeMediaAudioCapabilities ?? probeCachedNativeMediaAudioCapabilities(),
+            loadPlaybackDecoderPackages()
         ]);
         if (!this.isRequestedSessionCurrent(backendGeneration)) {
             return null;
@@ -2499,13 +2515,38 @@ export default class WebGPUPlayer {
         if (!presentationOptions) {
             return null;
         }
-        const eligibility = getCustomPlaybackEligibility(withStreamURLSource(options), capabilities, {
+        const playbackOptions = withStreamURLSource(options);
+        const eligibilityOptions: CustomPlaybackEligibilityOptions = {
             ...presentationOptions,
+            audioDecoders: getAudioDecoderPackages(decoderPackages),
             nativeMediaAudioCapabilities,
             runtimeAvailability
-        });
+        };
+        let eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, eligibilityOptions);
+        // A native video route comes before every GPU decoder, and only direct play decodes in the page,
+        // so the GPU decoders are offered only to a direct play without a native route
+        if (this.isDirectPlayOptions(options)
+            && (!eligibility.eligible || eligibility.videoDecoderBackend !== NATIVE_VIDEO_DECODER_BACKEND)) {
+            const gpuVideoDecoders = await this.getGPUVideoDecoderOffers(decoderPackages, playbackOptions);
+            if (!this.isRequestedSessionCurrent(backendGeneration)) {
+                return null;
+            }
+            if (gpuVideoDecoders.length > 0) {
+                eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, { ...eligibilityOptions, gpuVideoDecoders });
+            }
+        }
         this.lastCustomPlaybackEligibility = eligibility;
         return eligibility;
+    }
+
+    /** Returns the GPU decoders a playback may choose on the presenter's device; a failed check offers none, and playback continues without them. */
+    private async getGPUVideoDecoderOffers(decoderPackages: StoredDecoderPackages, playbackOptions: unknown): Promise<readonly GPUVideoDecoderOffer[]> {
+        try {
+            return await getGPUVideoDecoderOffers(this.presenter, getVideoDecoderPackages(decoderPackages), playbackOptions);
+        } catch (error) {
+            console.warn('WebGPU decoder packages: offers-failed:', error);
+            return [];
+        }
     }
 
     private getCustomPresentationEligibilityOptions(backendGeneration: number): Promise<CustomPresentationEligibilityOptions | null> {
@@ -2948,7 +2989,8 @@ export default class WebGPUPlayer {
             eligibility.audioTrackIndex,
             audioOutputMode,
             selectDecodedAudioOutputChannelCount(eligibility, maximumChannelCount, audioSettings.forceStereoDownmix),
-            audioOutputMode === 'decoded-pcm' ? audioSettings.downmix : undefined
+            audioOutputMode === 'decoded-pcm' ? audioSettings.downmix : undefined,
+            eligibility.audioDecoder
         );
         if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
