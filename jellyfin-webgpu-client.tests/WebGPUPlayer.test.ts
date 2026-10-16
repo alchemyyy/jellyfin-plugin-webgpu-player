@@ -23,6 +23,7 @@ import type {
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import { UNKNOWN_VIDEO_STREAM_FIELDS, type VideoStreamFields } from 'webgpu-player/decode/video/VideoFields';
 import { addPassSource } from 'addons/webGPUPlayer/PresentationPassStore';
 import { installIndexedDBFake } from './indexedDBFake';
 import {
@@ -35,6 +36,16 @@ import {
 
 // One store for the file, since the pass source store keeps its connection for the page
 const indexedDBFake = installIndexedDBFake();
+
+// The presenter mock deinterlaces nothing, so frames are taken at the target time itself
+const NO_FRAME_LOOKAHEAD_MICROSECONDS = vi.hoisted((): number => 0);
+// The eligibility's refusal of a video codec no route decodes
+const VIDEO_ROUTE_REFUSAL_REASON = vi.hoisted((): string => 'codec-unsupported');
+// The audio decoder package a track switch passes when the eligibility selected none
+const NO_AUDIO_DECODER_SELECTION = undefined;
+// The declared fields a color pipeline configuration carries for the 2160p progressive Dolby Vision streams;
+// a stream that declares no size or scan carries UNKNOWN_VIDEO_STREAM_FIELDS
+const PROGRESSIVE_UHD_VIDEO_FIELDS: VideoStreamFields = { frameHeight: 2_160, frameWidth: 3_840, scan: 'progressive' };
 
 type MockAudioEligibilityOverride = {
     audioOutputMode?: 'native-media'
@@ -102,7 +113,6 @@ const customDecodeMockState = vi.hoisted(() => ({
     audioOutputMode: 'decoded-pcm' as 'decoded-pcm' | 'native-media',
     audioSourceChannelCount: 2,
     audioTrackIndex: null as number | null,
-    discardDolbyVisionEnhancementLayer: false,
     dolbyVision: false,
     dolbyVisionProfile7HDR10Base: false,
     dolbyVisionProfile7: false,
@@ -116,9 +126,10 @@ const customDecodeMockState = vi.hoisted(() => ({
     maximumCodedHeight: 1_080,
     maximumCodedWidth: 1_920,
     nativeHDRTransfer: null as 'hlg' | 'pq' | null,
+    // False leaves the video without a native decoder, so only an offered GPU decoder routes it
+    nativeVideoRoute: true,
     neutralizeHDRColorMetadata: false,
     startupFallback: false,
-    videoDecoderBackend: 'native' as 'bundled-hevc' | 'native',
     videoOutputMode: 'video-frame' as 'raw-planes' | 'video-frame'
 }));
 const customProfileMockState = vi.hoisted(() => ({
@@ -159,7 +170,8 @@ const decoderPackageMockState = vi.hoisted(() => ({
     gpuVideoDecodeSessionFactory: vi.fn(),
     gpuVideoDecoderOffers: [] as Array<{ decoderId: string, package: object }>,
     gpuVideoDecoderOffersFailure: null as Error | null,
-    sourceLoadCount: 0
+    // GPU decoder offer requests, which download the server's packages a playback needs and check them on the device
+    offerRequestCount: 0
 }));
 
 vi.mock('lib/globalize', async () => {
@@ -251,11 +263,13 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                 options,
                 eligibilityOptions
             ) ?? null;
-            const eligible = customDecodeMockState.eligible
-                && (!customDecodeMockState.hdr || HDRPresentationAllowed)
-                && audioEligibilityOverride?.eligible !== false;
             const audioDecoderPackage = eligibilityOptions.audioDecoders?.[0];
             const gpuVideoDecoderOffer = eligibilityOptions.gpuVideoDecoders?.[0];
+            const videoRouted = customDecodeMockState.nativeVideoRoute || gpuVideoDecoderOffer !== undefined;
+            const eligible = customDecodeMockState.eligible
+                && videoRouted
+                && (!customDecodeMockState.hdr || HDRPresentationAllowed)
+                && audioEligibilityOverride?.eligible !== false;
             return eligible ? {
                 ...(audioDecoderPackage ?
                     { audioDecoder: { codec: DECODER_PACKAGE_SELECTION.audioDecoderCodec, source: audioDecoderPackage } } :
@@ -277,9 +291,6 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                     ?? customDecodeMockState.audioSourceChannelCount,
                 audioTrackIndex: audioEligibilityOverride?.audioTrackIndex
                     ?? customDecodeMockState.audioTrackIndex,
-                ...(customDecodeMockState.discardDolbyVisionEnhancementLayer ?
-                    { discardDolbyVisionEnhancementLayer: true } :
-                    {}),
                 dolbyVisionProfile: getDolbyVisionOutputProfile(),
                 durationMicroseconds: 60_000_000,
                 eligible: true,
@@ -291,12 +302,12 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                 rawVideoFrameFormat: getMockRawVideoFrameFormat(gpuVideoDecoderOffer !== undefined),
                 source: { kind: 'url', url: 'http://localhost/video.mp4?api_key=custom-decode-secret' },
                 startTimeMicroseconds: 1_000_000,
-                videoDecoderBackend: gpuVideoDecoderOffer ? 'gpu' : customDecodeMockState.videoDecoderBackend,
+                videoDecoderBackend: gpuVideoDecoderOffer ? 'gpu' : 'native',
                 videoOutputMode: gpuVideoDecoderOffer ? 'frame-pool' : customDecodeMockState.videoOutputMode,
                 videoTrackIndex: 0
             } : {
                 eligible: false,
-                reason: audioEligibilityOverride?.reason ?? 'invalid-options'
+                reason: audioEligibilityOverride?.reason ?? (videoRouted ? 'invalid-options' : VIDEO_ROUTE_REFUSAL_REASON)
             };
         })
     };
@@ -347,10 +358,6 @@ vi.mock('addons/webGPUPlayer/DecoderPackages', () => ({
     getDecoderPackageRouteSummaries: vi.fn(() => []),
     getStoredDecoderPackageIds: vi.fn(() => new Set<string>()),
     getVideoDecoderPackages: vi.fn(() => []),
-    loadGPUVideoDecoderSources: vi.fn(() => {
-        decoderPackageMockState.sourceLoadCount += 1;
-        return Promise.resolve([]);
-    }),
     loadPlaybackDecoderPackages: vi.fn(() => Promise.resolve({ failures: [], packages: [] }))
 }));
 
@@ -370,9 +377,12 @@ vi.mock('webgpu-player/presentation/PresentationSetup', async importOriginal => 
     return {
         ...originalModule,
         createGPUVideoDecodeSessionFactory: vi.fn(() => decoderPackageMockState.gpuVideoDecodeSessionFactory),
-        getGPUVideoDecoderOffers: vi.fn(() => (decoderPackageMockState.gpuVideoDecoderOffersFailure ?
-            Promise.reject(decoderPackageMockState.gpuVideoDecoderOffersFailure) :
-            Promise.resolve(decoderPackageMockState.gpuVideoDecoderOffers)))
+        getGPUVideoDecoderOffers: vi.fn(() => {
+            decoderPackageMockState.offerRequestCount += 1;
+            return decoderPackageMockState.gpuVideoDecoderOffersFailure ?
+                Promise.reject(decoderPackageMockState.gpuVideoDecoderOffersFailure) :
+                Promise.resolve(decoderPackageMockState.gpuVideoDecoderOffers);
+        })
     };
 });
 
@@ -526,7 +536,10 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
             this.eventHandler({ generation: 1, type: 'playing' });
         });
         destroy = vi.fn(() => Promise.resolve());
-        takeCurrentFrame = vi.fn(() => null);
+        // The frame loop takes frames at the presentation target time, which here is the clock
+        getPresentationTargetTime = vi.fn((): number => this.currentTimeMicroseconds);
+        takeFrame = vi.fn((): object | null => null);
+        isVideoDecodeEnded = vi.fn((): boolean => false);
         notifyFrameDiscarded = vi.fn(() => true);
         notifyFramePresented = vi.fn(() => true);
         setPageVisibility = vi.fn((): boolean => false);
@@ -652,6 +665,10 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
             videoFrameSubmissionCompleted?.(true);
             return true;
         });
+        // A progressive stream: no lookahead, and no held fields to redraw between frames
+        getFrameLookaheadMicroseconds = vi.fn((): number => NO_FRAME_LOOKAHEAD_MICROSECONDS);
+        presentHeldFields = vi.fn((): boolean => false);
+        awaitsLookaheadFrame = vi.fn((): boolean => false);
         seek = vi.fn();
         refresh = vi.fn();
         endSession = vi.fn();
@@ -956,7 +973,9 @@ type MockPresenter = {
     isRawDolbyVisionProfile7PresentationAuthorized: MockFunction
     refresh: MockFunction
     seek: MockFunction
+    getFrameLookaheadMicroseconds: MockFunction
     presentDecodedFrame: MockFunction
+    presentHeldFields: MockFunction
     prewarmDolbyVisionPresentationAuthorization: MockFunction
     prewarmExternalHDRPresentationAuthorization: MockFunction
     setDecodedFramePushMode: MockFunction
@@ -982,7 +1001,9 @@ type MockCustomPlaybackController = {
     pause: MockFunction
     resume: MockFunction
     destroy: MockFunction
-    takeCurrentFrame: MockFunction
+    getPresentationTargetTime: MockFunction
+    takeFrame: MockFunction
+    isVideoDecodeEnded: MockFunction
     notifyFrameDiscarded: MockFunction
     notifyFramePresented: MockFunction
     setPageVisibility: MockFunction
@@ -1630,7 +1651,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.audioEligibilityOverride = null;
         customDecodeMockState.eligible = false;
         customDecodeMockState.holdPlay = false;
-        customDecodeMockState.discardDolbyVisionEnhancementLayer = false;
         customDecodeMockState.dolbyVision = false;
         customDecodeMockState.dolbyVisionProfile7HDR10Base = false;
         customDecodeMockState.dolbyVisionProfile7 = false;
@@ -1638,13 +1658,13 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.dolbyVisionProfile8HLGBase = false;
         customDecodeMockState.hdr = false;
         customDecodeMockState.nativeHDRTransfer = null;
+        customDecodeMockState.nativeVideoRoute = true;
         customDecodeMockState.neutralizeHDRColorMetadata = false;
         customDecodeMockState.audioOutputMode = 'decoded-pcm';
         customDecodeMockState.audioSourceChannelCount = 2;
         customDecodeMockState.audioTrackIndex = null;
         customDecodeMockState.instances.length = 0;
         customDecodeMockState.startupFallback = false;
-        customDecodeMockState.videoDecoderBackend = 'native';
         customDecodeMockState.videoOutputMode = 'video-frame';
         customProfileMockState.augmentationCalls.length = 0;
         customProfileMockState.runtimeAvailable = true;
@@ -1660,7 +1680,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         decoderPackageMockState.audioDecoders = [];
         decoderPackageMockState.gpuVideoDecoderOffers = [];
         decoderPackageMockState.gpuVideoDecoderOffersFailure = null;
-        decoderPackageMockState.sourceLoadCount = 0;
+        decoderPackageMockState.offerRequestCount = 0;
         vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback): number => {
             const identifier = animationFrameMockState.nextIdentifier;
             animationFrameMockState.nextIdentifier += 1;
@@ -3095,7 +3115,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         ];
         customDecodeMockState.eligible = true;
         customDecodeMockState.hdr = true;
-        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
         customDecodeMockState.videoOutputMode = 'raw-planes';
         const defaults = createDefaultWebGPUUserSettings();
         userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({
@@ -3131,14 +3150,15 @@ describe('WebGPUPlayer HTML delegation', () => {
                 mode: 'hdr-to-sdr',
                 outputTransfer: 'srgb',
                 toneMapping: expect.objectContaining({ inputPeakNits: 2_500 })
-            })
+            }),
+            videoFields: UNKNOWN_VIDEO_STREAM_FIELDS
         }, 1);
         expect(player.getDetectedInputPeakNits()).toBe(1_000);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({
                 dolbyVisionProfile: null,
                 rawVideoFrameFormat: 'I420P10',
-                videoDecoderBackend: 'bundled-hevc',
+                videoDecoderBackend: 'native',
                 videoOutputMode: 'raw-planes'
             })
         );
@@ -3161,7 +3181,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.hdr = true;
         customDecodeMockState.nativeHDRTransfer = 'pq';
         customDecodeMockState.neutralizeHDRColorMetadata = true;
-        customDecodeMockState.videoDecoderBackend = 'native';
         customDecodeMockState.videoOutputMode = 'video-frame';
 
         await player.play(createKnownHDRPlayOptions({ playMethod: 'DirectPlay' }));
@@ -3180,7 +3199,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             settings: expect.objectContaining({
                 mode: 'hdr-to-sdr',
                 outputTransfer: 'srgb'
-            })
+            }),
+            videoFields: UNKNOWN_VIDEO_STREAM_FIELDS
         }, 1);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -3210,7 +3230,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.hdr = true;
         customDecodeMockState.nativeHDRTransfer = 'pq';
         customDecodeMockState.neutralizeHDRColorMetadata = true;
-        customDecodeMockState.videoDecoderBackend = 'native';
         customDecodeMockState.videoOutputMode = 'video-frame';
         presenter.getRenderSettings.mockReturnValue({
             display: { brightness: 0, contrast: 1, saturation: 1 },
@@ -3324,7 +3343,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.dolbyVision = true;
         customDecodeMockState.eligible = true;
         customDecodeMockState.hdr = true;
-        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
         customDecodeMockState.videoOutputMode = 'raw-planes';
 
         const options = createKnownDolbyVisionPlayOptions({ playMethod: 'DirectPlay' });
@@ -3342,13 +3360,14 @@ describe('WebGPUPlayer HTML delegation', () => {
                 mode: 'hdr-to-sdr',
                 outputTransfer: 'srgb',
                 toneMapping: expect.objectContaining({ inputPeakNits: 4_000 })
-            })
+            }),
+            videoFields: UNKNOWN_VIDEO_STREAM_FIELDS
         }, 1);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({
                 dolbyVisionProfile: 8,
                 rawVideoFrameFormat: 'I420P10',
-                videoDecoderBackend: 'bundled-hevc',
+                videoDecoderBackend: 'native',
                 videoOutputMode: 'raw-planes'
             })
         );
@@ -3369,7 +3388,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.dolbyVisionProfile7 = true;
         customDecodeMockState.eligible = true;
         customDecodeMockState.hdr = true;
-        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
         customDecodeMockState.videoOutputMode = 'raw-planes';
 
         await player.play(createKnownProfile7DolbyVisionPlayOptions({
@@ -3386,40 +3404,11 @@ describe('WebGPUPlayer HTML delegation', () => {
             settings: expect.objectContaining({
                 mode: 'hdr-to-sdr',
                 toneMapping: expect.objectContaining({ inputPeakNits: 4_000 })
-            })
+            }),
+            videoFields: PROGRESSIVE_UHD_VIDEO_FIELDS
         }, 1);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({ dolbyVisionProfile: 7 })
-        );
-        expect(customPlaybackController.play.mock.calls[0]?.[0])
-            .not.toHaveProperty('discardDolbyVisionEnhancementLayer');
-    });
-
-    it('starts a Profile 7 route that discards its EL without a qualified EL decoder', async () => {
-        const player = new WebGPUPlayer();
-        const backend = getBackend();
-        const container = document.createElement('div');
-        const video = document.createElement('video');
-        container.appendChild(video);
-        backend.presentationSurface = { container, video };
-        playbackPreferencesMockState.customDecodeEnabled = true;
-        playbackPreferencesMockState.hdrToneMappingEnabled = true;
-        presenterMockState.dolbyVisionAuthorized = true;
-        customDecodeMockState.discardDolbyVisionEnhancementLayer = true;
-        customDecodeMockState.dolbyVision = true;
-        customDecodeMockState.dolbyVisionProfile7 = true;
-        customDecodeMockState.eligible = true;
-        customDecodeMockState.hdr = true;
-        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
-        customDecodeMockState.videoOutputMode = 'raw-planes';
-
-        await player.play(createKnownProfile7DolbyVisionPlayOptions({
-            playMethod: 'DirectPlay'
-        }));
-
-        expect(backend.play).not.toHaveBeenCalled();
-        expect(getCustomPlaybackController().play).toHaveBeenCalledWith(
-            expect.objectContaining({ discardDolbyVisionEnhancementLayer: true, dolbyVisionProfile: 7 })
         );
     });
 
@@ -3830,7 +3819,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.hdr = true;
         customDecodeMockState.nativeHDRTransfer = 'pq';
         customDecodeMockState.neutralizeHDRColorMetadata = true;
-        customDecodeMockState.videoDecoderBackend = 'native';
         customDecodeMockState.videoOutputMode = 'video-frame';
 
         await player.play(createKnownProfile7DolbyVisionPlayOptions({
@@ -3852,7 +3840,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             settings: expect.objectContaining({
                 mode: 'hdr-to-sdr',
                 toneMapping: expect.objectContaining({ inputPeakNits: 1_000 })
-            })
+            }),
+            videoFields: PROGRESSIVE_UHD_VIDEO_FIELDS
         }, 1);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -3886,7 +3875,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.hdr = true;
         customDecodeMockState.nativeHDRTransfer = 'pq';
         customDecodeMockState.neutralizeHDRColorMetadata = true;
-        customDecodeMockState.videoDecoderBackend = 'native';
         customDecodeMockState.videoOutputMode = 'video-frame';
 
         await player.play(createKnownProfile8HDR10BasePlayOptions({
@@ -3908,7 +3896,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             settings: expect.objectContaining({
                 mode: 'hdr-to-sdr',
                 toneMapping: expect.objectContaining({ inputPeakNits: 1_000 })
-            })
+            }),
+            videoFields: PROGRESSIVE_UHD_VIDEO_FIELDS
         }, 1);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -3942,7 +3931,6 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.hdr = true;
         customDecodeMockState.nativeHDRTransfer = 'hlg';
         customDecodeMockState.neutralizeHDRColorMetadata = true;
-        customDecodeMockState.videoDecoderBackend = 'native';
         customDecodeMockState.videoOutputMode = 'video-frame';
 
         await player.play(createKnownProfile8HLGBasePlayOptions({
@@ -3964,7 +3952,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             settings: expect.objectContaining({
                 mode: 'hdr-to-sdr',
                 toneMapping: expect.objectContaining({ inputPeakNits: 1_000 })
-            })
+            }),
+            videoFields: PROGRESSIVE_UHD_VIDEO_FIELDS
         }, 1);
         expect(customPlaybackController.play).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -4170,7 +4159,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                     outputGain: 0.8,
                     surroundLevel: 0.6,
                     version: 1
-                }
+                },
+                NO_AUDIO_DECODER_SELECTION
             )
         ));
     });
@@ -4299,7 +4289,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                 1,
                 'decoded-pcm',
                 2,
-                sessionDownmixSettings
+                sessionDownmixSettings,
+                NO_AUDIO_DECODER_SELECTION
             )
         ));
     });
@@ -4457,7 +4448,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                     1,
                     'decoded-pcm',
                     expectedOutput,
-                    createDefaultAudioDownmixSettings()
+                    createDefaultAudioDownmixSettings(),
+                    NO_AUDIO_DECODER_SELECTION
                 )
             ));
             expect(customPlaybackController.getAudioOutputMaximumChannelCount).toHaveBeenCalled();
@@ -4983,14 +4975,19 @@ describe('WebGPUPlayer HTML delegation', () => {
             mediaTimeMicroseconds: 1_000_000,
             outputMode: 'video-frame'
         };
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
 
         runNextAnimationFrame();
 
+        expect(customPlaybackController.takeFrame).toHaveBeenCalledWith(
+            customPlaybackController.currentTimeMicroseconds,
+            NO_FRAME_LOOKAHEAD_MICROSECONDS
+        );
         expect(presenter.presentDecodedFrame).toHaveBeenCalledWith(
             decodedFrame,
             1,
-            expect.any(Function)
+            expect.any(Function),
+            customPlaybackController.currentTimeMicroseconds
         );
         expect(customPlaybackController.notifyFramePresented).toHaveBeenCalledWith(decodedFrame);
         expect(animationFrameMockState.callbacks.size).toBe(1);
@@ -5024,7 +5021,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             submissionCompletionHandlers.push(completedHandler);
             return true;
         });
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
 
         runNextAnimationFrame();
 
@@ -5062,7 +5059,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             submissionCompletionHandlers.push(completedHandler);
             return true;
         });
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
 
         runNextAnimationFrame();
         expect(submissionCompletionHandlers).toHaveLength(1);
@@ -5100,7 +5097,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             submissionCompletionHandlers.push(completedHandler);
             return true;
         });
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
 
         runNextAnimationFrame();
         expect(submissionCompletionHandlers).toHaveLength(1);
@@ -5132,7 +5129,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             mediaTimeMicroseconds: 1_000_000,
             outputMode: 'video-frame'
         };
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
         presenter.presentDecodedFrame.mockReturnValueOnce(false);
 
         runNextAnimationFrame();
@@ -5163,7 +5160,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             mediaTimeMicroseconds: 1_000_000,
             outputMode: 'video-frame'
         };
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
         presenter.presentDecodedFrame.mockReturnValueOnce(false);
         presenter.getTelemetry.mockReturnValueOnce({ state: 'initializing' });
 
@@ -5198,13 +5195,14 @@ describe('WebGPUPlayer HTML delegation', () => {
             mediaTimeMicroseconds: 1_000_000,
             outputMode: 'video-frame'
         };
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce(decodedFrame);
+        customPlaybackController.takeFrame.mockReturnValueOnce(decodedFrame);
         runNextAnimationFrame();
 
         expect(presenter.presentDecodedFrame).toHaveBeenCalledWith(
             decodedFrame,
             1,
-            expect.any(Function)
+            expect.any(Function),
+            customPlaybackController.currentTimeMicroseconds
         );
         expect(customPlaybackController.notifyFramePresented).toHaveBeenCalledWith(decodedFrame);
         expect(animationFrameMockState.callbacks.size).toBe(0);
@@ -5270,7 +5268,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             // The loop pending before the page hid resumes without a duplicate
             expect(animationFrameMockState.callbacks.size).toBe(1);
             runNextAnimationFrame();
-            expect(customPlaybackController.takeCurrentFrame).toHaveBeenCalledOnce();
+            expect(customPlaybackController.takeFrame).toHaveBeenCalledOnce();
         } finally {
             restoreDocumentVisibility();
         }
@@ -5290,7 +5288,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         const customPlaybackController = getCustomPlaybackController();
         player.pause();
         runNextAnimationFrame();
-        customPlaybackController.takeCurrentFrame.mockReturnValueOnce({
+        customPlaybackController.takeFrame.mockReturnValueOnce({
             durationMicroseconds: 41_667,
             frame: { close: vi.fn() },
             mediaTimeMicroseconds: 1_000_000,
@@ -5304,7 +5302,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             changeDocumentVisibility('hidden');
             changeDocumentVisibility('visible');
             await vi.advanceTimersByTimeAsync(CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS);
-            expect(customPlaybackController.takeCurrentFrame).toHaveBeenCalledTimes(2);
+            expect(customPlaybackController.takeFrame).toHaveBeenCalledTimes(2);
 
             const resyncedFrame = {
                 durationMicroseconds: 41_667,
@@ -5314,16 +5312,17 @@ describe('WebGPUPlayer HTML delegation', () => {
             };
             changeDocumentVisibility('hidden');
             customPlaybackController.setPageVisibility.mockReturnValueOnce(true);
-            customPlaybackController.takeCurrentFrame.mockReturnValueOnce(resyncedFrame);
+            customPlaybackController.takeFrame.mockReturnValueOnce(resyncedFrame);
             changeDocumentVisibility('visible');
             await vi.advanceTimersByTimeAsync(CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS);
 
             expect(customPlaybackController.setPageVisibility).toHaveBeenLastCalledWith(true);
-            expect(customPlaybackController.takeCurrentFrame).toHaveBeenCalledTimes(3);
+            expect(customPlaybackController.takeFrame).toHaveBeenCalledTimes(3);
             expect(presenter.presentDecodedFrame).toHaveBeenLastCalledWith(
                 resyncedFrame,
                 1,
-                expect.any(Function)
+                expect.any(Function),
+                customPlaybackController.currentTimeMicroseconds
             );
             expect(customPlaybackController.notifyFramePresented)
                 .toHaveBeenLastCalledWith(resyncedFrame);
@@ -5657,7 +5656,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                 1,
                 'decoded-pcm',
                 2,
-                createDefaultAudioDownmixSettings()
+                createDefaultAudioDownmixSettings(),
+                NO_AUDIO_DECODER_SELECTION
             )
         ));
 
@@ -5678,7 +5678,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             1,
             'decoded-pcm',
             2,
-            createDefaultAudioDownmixSettings()
+            createDefaultAudioDownmixSettings(),
+            NO_AUDIO_DECODER_SELECTION
         );
         expect(player.getVolume()).toBe(80);
         expect(player.isMuted()).toBe(true);
@@ -5821,7 +5822,8 @@ describe('WebGPUPlayer HTML delegation', () => {
             1,
             'decoded-pcm',
             8,
-            sessionDownmixSettings
+            sessionDownmixSettings,
+            NO_AUDIO_DECODER_SELECTION
         );
     });
 
@@ -5908,7 +5910,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                 1,
                 'decoded-pcm',
                 2,
-                createDefaultAudioDownmixSettings()
+                createDefaultAudioDownmixSettings(),
+                NO_AUDIO_DECODER_SELECTION
             )
         ));
         await customPlaybackController.fallbackHook({
@@ -6732,7 +6735,7 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
 
-        expect(decoderPackageMockState.sourceLoadCount).toBe(0);
+        expect(decoderPackageMockState.offerRequestCount).toBe(0);
         expect(getLastEligibilityOptions()).not.toHaveProperty('gpuVideoDecoders');
         expect(getCustomPlaybackController().play).toHaveBeenCalledWith(expect.objectContaining({ videoDecoderBackend: 'native' }));
         expect(getCustomPlaybackController().play.mock.lastCall?.[0]).not.toHaveProperty('gpuVideoDecoder');
@@ -6743,13 +6746,13 @@ describe('WebGPUPlayer HTML delegation', () => {
         attachPresentationSurface(getBackend());
         playbackPreferencesMockState.customDecodeEnabled = true;
         customDecodeMockState.eligible = true;
-        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
+        customDecodeMockState.nativeVideoRoute = false;
         decoderPackageMockState.gpuVideoDecoderOffers = [ GPU_VIDEO_DECODER_OFFER ];
 
         await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
 
         const customPlaybackController = getCustomPlaybackController();
-        expect(decoderPackageMockState.sourceLoadCount).toBe(1);
+        expect(decoderPackageMockState.offerRequestCount).toBe(1);
         expect(getLastEligibilityOptions()).toMatchObject({ gpuVideoDecoders: [ GPU_VIDEO_DECODER_OFFER ] });
         expect(customPlaybackController.gpuVideoDecodeSessionFactory).toBe(decoderPackageMockState.gpuVideoDecodeSessionFactory);
         expect(customPlaybackController.play).toHaveBeenCalledWith(expect.objectContaining({
@@ -6778,20 +6781,23 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(getCustomPlaybackController().gpuVideoDecodeSessionFactory).toBe(decoderPackageMockState.gpuVideoDecodeSessionFactory);
     });
 
-    it('keeps the route the first eligibility chose when the GPU decoder offers fail', async () => {
+    it('keeps the first eligibility\'s refusal and plays natively when the GPU decoder offers fail', async () => {
         const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const player = new WebGPUPlayer();
-        attachPresentationSurface(getBackend());
+        const backend = getBackend();
+        attachPresentationSurface(backend);
         playbackPreferencesMockState.customDecodeEnabled = true;
         customDecodeMockState.eligible = true;
-        customDecodeMockState.videoDecoderBackend = 'bundled-hevc';
+        customDecodeMockState.nativeVideoRoute = false;
         decoderPackageMockState.gpuVideoDecoderOffersFailure = GPU_VIDEO_DECODER_OFFERS_FAILURE;
 
         await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
 
         expect(consoleWarning).toHaveBeenCalledWith(OFFERS_FAILED_WARNING, GPU_VIDEO_DECODER_OFFERS_FAILURE);
-        expect(getCustomPlaybackController().play).toHaveBeenCalledWith(expect.objectContaining({ videoDecoderBackend: 'bundled-hevc' }));
-        expect(getCustomPlaybackController().play.mock.lastCall?.[0]).not.toHaveProperty('gpuVideoDecoder');
+        expect(decoderPackageMockState.offerRequestCount).toBe(1);
+        expect(getLastEligibilityOptions()).not.toHaveProperty('gpuVideoDecoders');
+        expect(customDecodeMockState.instances).toHaveLength(0);
+        expect(backend.play).toHaveBeenCalledOnce();
         consoleWarning.mockRestore();
     });
 

@@ -41,8 +41,11 @@ import {
     RAW_HDR_AUTHORIZATION_ROUTE_KEYS,
     type RawHDRAuthorizationRouteKey
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
+import type { VideoDecoderPackage } from 'webgpu-player/decode/packages/DecoderPackage';
+import { GPU_DECODER_OUTPUT_FORMATS, type GPUDecoderOutputFormat } from 'webgpu-player/decode/video/gpu/GPUDecodeFormats';
+import { parseGPUDecoderManifest } from 'webgpu-player/decode/video/gpu/GPUDecoderManifest';
+import { createGPUVideoDecoderOffer, type GPUVideoDecoderOffer } from 'webgpu-player/decode/video/gpu/GPUVideoDecoderCatalog';
 import {
-    createBundledHEVCCapabilities,
     createHEVCRangeExtensionCapability,
     createVerifiedCodecCapability
 } from './CustomDecodeCapabilityBuilders';
@@ -99,7 +102,6 @@ const DOLBY_VISION_HEVC_VIDEO_RANGE_TYPE_SET = new Set<JellyfinVideoRangeType>(
 
 // The eligibility fields that select the decoder backend and WebGPU presentation pipeline
 type ExpectedHEVCRoute = Readonly<{
-    discardDolbyVisionEnhancementLayer?: true
     dolbyVisionProfile: 4 | 5 | 7 | 8 | null
     hdr: boolean
     nativeHDRTransfer: 'hlg' | 'pq' | null
@@ -123,18 +125,14 @@ type HEVCDirectPlayMatrixRow = Readonly<{
 
 type HEVCRouteFallbackRow = Readonly<{
     label: string
+    // The route without native HEVC decode, where only an HEVC decoder package decodes, and none plays the stream without one
+    packageDecodeRoute: ExpectedHEVCRoute | null
     rawPresentationRoute: ExpectedHEVCRoute | null
-    softwareDecodeRoute: ExpectedHEVCRoute | null
     videoStream: Readonly<Record<string, unknown>>
 }>;
 
-// Routes without the bundled Main 10 qualification: with every presentation authorization, and with native VideoFrame HDR and Dolby Vision presentation withheld
-type HEVCDualLayerRouteRow = Readonly<{
-    label: string
-    rawPresentationRoute: ExpectedHEVCRoute | null
-    route: ExpectedHEVCRoute | null
-    videoStream: Readonly<Record<string, unknown>>
-}>;
+const NATIVE_VIDEO_DECODER_BACKEND: CustomDecodeVideoDecoderBackend = 'native';
+const GPU_VIDEO_DECODER_BACKEND: CustomDecodeVideoDecoderBackend = 'gpu';
 
 const NATIVE_SDR_VIDEO_FRAME_ROUTE: ExpectedHEVCRoute = {
     dolbyVisionProfile: null,
@@ -144,11 +142,6 @@ const NATIVE_SDR_VIDEO_FRAME_ROUTE: ExpectedHEVCRoute = {
     rawVideoFrameFormat: null,
     videoDecoderBackend: 'native',
     videoOutputMode: 'video-frame'
-};
-
-const BUNDLED_SDR_VIDEO_FRAME_ROUTE: ExpectedHEVCRoute = {
-    ...NATIVE_SDR_VIDEO_FRAME_ROUTE,
-    videoDecoderBackend: 'bundled-hevc'
 };
 
 // Also the Dolby Vision native-base route: the compatible base presents as static HDR
@@ -177,10 +170,10 @@ const NATIVE_DOLBY_VISION_PROFILE_5_ROUTE: ExpectedHEVCRoute = {
     videoOutputMode: 'video-frame'
 };
 
+/** A raw-plane route, which the browser's own decoder decodes. */
 function createRawPlaneRoute(
     rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat,
-    hdr: boolean,
-    videoDecoderBackend: CustomDecodeVideoDecoderBackend = 'native'
+    hdr: boolean
 ): ExpectedHEVCRoute {
     return {
         dolbyVisionProfile: null,
@@ -188,31 +181,35 @@ function createRawPlaneRoute(
         nativeHDRTransfer: null,
         neutralizeHDRColorMetadata: false,
         rawVideoFrameFormat,
-        videoDecoderBackend,
+        videoDecoderBackend: NATIVE_VIDEO_DECODER_BACKEND,
         videoOutputMode: 'raw-planes'
     };
 }
 
+/** An RPU reconstruction route over raw base-layer planes; a dual-layer profile reconstructs from its BL alone, since no decoder decodes its EL. */
 function createRawDolbyVisionRoute(
     dolbyVisionProfile: 4 | 5 | 7 | 8,
-    videoDecoderBackend: CustomDecodeVideoDecoderBackend = 'native',
     rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat = 'I420P10'
 ): ExpectedHEVCRoute {
     return {
-        ...createRawPlaneRoute(rawVideoFrameFormat, true, videoDecoderBackend),
+        ...createRawPlaneRoute(rawVideoFrameFormat, true),
         dolbyVisionProfile
     };
 }
 
-/** A dual-layer route that reconstructs from its BL alone, because no qualified decoder decodes its EL. */
-function createELDiscardingDolbyVisionRoute(
-    dolbyVisionProfile: 4 | 7,
-    videoDecoderBackend: CustomDecodeVideoDecoderBackend = 'native',
-    rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat = 'I420P10'
+/** A GPU decoder package's frame-pool route, which presents the stream's own color, never an RPU. */
+function createFramePoolRoute(
+    rawVideoFrameFormat: GPUDecoderOutputFormat,
+    hdr: boolean
 ): ExpectedHEVCRoute {
     return {
-        ...createRawDolbyVisionRoute(dolbyVisionProfile, videoDecoderBackend, rawVideoFrameFormat),
-        discardDolbyVisionEnhancementLayer: true
+        dolbyVisionProfile: null,
+        hdr,
+        nativeHDRTransfer: null,
+        neutralizeHDRColorMetadata: false,
+        rawVideoFrameFormat,
+        videoDecoderBackend: GPU_VIDEO_DECODER_BACKEND,
+        videoOutputMode: 'frame-pool'
     };
 }
 
@@ -235,7 +232,6 @@ function getEligibleRoute(eligibility: CustomPlaybackEligibility): ExpectedHEVCR
         return null;
     }
     return {
-        ...(eligibility.discardDolbyVisionEnhancementLayer ? { discardDolbyVisionEnhancementLayer: true } : {}),
         dolbyVisionProfile: eligibility.dolbyVisionProfile,
         hdr: eligibility.hdr,
         nativeHDRTransfer: eligibility.nativeHDRTransfer ?? null,
@@ -270,6 +266,9 @@ const EXTERNAL_HDR_ROUTE_KEYS = [
 
 const RAW_HDR_ROUTE_KEYS: readonly RawHDRAuthorizationRouteKey[] =
     RAW_HDR_AUTHORIZATION_ROUTE_KEYS;
+
+// A Dolby Vision stream over 8-bit Main without a declared base: no route decodes its planes for the RPU
+const EIGHT_BIT_MAIN_RPU_INELIGIBILITY_REASON: CustomPlaybackIneligibilityReason = 'hdr-codec-unsupported';
 
 const FULL_ROUTE_OPTIONS: CustomDeviceProfileOptions = {
     allowDolbyVision: true,
@@ -352,7 +351,6 @@ function createFullyQualifiedHEVCCapabilities(): CustomDecodeCapabilities {
 
     return {
         audio,
-        bundledHEVC: createBundledHEVCCapabilities(),
         hevcRangeExtensions,
         nativeDolbyVisionHEVC: {
             bitDepth: 10,
@@ -372,7 +370,7 @@ function createFullyQualifiedHEVCCapabilities(): CustomDecodeCapabilities {
         rawHDRVideo,
         telemetry: {
             audioProbeCount: CUSTOM_AUDIO_CODECS.length,
-            bundledAudioCodecCount: 0,
+            mediabunnyAudioCodecCount: 0,
             nativeSurroundAudioProbeCount: 0,
             nativeHDRVideoProbeCount: 1,
             nativeUltraHDVideoProbeCount: 0,
@@ -934,7 +932,7 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
         deviceProfileAdvertised: true,
         directPlaySupported: true,
         // Single-layer reconstruction runs in the exact range-extension format the item advertises
-        expectedRoute: createRawDolbyVisionRoute(8, 'native', 'I420P10'),
+        expectedRoute: createRawDolbyVisionRoute(8, 'I420P10'),
         itemRouteRequired: true,
         label: 'Dolby Vision Profile 8.1 over a generic Rext 10-bit 4:2:0 base',
         runtimeEligible: true,
@@ -953,7 +951,7 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        expectedRoute: createRawDolbyVisionRoute(8, 'native', 'I422P10'),
+        expectedRoute: createRawDolbyVisionRoute(8, 'I422P10'),
         itemRouteRequired: true,
         label: 'Dolby Vision Profile 8.1 over a generic Rext 10-bit 4:2:2 base',
         runtimeEligible: true,
@@ -972,7 +970,7 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        expectedRoute: createRawDolbyVisionRoute(8, 'native', 'I420P12'),
+        expectedRoute: createRawDolbyVisionRoute(8, 'I420P12'),
         itemRouteRequired: true,
         label: 'Dolby Vision Profile 8.1 over a named Main 12 base',
         runtimeEligible: true,
@@ -992,10 +990,10 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        // The bundled decoder's Main qualification decodes the 8-bit base to raw I420 for the RPU
-        expectedRoute: createRawDolbyVisionRoute(8, 'bundled-hevc', 'I420'),
+        // No raw route decodes 8-bit Main planes for the RPU, so the declared SDR base presents natively
+        expectedRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
         itemRouteRequired: true,
-        label: 'Dolby Vision Profile 8.2 over an 8-bit Main base reconstructs from bundled raw I420',
+        label: 'Dolby Vision Profile 8.2 over an 8-bit Main base presents its SDR base natively',
         runtimeEligible: true,
         videoStream: createDolbyVisionHEVCStream(8, 2, 'DOVIWithSDR', 'pq', false, {
             BitDepth: 8,
@@ -1007,26 +1005,24 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
         })
     },
     {
-        deviceProfileAdvertised: true,
-        directPlaySupported: true,
-        // No base is declared, so only the RPU presents the stream
-        expectedRoute: createRawDolbyVisionRoute(8, 'bundled-hevc', 'I420'),
-        itemRouteRequired: true,
-        label: 'Dolby Vision Profile 8 with compatibility ID 0 over an 8-bit Main base reconstructs from bundled raw I420',
-        runtimeEligible: true,
+        deviceProfileAdvertised: false,
+        directPlaySupported: false,
+        // No base is declared, and no raw route decodes 8-bit Main planes for the RPU
+        expectedIneligibilityReason: EIGHT_BIT_MAIN_RPU_INELIGIBILITY_REASON,
+        label: 'Dolby Vision Profile 8 with compatibility ID 0 over an 8-bit Main base has no route',
+        runtimeEligible: false,
         videoStream: createDolbyVisionHEVCStream(8, 0, 'DOVIInvalid', 'pq', false, {
             BitDepth: 8,
             Profile: 'Main'
         })
     },
     {
-        deviceProfileAdvertised: true,
-        directPlaySupported: true,
+        deviceProfileAdvertised: false,
+        directPlaySupported: false,
         // The native Profile 5 route is 10-bit only
-        expectedRoute: createRawDolbyVisionRoute(5, 'bundled-hevc', 'I420'),
-        itemRouteRequired: true,
-        label: 'Dolby Vision Profile 5 over an 8-bit Main base reconstructs from bundled raw I420',
-        runtimeEligible: true,
+        expectedIneligibilityReason: EIGHT_BIT_MAIN_RPU_INELIGIBILITY_REASON,
+        label: 'Dolby Vision Profile 5 over an 8-bit Main base has no route',
+        runtimeEligible: false,
         videoStream: createDolbyVisionHEVCStream(5, 0, 'DOVI', 'pq', false, {
             BitDepth: 8,
             Profile: 'Main'
@@ -1035,9 +1031,9 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        // Labeled SDR by transfer, so the generic 8-bit Main SDR route advertises it
-        expectedRoute: createRawDolbyVisionRoute(4, 'bundled-hevc', 'I420'),
-        label: 'Dolby Vision Profile 4 over an 8-bit Main base reconstructs from bundled raw I420',
+        // Labeled SDR by transfer, so the generic 8-bit Main SDR route advertises it, and its declared SDR base presents natively
+        expectedRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
+        label: 'Dolby Vision Profile 4 over an 8-bit Main base presents its SDR base natively',
         runtimeEligible: true,
         videoStream: createDolbyVisionHEVCStream(4, 2, 'SDR', 'pq', true, {
             BitDepth: 8,
@@ -1049,12 +1045,11 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
         })
     },
     {
-        deviceProfileAdvertised: true,
-        directPlaySupported: true,
-        expectedRoute: createRawDolbyVisionRoute(7, 'bundled-hevc', 'I420'),
-        itemRouteRequired: true,
-        label: 'Dolby Vision Profile 7 with compatibility ID 0 over an 8-bit Main base reconstructs from bundled raw I420',
-        runtimeEligible: true,
+        deviceProfileAdvertised: false,
+        directPlaySupported: false,
+        expectedIneligibilityReason: EIGHT_BIT_MAIN_RPU_INELIGIBILITY_REASON,
+        label: 'Dolby Vision Profile 7 with compatibility ID 0 over an 8-bit Main base has no route',
+        runtimeEligible: false,
         videoStream: createDolbyVisionHEVCStream(7, 0, 'DOVIWithEL', 'pq', true, {
             BitDepth: 8,
             Profile: 'Main'
@@ -1063,8 +1058,8 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        // Dual-layer reconstruction runs in the range extension's exact format, with the EL from the bundled decoder
-        expectedRoute: createRawDolbyVisionRoute(7, 'native', 'I422P10'),
+        // Dual-layer reconstruction runs in the range extension's exact format, from the BL alone
+        expectedRoute: createRawDolbyVisionRoute(7, 'I422P10'),
         itemRouteRequired: true,
         label: 'Dolby Vision Profile 7 with compatibility ID 0 over a generic Rext 10-bit 4:2:2 base',
         runtimeEligible: true,
@@ -1077,7 +1072,7 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
         deviceProfileAdvertised: true,
         directPlaySupported: true,
         // Labeled SDR by transfer, which the complete generic Rext SDR envelope advertises
-        expectedRoute: createRawDolbyVisionRoute(4, 'native', 'I444P12'),
+        expectedRoute: createRawDolbyVisionRoute(4, 'I444P12'),
         label: 'Dolby Vision Profile 4 over a generic Rext 12-bit 4:4:4 base',
         runtimeEligible: true,
         videoStream: createDolbyVisionHEVCStream(4, 2, 'SDR', 'pq', true, {
@@ -1219,77 +1214,78 @@ const HEVC_PROFILE_BOUNDARY_MATRIX: readonly HEVCDirectPlayMatrixRow[] = [
     }
 ];
 
-// Representative eligible variants; native VideoFrame routes are preferred when authorized
+// Representative eligible variants; native VideoFrame routes are preferred when authorized.
+// The package column decodes into the frame pool, which presents a stream's own color: a Dolby Vision stream plays its declared base there, or has no route
 const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     {
         label: 'SDR Main 8-bit',
+        packageDecodeRoute: createFramePoolRoute('I420', false),
         rawPresentationRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
-        softwareDecodeRoute: BUNDLED_SDR_VIDEO_FRAME_ROUTE,
         videoStream: createSDRHEVCStream()
     },
     {
-        // Without native HEVC, 10-bit SDR takes the bundled raw I420P10 route
         label: 'SDR Main 10 10-bit',
+        packageDecodeRoute: createFramePoolRoute('I420P10', false),
         rawPresentationRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
-        softwareDecodeRoute: createRawPlaneRoute('I420P10', false, 'bundled-hevc'),
         videoStream: createSDRHEVCStream({ BitDepth: 10, Profile: 'Main 10' })
     },
     {
         label: 'HDR10 Main 10',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawPlaneRoute('I420P10', true),
-        softwareDecodeRoute: createRawPlaneRoute('I420P10', true, 'bundled-hevc'),
         videoStream: createHDRHEVCStream('HDR10', 'pq')
     },
     {
         label: 'HDR10+ Main 10',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawPlaneRoute('I420P10', true),
-        softwareDecodeRoute: createRawPlaneRoute('I420P10', true, 'bundled-hevc'),
         videoStream: createHDRHEVCStream('HDR10Plus', 'pq', { Hdr10PlusPresentFlag: true })
     },
     {
         label: 'HLG Main 10',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawPlaneRoute('I420P10', true),
-        softwareDecodeRoute: createRawPlaneRoute('I420P10', true, 'bundled-hevc'),
         videoStream: createHDRHEVCStream('HLG', 'hlg')
     },
     {
+        // Compatibility ID 0 declares no base, and only the RPU presents the stream
         label: 'Dolby Vision Profile 5',
+        packageDecodeRoute: null,
         rawPresentationRoute: createRawDolbyVisionRoute(5),
-        softwareDecodeRoute: createRawDolbyVisionRoute(5, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(5, 0, 'DOVI', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 7 with compatibility ID 6',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(7),
-        softwareDecodeRoute: createRawDolbyVisionRoute(7, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithEL', 'pq', true)
     },
     {
         label: 'Dolby Vision Profile 7 plus HDR10+ metadata',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(7),
-        softwareDecodeRoute: createRawDolbyVisionRoute(7, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithELHDR10Plus', 'pq', true, {
             Hdr10PlusPresentFlag: true
         })
     },
     {
         label: 'Dolby Vision Profile 8.1',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 8.1 plus HDR10+ metadata',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10Plus', 'pq', false, {
             Hdr10PlusPresentFlag: true
         })
     },
     {
         label: 'Dolby Vision Profile 8.2',
+        packageDecodeRoute: createFramePoolRoute('I420P10', false),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(8, 2, 'DOVIWithSDR', 'pq', false, {
             ColorPrimaries: 'bt709',
             ColorSpace: 'bt709',
@@ -1299,26 +1295,26 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 8.4',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(8, 4, 'DOVIWithHLG', 'hlg', false)
     },
     {
         label: 'Dolby Vision Profile 8.1 with an enhancement layer flag',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10', 'pq', true)
     },
     {
         label: 'Dolby Vision Profile 7 without its enhancement layer',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(7),
-        softwareDecodeRoute: createRawDolbyVisionRoute(7, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithEL', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 4',
+        packageDecodeRoute: createFramePoolRoute('I420P10', false),
         rawPresentationRoute: createRawDolbyVisionRoute(4),
-        softwareDecodeRoute: createRawDolbyVisionRoute(4, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(4, 2, 'SDR', 'pq', true, {
             ColorPrimaries: 'bt709',
             ColorSpace: 'bt709',
@@ -1328,21 +1324,21 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 20 with compatibility ID 0',
+        packageDecodeRoute: null,
         rawPresentationRoute: createRawDolbyVisionRoute(5),
-        softwareDecodeRoute: createRawDolbyVisionRoute(5, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(20, 0, 'HDR10', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 20 with compatibility ID 1',
+        packageDecodeRoute: createFramePoolRoute('I420P10', true),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc'),
         videoStream: createDolbyVisionHEVCStream(20, 1, 'HDR10', 'pq', false)
     },
     {
-        // Only the bundled decoder qualifies raw 8-bit Main planes, natively decodable or not
+        // No raw route decodes 8-bit Main planes, and compatibility ID 0 declares no base, so nothing presents the stream
         label: 'Dolby Vision Profile 8 with compatibility ID 0 over an 8-bit Main base',
-        rawPresentationRoute: createRawDolbyVisionRoute(8, 'bundled-hevc', 'I420'),
-        softwareDecodeRoute: createRawDolbyVisionRoute(8, 'bundled-hevc', 'I420'),
+        packageDecodeRoute: null,
+        rawPresentationRoute: null,
         videoStream: createDolbyVisionHEVCStream(8, 0, 'DOVIInvalid', 'pq', false, {
             BitDepth: 8,
             Profile: 'Main'
@@ -1350,18 +1346,18 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 7 with compatibility ID 0 over an 8-bit Main base',
-        rawPresentationRoute: createRawDolbyVisionRoute(7, 'bundled-hevc', 'I420'),
-        softwareDecodeRoute: createRawDolbyVisionRoute(7, 'bundled-hevc', 'I420'),
+        packageDecodeRoute: null,
+        rawPresentationRoute: null,
         videoStream: createDolbyVisionHEVCStream(7, 0, 'DOVIWithEL', 'pq', true, {
             BitDepth: 8,
             Profile: 'Main'
         })
     },
     {
-        // The bundled decoder has no range-extension output, so neither the RPU nor the base has a route
+        // The package writes the range extension's planes, so the declared base presents
         label: 'Dolby Vision Profile 8.1 over a named Main 12 base',
-        rawPresentationRoute: createRawDolbyVisionRoute(8, 'native', 'I420P12'),
-        softwareDecodeRoute: null,
+        packageDecodeRoute: createFramePoolRoute('I420P12', true),
+        rawPresentationRoute: createRawDolbyVisionRoute(8, 'I420P12'),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10', 'pq', false, {
             BitDepth: 12,
             PixelFormat: 'yuv420p12le',
@@ -1370,59 +1366,15 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'SDR Rext 8-bit 4:2:2',
+        packageDecodeRoute: createFramePoolRoute('I422', false),
         rawPresentationRoute: createRawPlaneRoute('I422', false),
-        softwareDecodeRoute: null,
         videoStream: createHEVCRangeExtensionStream('main422-8', 'SDR')
     },
     {
         label: 'HDR10 Rext 12-bit 4:4:4',
+        packageDecodeRoute: createFramePoolRoute('I444P12', true),
         rawPresentationRoute: createRawPlaneRoute('I444P12', true),
-        softwareDecodeRoute: null,
         videoStream: createHEVCRangeExtensionStream('main444-12', 'HDR10')
-    }
-];
-
-// The bundled decoder decodes every dual-layer EL, so without its Main 10 qualification dual-layer routes reconstruct from the BL alone.
-// A native compatible base still comes first
-const HEVC_WITHOUT_BUNDLED_MAIN_10_MATRIX: readonly HEVCDualLayerRouteRow[] = [
-    {
-        label: 'Dolby Vision Profile 7 with compatibility ID 0',
-        rawPresentationRoute: createELDiscardingDolbyVisionRoute(7),
-        route: createELDiscardingDolbyVisionRoute(7),
-        videoStream: createDolbyVisionHEVCStream(7, 0, 'DOVIWithEL', 'pq', true)
-    },
-    {
-        label: 'Dolby Vision Profile 7 with compatibility ID 6',
-        rawPresentationRoute: createELDiscardingDolbyVisionRoute(7),
-        route: NATIVE_EXTERNAL_PQ_ROUTE,
-        videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithEL', 'pq', true)
-    },
-    {
-        label: 'Dolby Vision Profile 4 with an SDR base',
-        rawPresentationRoute: createELDiscardingDolbyVisionRoute(4),
-        route: createELDiscardingDolbyVisionRoute(4),
-        videoStream: createDolbyVisionHEVCStream(4, 2, 'SDR', 'pq', true, {
-            ColorPrimaries: 'bt709',
-            ColorSpace: 'bt709',
-            ColorTransfer: 'bt709',
-            VideoRange: 'SDR'
-        })
-    },
-    {
-        label: 'Dolby Vision Profile 7 with compatibility ID 0 over an 8-bit Main base',
-        rawPresentationRoute: createELDiscardingDolbyVisionRoute(7, 'bundled-hevc', 'I420'),
-        route: createELDiscardingDolbyVisionRoute(7, 'bundled-hevc', 'I420'),
-        videoStream: createDolbyVisionHEVCStream(7, 0, 'DOVIWithEL', 'pq', true, {
-            BitDepth: 8,
-            Profile: 'Main'
-        })
-    },
-    {
-        // Single-layer reconstruction decodes no EL
-        label: 'Dolby Vision Profile 8 with compatibility ID 0',
-        rawPresentationRoute: createRawDolbyVisionRoute(8),
-        route: createRawDolbyVisionRoute(8),
-        videoStream: createDolbyVisionHEVCStream(8, 0, 'DOVIInvalid', 'pq', false)
     }
 ];
 
@@ -1446,8 +1398,8 @@ const RAW_PRESENTATION_ELIGIBILITY_OPTIONS: CustomPlaybackEligibilityOptions = {
     ...RAW_PRESENTATION_OVERRIDES
 };
 
-/** Removes every native HEVC decode path; only the bundled WASM decoder remains. */
-function createSoftwareDecodeHEVCCapabilities(): CustomDecodeCapabilities {
+/** Removes every native HEVC decode path, which leaves HEVC to a decoder package. */
+function createWithoutNativeHEVCCapabilities(): CustomDecodeCapabilities {
     const capabilities = createFullyQualifiedHEVCCapabilities();
     const hevcRangeExtensions = {} as Record<
         HEVCRangeExtensionVariant,
@@ -1475,10 +1427,7 @@ function createSoftwareDecodeHEVCCapabilities(): CustomDecodeCapabilities {
         },
         rawHDRVideo: {
             ...capabilities.rawHDRVideo,
-            hevc: {
-                ...createRawHDRCapability('hevc', true),
-                reason: 'bundled-software-decoder'
-            }
+            hevc: createRawHDRCapability('hevc', false)
         },
         video: {
             ...capabilities.video,
@@ -1487,33 +1436,56 @@ function createSoftwareDecodeHEVCCapabilities(): CustomDecodeCapabilities {
     };
 }
 
-/** Withholds the bundled Main 10 qualification, which decodes every dual-layer EL; native copy keeps raw Main 10. */
-function createWithoutBundledMain10HEVCCapabilities(): CustomDecodeCapabilities {
-    const capabilities = createFullyQualifiedHEVCCapabilities();
-    const bundledHEVC = capabilities.bundledHEVC;
-    if (!bundledHEVC) {
-        throw new Error('The bundled HEVC capability vector is missing');
-    }
-    return {
-        ...capabilities,
-        bundledHEVC: {
-            qualifications: {
-                ...bundledHEVC.qualifications,
-                'main10-1080p': {
-                    ...bundledHEVC.qualifications['main10-1080p'],
-                    reason: 'output-mismatch',
-                    status: 'unsupported'
-                },
-                'main10-4k': {
-                    ...bundledHEVC.qualifications['main10-4k'],
-                    reason: 'output-mismatch',
-                    status: 'unsupported'
-                }
-            },
-            reason: 'partial'
-        }
-    };
-}
+// The smallest module a package carries, for a package negotiation and eligibility only read the header of
+const EMPTY_WEB_ASSEMBLY_MODULE_BYTES = new Uint8Array([ 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00 ]);
+const HEVC_DECODER_PACKAGE_ID = 'hevc';
+const HEVC_DECODER_PACKAGE_CONTENT_HASH = '0'.repeat(64);
+const HEVC_DECODER_ENTRY_POINT = 'decodePicture';
+// The engine's HEVC package header: its codec and stream limits, and every frame pool format
+const HEVC_DECODER_PACKAGE_SOURCE = [
+    `//! id: ${HEVC_DECODER_PACKAGE_ID}`,
+    '//! name: HEVC',
+    '//! decoder: video',
+    '//! accepts: codec in [hevc], stream.width <= 8192, stream.height <= 4320, stream.width * stream.height <= 8912896',
+    `//! output: ${GPU_DECODER_OUTPUT_FORMATS.join(', ')}`,
+    '//! packet: 64 MiB',
+    `//! dispatch: ${HEVC_DECODER_ENTRY_POINT}, 1`,
+    '',
+    '@compute @workgroup_size(1)',
+    `fn ${HEVC_DECODER_ENTRY_POINT}() {`,
+    '}',
+    ''
+].join('\n');
+// A device whose storage bindings hold any frame pool the matrix's streams need
+const LARGE_DEVICE_BUFFER_BYTE_LENGTH = 2 ** 31;
+
+const HEVC_DECODER_PACKAGE: VideoDecoderPackage = {
+    contentHash: HEVC_DECODER_PACKAGE_CONTENT_HASH,
+    id: HEVC_DECODER_PACKAGE_ID,
+    kind: 'video',
+    manifest: parseGPUDecoderManifest(HEVC_DECODER_PACKAGE_SOURCE),
+    memory: null,
+    module: new WebAssembly.Module(EMPTY_WEB_ASSEMBLY_MODULE_BYTES),
+    name: 'HEVC',
+    vectors: null
+};
+
+const HEVC_DECODER_OFFERS: readonly GPUVideoDecoderOffer[] = GPU_DECODER_OUTPUT_FORMATS.map(
+    (format: GPUDecoderOutputFormat): GPUVideoDecoderOffer => createGPUVideoDecoderOffer(HEVC_DECODER_PACKAGE, format, LARGE_DEVICE_BUFFER_BYTE_LENGTH)
+);
+
+// The host offers the HEVC package and lets the frame pool present HDR, as it does once the user's HDR tone mapping is on
+const PACKAGE_DECODE_ROUTE_OPTIONS: CustomDeviceProfileOptions = {
+    ...FULL_ROUTE_OPTIONS,
+    allowFramePoolHDR: true,
+    decoderPackages: [ { codecs: [ HEVC_DECODER_PACKAGE_ID ], kind: 'video', outputFormats: GPU_DECODER_OUTPUT_FORMATS } ]
+};
+
+const PACKAGE_DECODE_ELIGIBILITY_OPTIONS: CustomPlaybackEligibilityOptions = {
+    ...FULL_ELIGIBILITY_OPTIONS,
+    allowFramePoolHDR: true,
+    gpuVideoDecoders: HEVC_DECODER_OFFERS
+};
 
 function createMatrixProfile(
     capabilities: CustomDecodeCapabilities,
@@ -1560,21 +1532,15 @@ const rawPresentationProfile: DeviceProfile = createMatrixProfile(
     fullyQualifiedCapabilities,
     RAW_PRESENTATION_ROUTE_OPTIONS
 );
-const softwareDecodeCapabilities = createSoftwareDecodeHEVCCapabilities();
-const softwareDecodeProfile: DeviceProfile = createMatrixProfile(
-    softwareDecodeCapabilities,
+const withoutNativeHEVCCapabilities = createWithoutNativeHEVCCapabilities();
+const packageDecodeProfile: DeviceProfile = createMatrixProfile(
+    withoutNativeHEVCCapabilities,
+    PACKAGE_DECODE_ROUTE_OPTIONS
+);
+const unpackagedProfile: DeviceProfile = createMatrixProfile(
+    withoutNativeHEVCCapabilities,
     FULL_ROUTE_OPTIONS
 );
-const withoutBundledMain10Capabilities = createWithoutBundledMain10HEVCCapabilities();
-const withoutBundledMain10Profile: DeviceProfile = createMatrixProfile(
-    withoutBundledMain10Capabilities,
-    FULL_ROUTE_OPTIONS
-);
-const withoutBundledMain10RawPresentationProfile: DeviceProfile = createMatrixProfile(
-    withoutBundledMain10Capabilities,
-    RAW_PRESENTATION_ROUTE_OPTIONS
-);
-
 /** Mirrors the host, which also advertises a Dolby Vision item's own exact route when the item has one. */
 function getItemProfile(
     playbackOptions: Readonly<Record<string, unknown>>,
@@ -1733,58 +1699,31 @@ describe('HEVC DirectPlay route fallbacks', () => {
     );
 
     it.each(HEVC_ROUTE_FALLBACK_MATRIX)(
-        '$label: uses only the bundled WASM decoder without native HEVC decode',
+        '$label: uses only the HEVC decoder package without native HEVC decode',
         row => {
             expectFallbackRoute(
                 row.videoStream,
-                softwareDecodeProfile,
+                packageDecodeProfile,
+                PACKAGE_DECODE_ROUTE_OPTIONS,
+                withoutNativeHEVCCapabilities,
+                PACKAGE_DECODE_ELIGIBILITY_OPTIONS,
+                row.packageDecodeRoute
+            );
+        }
+    );
+
+    // No CPU decoder remains to fall back to
+    it.each(HEVC_ROUTE_FALLBACK_MATRIX)(
+        '$label: offers no route without native HEVC decode or an HEVC decoder package',
+        row => {
+            expectFallbackRoute(
+                row.videoStream,
+                unpackagedProfile,
                 FULL_ROUTE_OPTIONS,
-                softwareDecodeCapabilities,
+                withoutNativeHEVCCapabilities,
                 FULL_ELIGIBILITY_OPTIONS,
-                row.softwareDecodeRoute
+                null
             );
         }
     );
-});
-
-describe('HEVC dual-layer routes without the bundled Main 10 qualification', () => {
-    it.each(HEVC_WITHOUT_BUNDLED_MAIN_10_MATRIX)(
-        '$label: reconstructs without the EL unless a native base comes first',
-        row => {
-            expectFallbackRoute(
-                row.videoStream,
-                withoutBundledMain10Profile,
-                FULL_ROUTE_OPTIONS,
-                withoutBundledMain10Capabilities,
-                FULL_ELIGIBILITY_OPTIONS,
-                row.route
-            );
-        }
-    );
-
-    it.each(HEVC_WITHOUT_BUNDLED_MAIN_10_MATRIX)(
-        '$label: falls back to raw planes without native VideoFrame HDR presentation',
-        row => {
-            expectFallbackRoute(
-                row.videoStream,
-                withoutBundledMain10RawPresentationProfile,
-                RAW_PRESENTATION_ROUTE_OPTIONS,
-                withoutBundledMain10Capabilities,
-                RAW_PRESENTATION_ELIGIBILITY_OPTIONS,
-                row.rawPresentationRoute
-            );
-        }
-    );
-
-    it('keeps advertising the generic Profile 7 ranges, which reconstruction presents without the EL', () => {
-        const playbackOptions = createPlaybackOptions(
-            createDolbyVisionHEVCStream(7, 0, 'DOVIWithEL', 'pq', true)
-        );
-
-        expect(isSameSessionNativePlaybackCompatible(playbackOptions, rawPresentationProfile)).toBe(true);
-        expect(isSameSessionNativePlaybackCompatible(
-            playbackOptions,
-            withoutBundledMain10RawPresentationProfile
-        )).toBe(true);
-    });
 });

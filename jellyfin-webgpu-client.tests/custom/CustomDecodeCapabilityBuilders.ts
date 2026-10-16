@@ -1,6 +1,5 @@
 import type {
     CustomAudioCodec,
-    CustomDecodeCapabilities,
     CustomDecodeCodecCapability,
     CustomVideoCodec
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
@@ -17,7 +16,7 @@ import {
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 
-// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension probe results, and the bundled HEVC qualifications
+// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension probe results, and the codecs the engine has no decoder of
 
 /** Builds a WebCodecs codec capability as the configuration probe alone reports it. */
 export function createConfigCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
@@ -80,38 +79,14 @@ export function createHEVCRangeExtensionCapability(variant: HEVCRangeExtensionVa
     };
 }
 
-/** Builds bundled HEVC qualifications in which every vector decoded. */
-export function createBundledHEVCCapabilities(): NonNullable<CustomDecodeCapabilities['bundledHEVC']> {
+/** Builds the capability the probe reports for a codec the engine has no decoder of, which only a decoder package or a media element plays. */
+export function createNoEngineDecoderCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
+    codec: Codec
+): CustomDecodeCodecCapability<Codec> {
     return {
-        qualifications: {
-            'main-1080p': {
-                bitDepth: 8,
-                codecString: 'hvc1.1.6.L120.B0',
-                vector: 'main-1080p',
-                format: 'I420',
-                profile: 'main',
-                reason: 'decode-output-verified',
-                status: 'supported'
-            },
-            'main10-1080p': {
-                bitDepth: 10,
-                codecString: 'hvc1.2.4.L120.B0',
-                vector: 'main10-1080p',
-                format: 'I420P10',
-                profile: 'main10',
-                reason: 'decode-output-verified',
-                status: 'supported'
-            },
-            'main10-4k': {
-                bitDepth: 10,
-                codecString: 'hvc1.2.4.L153.B0',
-                vector: 'main10-4k',
-                format: 'I420P10',
-                profile: 'main10',
-                reason: 'decode-output-verified',
-                status: 'supported'
-            }
-        },
-        reason: 'complete'
+        codec,
+        codecString: codec,
+        reason: 'no-engine-decoder',
+        status: 'unsupported'
     };
 }
