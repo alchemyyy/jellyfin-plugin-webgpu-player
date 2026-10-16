@@ -117,11 +117,16 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 
 ## Jellyfin integration
 
-24. The device profile advertises a decoder package's codecs, profiles, and depths, but not the rest of its header.
+24. The device profile advertises a decoder package's codecs, profiles, and depths, but not the rest of its header or what the device holds.
     Since 10-16 the profile is built from the user's packages and the server's catalog as well, so Jellyfin direct-plays MPEG-2, VC-1, JPEG 2000, AV1 High and Professional, HEVC range extensions, and package-decoded audio.
     A package's `accepts` size conditions and its `monochrome` support are not advertised, so a stream past them, or a 4:0:0 stream for a package without `monochrome`, negotiates and then renegotiates after a failed start.
-    The engine's item route check takes the same summaries, codecs and output formats only, so a Dolby Vision item's declared base has the same gap.
+    Nor is the device's buffer limit: a video package is listed whenever the presenter can create a device, but eligibility needs the stream's frame pool, `state`, `buffer:`s, and packet ring each within the smaller of the device's largest buffer and largest storage binding.
+    The HEVC decoder project's pool of 29 I420P10 slots is about 186 MB at 1080p and 727 MB at 2160p, so an adapter at WebGPU's default 128 MiB storage binding refuses even 1080p Main 10.
+    The engine's item route check takes the same summaries, codecs and output formats only (engine dfe694a), so a Dolby Vision item's declared base has the same gaps: an 8K HEVC Profile 8.1 item, past the HEVC project's bound of 8912896 pixels (4096x2176), is advertised through its item route.
+    Such a stream fails at start, after the add-on has loaded the package, from its store or by download, and compiled it: the offers' fit check refuses the stream.
+    The add-on then falls back to the HTML player when the stock profile covers the source, and otherwise asks for one renegotiation, whose profile is never widened, so the server transcodes.
     Closing it needs the server's catalog to carry the `accepts` conditions, and Width, Height, and pixel format conditions in the package routes.
+    For the device's limit, the catalog would need each package's header, which would let the item route check run the offers' exact fit check on the item's stream.
 
 ## Settled decisions
 
