@@ -728,7 +728,8 @@ function selectCompatibleCodecs<Codec extends CustomAudioCodec | CustomVideoCode
     return selectedCodecs;
 }
 
-function createCompatibleProfiles(
+/** Returns one direct-play profile per container rule, with the rule's codecs the capabilities support, for every rule that keeps a video and an audio codec. */
+export function createCompatibleProfiles(
     supportedVideoCodecs: readonly CustomVideoCodec[],
     supportedAudioCodecs: readonly CustomAudioCodec[]
 ): DirectPlayProfile[] {

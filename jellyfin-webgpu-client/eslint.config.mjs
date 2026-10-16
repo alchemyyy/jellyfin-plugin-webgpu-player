@@ -66,8 +66,8 @@ export const sharedConfigs = tseslint.config(
             'curly': ['error', 'multi-line', 'consistent'],
             'default-case-last': 'error',
             // Aliases this resolver cannot see.
-            // The engine submodule and the add-on's own absolute specifiers are tsconfig paths, which the typecheck verifies; the hls.js fork submodule is a webpack and Vitest alias
-            'import/no-unresolved': ['error', { 'ignore': ['^webgpu-player/', '^addons/webGPUPlayer/', '^hls\\.js(/|$)'] }],
+            // The engine submodule, its Mediabunny fork, and the add-on's own absolute specifiers are tsconfig paths, which the typecheck verifies; the hls.js fork submodule is a webpack and Vitest alias
+            'import/no-unresolved': ['error', { 'ignore': ['^webgpu-player/', '^mediabunny$', '^addons/webGPUPlayer/', '^hls\\.js(/|$)'] }],
             'max-params': ['error', 7],
             'new-cap': [
                 'error',
