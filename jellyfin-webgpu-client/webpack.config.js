@@ -13,6 +13,7 @@ const {
     WEBGPU_PLAYER_BUILD_SCRIPT,
     WEBGPU_PLAYER_HLS_DIRECTORY,
     WEBGPU_PLAYER_LIBRARY_DIRECTORY,
+    WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY,
     WEBGPU_PLAYER_SOURCE_DIRECTORY
 } = require('./scripts/constants');
 const { resolveJellyfinWebDirectory, resolveJellyfinWebSourceDirectory } = require('./scripts/jellyfin-web');
@@ -341,6 +342,8 @@ module.exports = {
             // The add-on's own absolute specifiers, which its tests use
             'addons/webGPUPlayer': ADDON_SOURCE_DIRECTORY,
             'webgpu-player': WEBGPU_PLAYER_SOURCE_DIRECTORY,
+            // The engine's vendored Mediabunny fork, built by the engine's asset build above
+            'mediabunny': WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY,
             // The add-on carries the hls.js fork; the host keeps its own hls.js dependency
             'hls.js': WEBGPU_PLAYER_HLS_DIRECTORY
         },

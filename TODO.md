@@ -8,14 +8,18 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
    The decoder opens at the container's coded size and refuses a later, larger picture, so the item falls back.
    A broadcast transport stream that switches resolution produces such a picture.
    Reopening the decoder at the new size when a sequence header changes it would play them.
-*6. AVI, and the legacy codecs it usually carries.
-   The engine's prefilter declines AVI, FLV, ASF, and MPEG program streams, because no route's container carries them and Mediabunny 1.52.2 demuxes none of them.
-   It also declines MPEG-4 Part 2 (DivX, Xvid), H.263, MS-MPEG4, and Theora in any container, because no route decodes them.
-   Jellyfin's HTML player then plays them through a server transcode.
-   Closing it takes two halves:
-   - Decode: a decoder package for `mpeg4`, `h263`, and `msmpeg4v3` (the MPEG-2 package is the nearest), with self-test vectors and the add-on's profile rules.
-     That alone plays MPEG-4 Part 2 in Matroska and MP4.
-   - Demux: an AVI demuxer that feeds the worker's packet sinks, covering RIFF chunks with `idx1` or OpenDML indexes, timestamps from each stream's rate and scale, DivX packed B-frames, and VBR MP3 or AC-3 audio chunks.
+*6. The legacy codecs AVI usually carries, and what the fork's AVI demuxer leaves out.
+   Since 10-15 the engine demuxes AVI through the Mediabunny fork (PR #155) and plays H.264, VP8, VP9, and AV1 with AAC, MP3, AC-3, and PCM from it, and the add-on advertises that.
+   Eligibility still declines MPEG-4 Part 2 (DivX, Xvid), H.263, MS-MPEG4, and Theora in any container as `video-codec-without-route`, and the worker refuses an `mpeg4` track, so Jellyfin transcodes them.
+   FLV, ASF, and MPEG program streams stay undemuxed.
+   What remains:
+   - Decode: a decoder package for `mpeg4`, `h263`, and `msmpeg4v3` (the MPEG-2 package is the nearest), with self-test vectors, then the worker's `mpeg4` refusal dropped and the add-on's profile rules added.
+     The fork identifies MPEG-4 Part 2 in Matroska, MP4, and AVI (PR #156), so a package alone would play it there.
+   - DivX packed B-frames: the fork's AVI demuxer does not unpack them, so a packed DivX stream needs that before it plays.
+   - OpenDML: the fork reads only `idx1`, so the worker refuses an AVI video track that outruns it (`opendml-index-unread`); an AVI past about 1 GiB needs the `indx` and `ix##` indexes read.
+   - Presentation times: AVI stamps packets in decode order, so HEVC in AVI is refused, and H.264 with B-frames relies on Mediabunny's sample sink to reorder, which it does not on WebKit.
+     FFmpeg also writes HEVC in AVI with a zero codec tag unless told otherwise.
+   - Audio: WAVE_FORMAT_EXTENSIBLE is unmapped, and FLAC and Vorbis in AVI carry no decoder description the fork reads, so the AVI rule leaves them out.
 7. Interlaced video.
    Since 10-15 the engine deinterlaces in presentation (yadif, double rate by default), and its prefilter and eligibility accept interlaced H.264, MPEG-2, VC-1, and WMV3; only interlaced HEVC, interlaced JPEG 2000, and the Dolby Vision routes stay refused.
    The add-on still adds `IsInterlaced` equals false to its widened codec conditions and to its measured route profiles (`CustomDeviceProfile.ts`), so the server still transcodes interlaced sources instead of direct-playing them to the custom path.
@@ -26,9 +30,9 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
    A 4K source is then re-encoded just to burn in a bitmap.
    The host's libbitsub already renders VobSub.
    Closing it needs a `dvdsub` subtitle profile and a delivery the server supports for an external `.idx`/`.sub` pair (not yet checked), then libbitsub's VobSub path on both backends.
-*10. MPEG-2 and VC-1 in MPEG-TS and M2TS.
-    Mediabunny 1.52.2 drops VC-1's stream type 0xEA, and its video setup and packet splitter handle only AVC and HEVC, in private methods the engine cannot wrap, so neither codec is reachable in a transport stream.
-    Closing it needs Mediabunny to surface those streams, through an upstream change (a public action that needs the project owner's decision) or an engine input format of its own like the Matroska and Motion JPEG 2000 fixes; the engine then needs only the codec ID, extradata from the first key packet, and both codecs in the transport stream rule.
+*10. MPEG-2 and VC-1 in MPEG-TS and M2TS: nothing remains.
+    Since 10-15 the Mediabunny fork (89a1dae) demuxes MPEG-1, MPEG-2, and VC-1 from MPEG-TS and M2TS, the engine plays them through its GPU decoder packages, and the add-on advertises them; 16 of 17 streams decode bit-exact against Matroska, and the 17th differs only by bytes its source put ahead of its first start code.
+    A stream that grows its picture mid-stream is item 5; delete this item once that is read.
 
 ## AV1
 
@@ -110,9 +114,10 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     - A truncated L1 block is skipped rather than rejecting the RPU.
     - An L1 block in the wrong section is skipped rather than kept as all zeros.
     - There is no limit on block count; input size bounds it.
-23. Report the Mediabunny defects the engine contains upstream.
-    Header-stripped laced Matroska blocks (`CustomDecodeInputFormats.ts`) and the unhandled `close()` after a custom decoder fails (`HandledDecodeFailures.ts`) both remain in Mediabunny 1.61.3; the engine book's `decisions.md` describes them.
-    Reporting them is a public action and needs the project owner's decision.
+23. Report the Mediabunny defects the engine contains upstream, or fix them in the fork.
+    Header-stripped laced Matroska blocks (`CustomDecodeInputFormats.ts`) and the unhandled `close()` after a custom decoder fails (`HandledDecodeFailures.ts`) both remain in Mediabunny 1.61.5 and in the fork the engine now pins; the engine book's `decisions.md` describes them.
+    So do the gaps the engine works around through Mediabunny's internals: BlockAdditions beyond BlockAddID 1, Matroska FlagInterlaced and FieldOrder, `dvc1`, the Dolby Vision sample entries, the MJ2 signature box, and a Matroska `V_AV1` CodecPrivate.
+    Fixing one in the fork would let the engine drop its workaround; reporting one upstream is a public action and needs the project owner's decision.
 
 ## Jellyfin integration
 

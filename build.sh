@@ -2,7 +2,7 @@
 # Builds the client add-on, embeds it in the plugin, and builds or publishes the plugin.
 #
 # Initializes the client's submodules when needed (not recursively): the engine, the hls.js fork, and the pinned
-# Jellyfin Web, unless --jellyfin-web-path names another checkout.
+# Jellyfin Web, unless --jellyfin-web-path names another checkout, and of the engine's own only its Mediabunny fork.
 # Builds the engine's WebAssembly decoders in the background when they are missing (make, with Emscripten and rustup).
 # Meanwhile it runs `npm ci` in jellyfin-webgpu-client/ when its node_modules is missing, and builds the hls.js fork.
 # Once the decoders are built, it runs `npm run build` there against a read-only Jellyfin Web source tree.
@@ -132,6 +132,13 @@ if [ "$skip_npm" = false ]; then
                 || fail "git submodule update --init $submodule_path failed"
         fi
     done
+
+    # The one engine submodule the add-on build needs: the Mediabunny fork, which the engine's build compiles
+    mediabunny_path="$(engine_layout mediabunnySourceDirectory)" || fail 'Cannot read the engine layout (Node.js is required)'
+    if [ ! -e "$engine_directory/$mediabunny_path/.git" ]; then
+        git -C "$engine_directory" submodule update --init --depth 1 -- "$mediabunny_path" \
+            || fail "git submodule update --init $mediabunny_path failed in the engine"
+    fi
 
     jellyfin_web_directory="$(cd "$jellyfin_web_path" 2>/dev/null && pwd)" \
         || fail "No Jellyfin Web checkout at $jellyfin_web_path"

@@ -52,6 +52,7 @@ export default defineConfig({
             // The add-on's tests import the add-on through its absolute specifiers
             'addons/webGPUPlayer': constants.ADDON_SOURCE_DIRECTORY,
             'webgpu-player': constants.WEBGPU_PLAYER_SOURCE_DIRECTORY,
+            'mediabunny': constants.WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY,
             'hls.js': constants.WEBGPU_PLAYER_HLS_DIRECTORY
         }
     },

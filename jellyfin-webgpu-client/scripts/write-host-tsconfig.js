@@ -6,6 +6,7 @@ const {
     ADDON_SOURCE_DIRECTORY,
     CLIENT_DIRECTORY,
     WEBGPU_PLAYER_DIRECTORY,
+    WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY,
     WEBGPU_PLAYER_SOURCE_DIRECTORY
 } = require('./constants');
 const { resolveJellyfinWebSourceDirectory } = require('./jellyfin-web');
@@ -62,6 +63,8 @@ const hostTsconfig = {
         paths: {
             'addons/webGPUPlayer/*': [ toClientPathPattern(ADDON_SOURCE_DIRECTORY) ],
             'webgpu-player/*': [ toClientPathPattern(WEBGPU_PLAYER_SOURCE_DIRECTORY) ],
+            // The engine's vendored Mediabunny fork, whose package.json names its declarations
+            'mediabunny': [ toClientPath(WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY) ],
             ...getWebGPUPlayerImportPaths(),
             // Same order as webpack's resolve.modules: npm packages from the client, then host modules
             '*': [ './node_modules/*', './node_modules/@types/*', `${hostSourcePath}/*` ]
