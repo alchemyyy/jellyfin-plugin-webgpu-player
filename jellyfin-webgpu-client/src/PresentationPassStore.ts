@@ -15,6 +15,7 @@ export type PassSourceStoreFailure =
     | 'source-add-failed'
     | 'source-delete-failed'
     | 'source-read-failed'
+    | 'source-replace-failed'
     | 'store-open-failed'
     | 'store-unavailable';
 
@@ -134,6 +135,16 @@ export function addPassSource(source: string): Promise<number> {
             }
             return key;
         }
+    );
+}
+
+/** Replaces the source under a key, as a newer version of a server pass file replaces the old one, and resolves once the write commits. */
+export function replacePassSource(key: number, source: string): Promise<void> {
+    return runTransaction(
+        'readwrite',
+        'source-replace-failed',
+        (store: IDBObjectStore): readonly IDBRequest[] => [ store.put(source, key) ],
+        (): void => undefined
     );
 }
 

@@ -11,6 +11,10 @@ public sealed class AssetFunctionsTests
 {
     private const string Entry = "plugin.0123abcd.js";
     private const string Wasm = "libraries/webgpu-player/x.wasm";
+    private const string DecoderSection = "webgpu-player.decoder";
+    private const string FirstPackage = "wgpud/av1.wasm";
+    private const string SecondPackage = "wgpud/hevc.wasm";
+    private const string PassFile = "wgpup/sharpen.wgsl";
 
     [Theory]
     [InlineData(Entry, Entry)]
@@ -158,6 +162,40 @@ public sealed class AssetFunctionsTests
         Assert.Null(entry);
         Assert.NotNull(problem);
         Assert.Contains(expectedProblem, problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseAddonModules_ValidManifest_ReturnsTheSectionAndBothListsInOrder()
+    {
+        AddonModules modules = AssetFunctions.ParseAddonModules(
+            "{\"entry\":\"" + Entry + "\",\"decoderPackageSection\":\"" + DecoderSection + "\","
+            + "\"decoderPackages\":[\"" + SecondPackage + "\",\"" + FirstPackage + "\"],\"passes\":[\"" + PassFile + "\"]}",
+            Lookup(Entry, FirstPackage, SecondPackage, PassFile));
+
+        Assert.Equal(DecoderSection, modules.DecoderPackageSection);
+        Assert.Equal([SecondPackage, FirstPackage], modules.DecoderPackagePaths);
+        Assert.Equal([PassFile], modules.PassPaths);
+        Assert.Null(modules.Problem);
+    }
+
+    [Theory]
+    [InlineData(null, "is not embedded")]
+    [InlineData("{", "is not valid JSON")]
+    [InlineData("[]", "is not an object")]
+    [InlineData("{\"decoderPackages\":[],\"passes\":[]}", "has no string decoderPackageSection")]
+    [InlineData("{\"decoderPackageSection\":\"s\",\"passes\":[]}", "has no array decoderPackages")]
+    [InlineData("{\"decoderPackageSection\":\"s\",\"decoderPackages\":[]}", "has no array passes")]
+    [InlineData("{\"decoderPackageSection\":\"s\",\"decoderPackages\":[42],\"passes\":[]}", "decoderPackages holds a non-string entry")]
+    [InlineData("{\"decoderPackageSection\":\"s\",\"decoderPackages\":[\"wgpud/missing.wasm\"],\"passes\":[]}", "decoderPackages entry is not embedded: wgpud/missing.wasm")]
+    [InlineData("{\"decoderPackageSection\":\"s\",\"decoderPackages\":[],\"passes\":[\"../escape.wgsl\"]}", "passes entry is not embedded: ../escape.wgsl")]
+    public void ParseAddonModules_UnusableManifest_ReportsTheProblem(string? manifestText, string expectedProblem)
+    {
+        AddonModules modules = AssetFunctions.ParseAddonModules(manifestText, Lookup(Entry, FirstPackage, PassFile));
+
+        Assert.NotNull(modules.Problem);
+        Assert.Contains(expectedProblem, modules.Problem, StringComparison.Ordinal);
+        Assert.Empty(modules.DecoderPackagePaths);
+        Assert.Empty(modules.PassPaths);
     }
 
     private static Dictionary<string, string> Lookup(params string[] relativePaths)

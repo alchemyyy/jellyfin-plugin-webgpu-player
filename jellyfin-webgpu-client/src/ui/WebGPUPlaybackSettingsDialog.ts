@@ -5,6 +5,7 @@ import globalize from 'lib/globalize';
 import { handleCommand } from 'scripts/inputManager';
 
 import type { AddonStringKey } from '../host/globalize';
+import { loadServerModuleCatalog } from '../ServerModules';
 import { webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
 import { bindDecoderPackageSection, createDecoderPackageSectionHTML } from './DecoderPackageSection';
 import { scheduleSelectLabelFallback } from './SelectLabelFallback';
@@ -856,6 +857,9 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         return failure;
     };
 
+    // Both sections show what the server offers, read once as the panel opens; each section reports a failed read itself
+    const serverCatalog = loadServerModuleCatalog(null, true);
+    serverCatalog.catch((): void => undefined);
     presentationSection = bindPresentationSection({
         cleanupCallbacks,
         getSettings: (): WebGPUUserSettings => settings,
@@ -865,12 +869,14 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         saveSettings: (nextSettings: WebGPUUserSettings): string | null => {
             settings = nextSettings;
             return persistSettings();
-        }
+        },
+        serverCatalog
     });
     bindDecoderPackageSection({
         cleanupCallbacks,
         isActive: (): boolean => panelActive,
-        panel
+        panel,
+        serverCatalog
     });
 
     const commitAudioOutputDevice = (deviceId: string | null): void => {

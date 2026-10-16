@@ -60,8 +60,22 @@ import {
     type CustomPlaybackEligibilityOptions
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import { getDolbyVisionPresentationSelection } from 'webgpu-player/presentation/PresentationInput';
+import {
+    getGPUDecoderFormatFacts,
+    isGPUDecoderOutputFormat,
+    type GPUDecoderOutputFormat
+} from 'webgpu-player/decode/video/gpu/GPUDecodeFormats';
+
+/** What a decoder package a playback can use decodes, as negotiation reads it: its kind, its codecs by the engine's names, and a video decoder's output formats. */
+export type DecoderPackageRouteSummary = Readonly<{
+    codecs: readonly string[]
+    kind: 'audio' | 'video'
+    outputFormats: readonly string[]
+}>;
 
 export type CustomDeviceProfileOptions = {
+    /** Whether a GPU decoder's frame pool route may present HDR, which needs only the user's HDR tone mapping */
+    allowFramePoolHDR?: boolean
     allowDolbyVision?: boolean
     allowDolbyVisionProfile4?: boolean
     allowDolbyVisionProfile7?: boolean
@@ -75,6 +89,11 @@ export type CustomDeviceProfileOptions = {
     allowRawSDR?: boolean
     authorizedExternalHDRRouteKeys?: readonly ExternalHDRAuthorizationRouteKey[]
     authorizedRawHDRRouteKeys?: readonly RawHDRAuthorizationRouteKey[]
+    /**
+     * The decoder packages a playback can use: the user's own and the ones the server offers, which a playback fetches when it needs one.
+     * Their codecs are advertised as routes; the host lists a video package only on a device that holds a frame pool.
+     */
+    decoderPackages?: readonly DecoderPackageRouteSummary[]
     isRetry?: boolean
     /**
      * The negotiated item's media source.
@@ -121,11 +140,15 @@ type AuthorizedHDRRoutes = {
     dolbyVisionItemVideoRoute: MeasuredVideoRoute | null
     dolbyVisionVideoRangeTypes: readonly string[]
     nativeHDRVideoRangeTypes: readonly string[]
+    /** The decoder packages' routes, which widen HEVC's stock ceiling with their profiles and depths */
+    packageVideoRoutes: readonly MeasuredVideoRoute[]
     /** The stock-profile ceilings of the raw codecs other than HEVC that have a route beyond native SDR decode. */
     rawCodecProfilePlans: ReadonlyMap<CustomVideoCodec, AuthorizedCodecProfilePlan>
     rawHDRRouteVideoRangeTypes: readonly string[]
     rawHDRVideoRangeTypes: readonly string[]
     rawAuthorizationRouteKeys: readonly RawHDRAuthorizationRouteKey[]
+    /** Whether HEVC's stock profiles take a ceiling: raw or range-extension routes are authorized, or a decoder package decodes HEVC */
+    widenHEVC: boolean
 };
 
 type MeasuredVideoRouteOptions = {
@@ -134,6 +157,8 @@ type MeasuredVideoRouteOptions = {
     dolbyVisionItemVideoRoute: MeasuredVideoRoute | null
     nativeDolbyVisionVideoRangeTypes: readonly string[]
     nativeHDRVideoRangeTypes: readonly string[]
+    /** The routes of the decoder packages a playback can use, every codec's */
+    packageVideoRoutes: readonly MeasuredVideoRoute[]
     rawAV1DolbyVisionVideoRangeTypes: readonly string[]
     rawDolbyVisionVideoRangeTypes: readonly string[]
     rawHDRRouteVideoRangeTypes: readonly string[]
@@ -496,6 +521,159 @@ const RAW_VIDEO_PROFILES: Readonly<Record<'av1' | 'hevc' | 'vp9', readonly strin
     vp9: [ 'profile 2' ]
 };
 
+// The ranges a GPU decoder's frame pool route presents beyond SDR, with the user's HDR tone mapping
+const FRAME_POOL_HDR_VIDEO_RANGE_TYPES = [ 'HDR10', HDR10_PLUS_VIDEO_RANGE_TYPE, 'HLG' ] as const;
+
+// The profile Jellyfin names a stream of each frame pool format by, for the codecs whose stock and route profiles condition on profile.
+// AV1 Main is 4:2:0 at 8 or 10 bits, High adds 4:4:4, and Professional takes 4:2:2 and 12 bits; VP9 profiles 0 and 1 are 8-bit, 2 and 3 deeper, and 1 and 3 hold 4:2:2 and 4:4:4.
+// HEVC takes its names from the range extension definitions instead
+const PACKAGE_VIDEO_PROFILE_BY_FORMAT: Readonly<Partial<Record<CustomVideoCodec, Readonly<Record<GPUDecoderOutputFormat, string>>>>> = {
+    av1: {
+        I420: 'main',
+        I420P10: 'main',
+        I420P12: 'professional',
+        I422: 'professional',
+        I422P10: 'professional',
+        I422P12: 'professional',
+        I444: 'high',
+        I444P10: 'high',
+        I444P12: 'professional'
+    },
+    vp9: {
+        I420: 'profile 0',
+        I420P10: 'profile 2',
+        I420P12: 'profile 2',
+        I422: 'profile 1',
+        I422P10: 'profile 3',
+        I422P12: 'profile 3',
+        I444: 'profile 1',
+        I444P10: 'profile 3',
+        I444P12: 'profile 3'
+    }
+};
+
+function isCustomVideoCodec(codec: string): codec is CustomVideoCodec {
+    return (CUSTOM_VIDEO_CODECS as readonly string[]).includes(codec);
+}
+
+function isCustomAudioCodec(codec: string): codec is CustomAudioCodec {
+    return (CUSTOM_AUDIO_CODECS as readonly string[]).includes(codec);
+}
+
+/** Returns the depths of an HEVC package's formats under each profile: Main and Main 10 at 4:2:0, each named range extension, and generic Rext at a depth whose every chroma format it writes. */
+function getPackageHEVCProfileBitDepths(formats: readonly GPUDecoderOutputFormat[]): Map<string, number[]> {
+    const bitDepthsByProfile = new Map<string, number[]>();
+    const addProfile = (profile: string, bitDepth: number): void => {
+        const bitDepths = bitDepthsByProfile.get(profile) ?? [];
+        appendUniqueValues(bitDepths, [ bitDepth ]);
+        bitDepthsByProfile.set(profile, bitDepths);
+    };
+    if (formats.includes('I420')) {
+        for (const profile of NATIVE_VIDEO_PROFILES.hevc) {
+            addProfile(profile, CUSTOM_NATIVE_VIDEO_BIT_DEPTH);
+        }
+    }
+    if (formats.includes('I420P10')) {
+        for (const profile of RAW_VIDEO_PROFILES.hevc) {
+            addProfile(profile, MAXIMUM_RAW_HDR_VIDEO_BIT_DEPTH);
+        }
+    }
+    for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
+        const definition = HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant];
+        if (definition.jellyfinProfile !== GENERIC_REXT_PROFILE && formats.includes(definition.format)) {
+            addProfile(definition.jellyfinProfile, definition.bitDepth);
+        }
+    }
+    for (const bitDepth of GENERIC_REXT_BIT_DEPTHS) {
+        const depthFormats = HEVC_RANGE_EXTENSION_VARIANTS
+            .map((variant: HEVCRangeExtensionVariant): HEVCRangeExtensionRawFormat => HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant].format)
+            .filter((format: HEVCRangeExtensionRawFormat): boolean => getGPUDecoderFormatFacts(format).bitDepth === bitDepth);
+        if (depthFormats.every((format: HEVCRangeExtensionRawFormat): boolean => formats.includes(format))) {
+            addProfile(GENERIC_REXT_PROFILE, bitDepth);
+        }
+    }
+    return bitDepthsByProfile;
+}
+
+/**
+ * Returns a codec's routes through the decoder packages that decode it into the given formats: one route per profile with that profile's depths.
+ * A codec only packages decode takes no profile condition, so its one route carries every depth.
+ */
+function createCodecPackageVideoRoutes(
+    codec: CustomVideoCodec,
+    formats: readonly GPUDecoderOutputFormat[],
+    rangeTypes: readonly string[]
+): MeasuredVideoRoute[] {
+    let bitDepthsByProfile: Map<string, number[]>;
+    const profileByFormat = PACKAGE_VIDEO_PROFILE_BY_FORMAT[codec];
+    if (codec === 'hevc') {
+        bitDepthsByProfile = getPackageHEVCProfileBitDepths(formats);
+    } else if (profileByFormat) {
+        bitDepthsByProfile = new Map<string, number[]>();
+        for (const format of formats) {
+            const profile = profileByFormat[format];
+            const bitDepths = bitDepthsByProfile.get(profile) ?? [];
+            appendUniqueValues(bitDepths, [ getGPUDecoderFormatFacts(format).bitDepth ]);
+            bitDepthsByProfile.set(profile, bitDepths);
+        }
+    } else {
+        const bitDepths: number[] = [];
+        appendUniqueValues(bitDepths, formats.map((format: GPUDecoderOutputFormat): number => getGPUDecoderFormatFacts(format).bitDepth));
+        return bitDepths.length === 0 ? [] : [ { bitDepths, codec, profiles: [], rangeTypes } ];
+    }
+    return [ ...bitDepthsByProfile ].map(([ profile, bitDepths ]: [ string, number[] ]): MeasuredVideoRoute => (
+        { bitDepths, codec, profiles: [ profile ], rangeTypes }
+    ));
+}
+
+/** Returns the routes of the video decoder packages a playback can use: per codec, the formats every package of it writes, SDR, and HDR when the frame pool may present it. */
+function createPackageVideoRoutes(
+    decoderPackages: readonly DecoderPackageRouteSummary[],
+    allowFramePoolHDR: boolean
+): MeasuredVideoRoute[] {
+    const rangeTypes: string[] = [ 'SDR' ];
+    if (allowFramePoolHDR) {
+        rangeTypes.push(...FRAME_POOL_HDR_VIDEO_RANGE_TYPES);
+    }
+    const formatsByCodec = new Map<CustomVideoCodec, GPUDecoderOutputFormat[]>();
+    for (const decoderPackage of decoderPackages) {
+        if (decoderPackage.kind !== 'video') {
+            continue;
+        }
+        const formats = decoderPackage.outputFormats.filter(isGPUDecoderOutputFormat);
+        for (const codec of decoderPackage.codecs.filter(isCustomVideoCodec)) {
+            const codecFormats = formatsByCodec.get(codec) ?? [];
+            appendUniqueValues(codecFormats, formats);
+            formatsByCodec.set(codec, codecFormats);
+        }
+    }
+    const routes: MeasuredVideoRoute[] = [];
+    for (const [ codec, formats ] of formatsByCodec) {
+        routes.push(...createCodecPackageVideoRoutes(codec, formats, rangeTypes));
+    }
+    return routes;
+}
+
+/** Returns the audio codecs a decoder package a playback can use decodes. */
+function getPackageAudioCodecs(decoderPackages: readonly DecoderPackageRouteSummary[]): CustomAudioCodec[] {
+    const codecs: CustomAudioCodec[] = [];
+    for (const decoderPackage of decoderPackages) {
+        if (decoderPackage.kind === 'audio') {
+            appendUniqueValues(codecs, decoderPackage.codecs.filter(isCustomAudioCodec));
+        }
+    }
+    return codecs;
+}
+
+/** Returns whether a codec's audio decodes through a decoder package: no engine decoder decodes it, and a package does. */
+function isPackageDecodedAudioCodec(
+    codec: CustomAudioCodec,
+    capabilities: CustomDecodeCapabilities,
+    packageAudioCodecs: readonly CustomAudioCodec[]
+): boolean {
+    return capabilities.audio[codec].status !== 'supported' && packageAudioCodecs.includes(codec);
+}
+
 function cloneDeviceProfile(profile: DeviceProfile): DeviceProfile {
     const clonedProfile: DeviceProfile = { ...profile };
     if (profile.DirectPlayProfiles) {
@@ -651,12 +829,13 @@ export function createBitrateIndependentDeviceProfile(profile: DeviceProfile): D
     return clonedProfile;
 }
 
-/** Returns the video codecs with a route; a raw-plane codec counts once one of its raw routes is authorized. */
+/** Returns the video codecs with a route; a raw-plane codec counts once one of its raw routes is authorized, and a package codec once a package decodes it. */
 function getSupportedVideoCodecs(
     capabilities: CustomDecodeCapabilities,
     rawRouteVideoCodecs: readonly CustomVideoCodec[] = [],
     allowNativeDolbyVision = false,
-    allowNativeHDR = false
+    allowNativeHDR = false,
+    packageRouteVideoCodecs: readonly CustomVideoCodec[] = []
 ): CustomVideoCodec[] {
     const supportedCodecs: CustomVideoCodec[] = [];
     for (const codec of CUSTOM_VIDEO_CODECS) {
@@ -666,6 +845,7 @@ function getSupportedVideoCodecs(
             || rangeExtensionSupported
             || (codec === 'hevc' && supportsNativeMain10HEVC(capabilities))
             || rawRouteVideoCodecs.includes(codec)
+            || packageRouteVideoCodecs.includes(codec)
             || (allowNativeDolbyVision
                 && codec === 'hevc'
                 && capabilities.nativeDolbyVisionHEVC?.status === 'supported')
@@ -680,13 +860,14 @@ function getSupportedVideoCodecs(
 
 function getSupportedAudioCodecs(
     capabilities: CustomDecodeCapabilities,
-    nativeMediaAudioCapabilities: NativeMediaAudioCapabilities | null | undefined
+    nativeMediaAudioCapabilities: NativeMediaAudioCapabilities | null | undefined,
+    packageAudioCodecs: readonly CustomAudioCodec[] = []
 ): CustomAudioCodec[] {
     const supportedCodecs: CustomAudioCodec[] = [];
     for (const codec of CUSTOM_AUDIO_CODECS) {
         const nativeMediaSupported = (codec === 'ac3' || codec === 'eac3')
             && nativeMediaAudioCapabilities?.audio[codec].status === 'supported';
-        if (capabilities.audio[codec].status === 'supported' || nativeMediaSupported) {
+        if (capabilities.audio[codec].status === 'supported' || nativeMediaSupported || packageAudioCodecs.includes(codec)) {
             supportedCodecs.push(codec);
         }
     }
@@ -1791,7 +1972,12 @@ function getMeasuredVideoRoutes(
     if (options.dolbyVisionItemVideoRoute?.codec === codec) {
         routes.push(options.dolbyVisionItemVideoRoute);
     }
+    routes.push(...getCodecPackageVideoRoutes(codec, options));
     return routes;
+}
+
+function getCodecPackageVideoRoutes(codec: CustomVideoCodec, options: MeasuredVideoRouteOptions): MeasuredVideoRoute[] {
+    return options.packageVideoRoutes.filter((route: MeasuredVideoRoute): boolean => route.codec === codec);
 }
 
 function appendUniqueValues<Value>(target: Value[], values: readonly Value[]): void {
@@ -1869,15 +2055,16 @@ function normalizeMeasuredVideoRoutes(
  * Returns whether a codec's routes split into exact pairs.
  * Several routes scope their conditions with ApplyConditions, so pairs that share a profile must merge, and a pair no route claims must reject.
  * Native 8-bit and raw 10-bit AV1 SDR, for example, share the Main profile.
- * HEVC splits whenever range-extension evidence exists.
+ * HEVC splits whenever range-extension evidence exists, or a decoder package decodes it.
  */
 function isNormalizedMeasuredVideoCodec(
     codec: CustomVideoCodec,
     capabilities: CustomDecodeCapabilities,
-    routes: readonly MeasuredVideoRoute[]
+    routes: readonly MeasuredVideoRoute[],
+    packageRouted: boolean
 ): boolean {
     return codec === 'hevc' ?
-        capabilities.hevcRangeExtensions !== undefined :
+        capabilities.hevcRangeExtensions !== undefined || packageRouted :
         routes.length > 1;
 }
 
@@ -1897,7 +2084,8 @@ function getCodecMeasuredVideoRoutes(
     options: MeasuredVideoRouteOptions
 ): MeasuredVideoRoute[] {
     const measuredRoutes = getMeasuredVideoRoutes(codec, capabilities, options);
-    return isNormalizedMeasuredVideoCodec(codec, capabilities, measuredRoutes) ?
+    const packageRouted = getCodecPackageVideoRoutes(codec, options).length > 0;
+    return isNormalizedMeasuredVideoCodec(codec, capabilities, measuredRoutes, packageRouted) ?
         normalizeMeasuredVideoRoutes(codec, measuredRoutes) :
         measuredRoutes;
 }
@@ -1923,7 +2111,7 @@ function createMeasuredRouteProfilePlan(routes: readonly MeasuredVideoRoute[]): 
 
 /**
  * Returns the stock-profile ceilings of the raw codecs other than HEVC.
- * A codec needs one only for a raw route or its item's own route, which the stock ranges may reject.
+ * A codec needs one only for a raw route, its item's own route, or a decoder package's route, which the stock ranges and profiles may reject.
  * Its exact routes keep each pair at its own depths.
  */
 function createRawCodecProfilePlans(
@@ -1935,7 +2123,8 @@ function createRawCodecProfilePlans(
         if (
             codec === 'hevc'
             || (getRawMeasuredVideoRoutes(codec, capabilities, options).length === 0
-                && options.dolbyVisionItemVideoRoute?.codec !== codec)
+                && options.dolbyVisionItemVideoRoute?.codec !== codec
+                && getCodecPackageVideoRoutes(codec, options).length === 0)
         ) {
             continue;
         }
@@ -2089,6 +2278,9 @@ function createAuthorizedHEVCProfilePlan(
     }
     if (authorizedRoutes.dolbyVisionItemVideoRoute?.codec === 'hevc') {
         addRoute(authorizedRoutes.dolbyVisionItemVideoRoute);
+    }
+    for (const route of authorizedRoutes.packageVideoRoutes.filter((packageRoute: MeasuredVideoRoute): boolean => packageRoute.codec === 'hevc')) {
+        addRoute(route);
     }
     if (rawHEVCSupported || nativeHDRSupported || nativeDolbyVisionSupported) {
         for (const profile of RAW_VIDEO_PROFILES.hevc) {
@@ -2285,11 +2477,9 @@ function widenAuthorizedHDRCodecProfiles(
     supportedNativeVideoCodecs: readonly CustomVideoCodec[],
     authorizedRoutes: AuthorizedHDRRoutes
 ): number {
-    const authorizedHEVCProfilePlan = createAuthorizedHEVCProfilePlan(
-        capabilities,
-        supportedRawHDRVideoCodecs,
-        authorizedRoutes
-    );
+    const authorizedHEVCProfilePlan = authorizedRoutes.widenHEVC ?
+        createAuthorizedHEVCProfilePlan(capabilities, supportedRawHDRVideoCodecs, authorizedRoutes) :
+        null;
     const supportsAuthorizedHEVC = authorizedHEVCProfilePlan !== null;
     let widenedProfileCount = 0;
     if (authorizedHEVCProfilePlan) {
@@ -2663,14 +2853,15 @@ function getSupportedNativeMediaChannelCounts(
 function appendMeasuredNativeAudioRouteProfiles(
     measuredProfiles: CodecProfile[],
     capabilities: CustomDecodeCapabilities,
-    nativeMediaAudioCapabilities: NativeMediaAudioCapabilities | null | undefined
+    nativeMediaAudioCapabilities: NativeMediaAudioCapabilities | null | undefined,
+    packageAudioCodecs: readonly CustomAudioCodec[]
 ): void {
     if (!nativeMediaAudioCapabilities) {
         return;
     }
 
     for (const codec of [ 'ac3', 'eac3' ] as const) {
-        if (capabilities.audio[codec].status === 'supported') {
+        if (capabilities.audio[codec].status === 'supported' || packageAudioCodecs.includes(codec)) {
             // The decoded-PCM profile below covers the native route at 48 kHz without letting its exact rate veto the software fallback
             continue;
         }
@@ -2692,10 +2883,11 @@ function appendMeasuredNativeAudioRouteProfiles(
     }
 }
 
-function getDecodedAudioCodecs(capabilities: CustomDecodeCapabilities): CustomAudioCodec[] {
+/** Returns the codecs decoded to PCM: by an engine decoder, or by a decoder package where none does. */
+function getDecodedAudioCodecs(capabilities: CustomDecodeCapabilities, packageAudioCodecs: readonly CustomAudioCodec[]): CustomAudioCodec[] {
     const decodedAudioCodecs: CustomAudioCodec[] = [];
     for (const codec of CUSTOM_AUDIO_CODECS) {
-        if (capabilities.audio[codec].status !== 'supported') {
+        if (capabilities.audio[codec].status !== 'supported' && !packageAudioCodecs.includes(codec)) {
             continue;
         }
         decodedAudioCodecs.push(codec);
@@ -2705,9 +2897,11 @@ function getDecodedAudioCodecs(capabilities: CustomDecodeCapabilities): CustomAu
 
 function hasQualifiedDecodedSurroundRoute(
     codec: CustomAudioCodec,
-    capabilities: CustomDecodeCapabilities
+    capabilities: CustomDecodeCapabilities,
+    packageAudioCodecs: readonly CustomAudioCodec[]
 ): boolean {
-    if (isCustomMediabunnyPCMAudioCodec(codec)) {
+    // A package reports its decoded layout, so every layout the codec's decoded PCM path presents is a route, as eligibility checks it
+    if (isCustomMediabunnyPCMAudioCodec(codec) || isPackageDecodedAudioCodec(codec, capabilities, packageAudioCodecs)) {
         return true;
     }
     switch (codec) {
@@ -2737,14 +2931,16 @@ function appendMeasuredAudioRouteProfiles(
     profile: DeviceProfile,
     capabilities: CustomDecodeCapabilities,
     nativeMediaAudioCapabilities: NativeMediaAudioCapabilities | null | undefined,
-    supportedAudioCodecs: readonly CustomAudioCodec[]
+    supportedAudioCodecs: readonly CustomAudioCodec[],
+    packageAudioCodecs: readonly CustomAudioCodec[]
 ): void {
-    const decodedAudioCodecs = getDecodedAudioCodecs(capabilities);
+    const decodedAudioCodecs = getDecodedAudioCodecs(capabilities, packageAudioCodecs);
     const measuredProfiles: CodecProfile[] = [];
     appendMeasuredNativeAudioRouteProfiles(
         measuredProfiles,
         capabilities,
-        nativeMediaAudioCapabilities
+        nativeMediaAudioCapabilities,
+        packageAudioCodecs
     );
     const decodedAudioRouteGroups = new Map<string, {
         channelCounts: readonly number[]
@@ -2754,7 +2950,7 @@ function appendMeasuredAudioRouteProfiles(
         if (codec === 'dts' || codec === 'mlp' || codec === 'truehd') {
             continue;
         }
-        const channelCounts = hasQualifiedDecodedSurroundRoute(codec, capabilities) ?
+        const channelCounts = hasQualifiedDecodedSurroundRoute(codec, capabilities, packageAudioCodecs) ?
             getSupportedCustomAudioInputChannelCounts(codec) :
             CUSTOM_NON_SURROUND_INPUT_CHANNEL_COUNTS;
         const routeKey = channelCounts.join(',');
@@ -2866,12 +3062,15 @@ export function augmentDeviceProfileForCustomDecode(
     const allowNativeDolbyVision = nativeDolbyVisionVideoRangeTypes.length > 0;
     const allowNativeHDR = nativeHDRVideoRangeTypes.length > 0;
     const dolbyVisionItemVideoRoute = getDolbyVisionItemVideoRoute(capabilities, options);
+    const packageVideoRoutes = createPackageVideoRoutes(options.decoderPackages ?? [], options.allowFramePoolHDR === true);
+    const packageAudioCodecs = getPackageAudioCodecs(options.decoderPackages ?? []);
     const measuredVideoRouteOptions: MeasuredVideoRouteOptions = {
         allowNativeDolbyVision,
         allowNativeHDR,
         dolbyVisionItemVideoRoute,
         nativeDolbyVisionVideoRangeTypes,
         nativeHDRVideoRangeTypes,
+        packageVideoRoutes,
         rawAV1DolbyVisionVideoRangeTypes: getAV1DolbyVisionVideoRangeTypes(
             capabilities,
             options.allowDolbyVision === true
@@ -2886,12 +3085,15 @@ export function augmentDeviceProfileForCustomDecode(
         || allowNativeHDR
         || dolbyVisionItemVideoRoute !== null
         || rawRouteVideoCodecs.length > 0;
+    const packageRouteVideoCodecs: CustomVideoCodec[] = [];
+    appendUniqueValues(packageRouteVideoCodecs, packageVideoRoutes.map((route: MeasuredVideoRoute): CustomVideoCodec => route.codec));
     const supportedNativeVideoCodecs = getSupportedVideoCodecs(capabilities);
     const supportedVideoCodecs = getSupportedVideoCodecs(
         capabilities,
         rawRouteVideoCodecs,
         allowNativeDolbyVision,
-        allowNativeHDR
+        allowNativeHDR,
+        packageRouteVideoCodecs
     );
     // The runtime selected a route for the item, so its decoder exists even without a generic route
     if (dolbyVisionItemVideoRoute && !supportedVideoCodecs.includes(dolbyVisionItemVideoRoute.codec)) {
@@ -2899,7 +3101,8 @@ export function augmentDeviceProfileForCustomDecode(
     }
     const supportedAudioCodecs = getSupportedAudioCodecs(
         capabilities,
-        options.nativeMediaAudioCapabilities
+        options.nativeMediaAudioCapabilities,
+        packageAudioCodecs
     );
     const supportedRawHDRVideoCodecs = getSupportedRawHDRVideoCodecs(capabilities);
     if (options.isRetry === true) {
@@ -2956,7 +3159,12 @@ export function augmentDeviceProfileForCustomDecode(
         capabilities,
         rawAuthorizationRouteKeys
     ).some(hasAuthorizedRouteBitDepth);
-    const widenedHDRCodecProfileCount = allowRawHDR || hasAuthorizedRangeExtensionRoute ?
+    const widenAuthorizedRoutes = allowRawHDR || hasAuthorizedRangeExtensionRoute;
+    // A package of a codec whose stock profiles condition on profile and depth needs that codec's ceiling widened too
+    const packageRoutedRawCodecs = packageRouteVideoCodecs.filter((codec: CustomVideoCodec): boolean => (
+        (CUSTOM_RAW_HDR_VIDEO_CODECS as readonly CustomVideoCodec[]).includes(codec)
+    ));
+    const widenedHDRCodecProfileCount = widenAuthorizedRoutes || packageRoutedRawCodecs.length > 0 ?
         widenAuthorizedHDRCodecProfiles(
             clonedProfile,
             capabilities,
@@ -2969,10 +3177,12 @@ export function augmentDeviceProfileForCustomDecode(
                 dolbyVisionItemVideoRoute,
                 dolbyVisionVideoRangeTypes,
                 nativeHDRVideoRangeTypes,
+                packageVideoRoutes,
                 rawCodecProfilePlans: createRawCodecProfilePlans(capabilities, measuredVideoRouteOptions),
                 rawHDRRouteVideoRangeTypes,
                 rawHDRVideoRangeTypes,
-                rawAuthorizationRouteKeys
+                rawAuthorizationRouteKeys,
+                widenHEVC: widenAuthorizedRoutes || packageRoutedRawCodecs.includes('hevc')
             }
         ) :
         0;
@@ -2986,7 +3196,8 @@ export function augmentDeviceProfileForCustomDecode(
         clonedProfile,
         capabilities,
         options.nativeMediaAudioCapabilities,
-        supportedAudioCodecs
+        supportedAudioCodecs,
+        packageAudioCodecs
     );
     const directPlayProfiles = clonedProfile.DirectPlayProfiles ?? [];
     clonedProfile.DirectPlayProfiles = directPlayProfiles;

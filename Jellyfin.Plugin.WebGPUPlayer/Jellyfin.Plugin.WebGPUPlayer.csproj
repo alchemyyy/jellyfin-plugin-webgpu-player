@@ -46,6 +46,12 @@
     <EmbeddedResource Include="$(AddonOutputDirectory)**\*" LogicalName="WebGPUPlayer.Assets/%(RecursiveDir)%(Filename)%(Extension)" WithCulture="false" />
   </ItemGroup>
 
+  <!-- The settings page and its controller, which the server serves through Plugin.GetPages -->
+  <ItemGroup>
+    <EmbeddedResource Include="Configuration\configPage.html" LogicalName="Jellyfin.Plugin.WebGPUPlayer.Configuration.configPage.html" />
+    <EmbeddedResource Include="Configuration\configPage.js" LogicalName="Jellyfin.Plugin.WebGPUPlayer.Configuration.configPage.js" />
+  </ItemGroup>
+
   <!--
     An add-on build that only lost files makes no input newer than the assembly, so the embedded file list is itself a compile input.
     NOTE: The path is resolved inside the target, because the SDK finalizes IntermediateOutputPath after the project body

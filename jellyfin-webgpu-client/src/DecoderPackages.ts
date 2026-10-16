@@ -1,8 +1,10 @@
 import type { AudioDecoderPackage, DecoderPackage, VideoDecoderPackage } from 'webgpu-player/decode/packages/DecoderPackage';
 import DecoderPackageStore, { type StoredDecoderPackage, type StoredDecoderPackages } from 'webgpu-player/decode/packages/DecoderPackageStore';
 
+import type { DecoderPackageRouteSummary } from './custom/CustomDeviceProfile';
+
 // The decoder packages the user adds in this browser, kept in IndexedDB
-// A playback offers them in the order the user added them, wherever WebCodecs cannot decode the media
+// A playback offers them in the order the user added them, wherever WebCodecs cannot decode the media, ahead of the server's packages of other ids
 
 const DATABASE_NAME = 'webGPUPlayerDecoders';
 const WARNING_PREFIX = 'WebGPU decoder packages';
@@ -75,4 +77,19 @@ export function getVideoDecoderPackages(stored: StoredDecoderPackages): VideoDec
     return stored.packages
         .map((storedPackage: StoredDecoderPackage): DecoderPackage => storedPackage.decoderPackage)
         .filter((decoderPackage: DecoderPackage): decoderPackage is VideoDecoderPackage => decoderPackage.kind === 'video');
+}
+
+/** Returns the ids of the user's packages, whose server packages a playback leaves out, since the user's own version comes first. */
+export function getStoredDecoderPackageIds(stored: StoredDecoderPackages): Set<string> {
+    return new Set<string>(stored.packages.map((storedPackage: StoredDecoderPackage): string => storedPackage.decoderPackage.id));
+}
+
+/** Returns what the user's packages decode, which negotiation advertises. */
+export function getDecoderPackageRouteSummaries(stored: StoredDecoderPackages): DecoderPackageRouteSummary[] {
+    return stored.packages.map((storedPackage: StoredDecoderPackage): DecoderPackageRouteSummary => {
+        const decoderPackage = storedPackage.decoderPackage;
+        return decoderPackage.kind === 'video' ?
+            { codecs: decoderPackage.manifest.accepts.codecs, kind: 'video', outputFormats: decoderPackage.manifest.outputFormats } :
+            { codecs: decoderPackage.manifest.codecs, kind: 'audio', outputFormats: [] };
+    });
 }

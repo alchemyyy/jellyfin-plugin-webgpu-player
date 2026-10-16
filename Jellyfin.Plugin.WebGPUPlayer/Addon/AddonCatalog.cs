@@ -12,11 +12,15 @@ public static class AddonCatalog
 {
     private static readonly Assembly ResourceAssembly = typeof(AddonCatalog).Assembly;
 
-    // NOTE: Static initializers run in textual order, and the manifest check reads the lookup
+    // NOTE: Static initializers run in textual order, and the manifest checks read the lookup
     private static readonly FrozenDictionary<string, string> ResourceLookup =
         AssetFunctions.BuildResourceLookup(ResourceAssembly.GetManifestResourceNames());
 
-    private static readonly (string? Entry, string? Problem) Manifest = LoadManifest();
+    private static readonly string? ManifestText = ReadManifestText();
+
+    private static readonly (string? Entry, string? Problem) Manifest = AssetFunctions.ParseAddonManifest(ManifestText, ResourceLookup);
+
+    private static readonly AddonModules ManifestModules = AssetFunctions.ParseAddonModules(ManifestText, ResourceLookup);
 
     /// <summary>
     /// Gets the lookup from request-relative asset path to manifest resource name.
@@ -34,6 +38,11 @@ public static class AddonCatalog
     public static string? Problem => Manifest.Problem;
 
     /// <summary>
+    /// Gets the engine modules the add-on manifest lists, which the plugin offers as its bundled decoder packages and pass files.
+    /// </summary>
+    public static AddonModules Modules => ManifestModules;
+
+    /// <summary>
     /// Opens an embedded add-on file.
     /// </summary>
     /// <param name="relativePath">The normalized request-relative path.</param>
@@ -45,15 +54,15 @@ public static class AddonCatalog
             : null;
     }
 
-    private static (string? Entry, string? Problem) LoadManifest()
+    private static string? ReadManifestText()
     {
         using Stream? stream = OpenAsset(AssetFunctions.ManifestFileName);
         if (stream is null)
         {
-            return AssetFunctions.ParseAddonManifest(null, ResourceLookup);
+            return null;
         }
 
         using StreamReader reader = new StreamReader(stream);
-        return AssetFunctions.ParseAddonManifest(reader.ReadToEnd(), ResourceLookup);
+        return reader.ReadToEnd();
     }
 }

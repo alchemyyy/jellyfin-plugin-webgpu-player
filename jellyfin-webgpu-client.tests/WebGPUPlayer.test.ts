@@ -344,11 +344,23 @@ vi.mock('webgpu-player/capability/NativeMediaAudioCapabilities', () => ({
 
 vi.mock('addons/webGPUPlayer/DecoderPackages', () => ({
     getAudioDecoderPackages: vi.fn(() => decoderPackageMockState.audioDecoders),
+    getDecoderPackageRouteSummaries: vi.fn(() => []),
+    getStoredDecoderPackageIds: vi.fn(() => new Set<string>()),
+    getVideoDecoderPackages: vi.fn(() => []),
     loadGPUVideoDecoderSources: vi.fn(() => {
         decoderPackageMockState.sourceLoadCount += 1;
         return Promise.resolve([]);
     }),
     loadPlaybackDecoderPackages: vi.fn(() => Promise.resolve({ failures: [], packages: [] }))
+}));
+
+// The server offers no packages here; its catalog requests need the host's API client
+vi.mock('addons/webGPUPlayer/ServerModules', () => ({
+    fetchServerPassSource: vi.fn(() => Promise.reject(new Error('no server'))),
+    loadServerAudioDecoderPackages: vi.fn(() => Promise.resolve([])),
+    loadServerDecoderPackageSummaries: vi.fn(() => Promise.resolve([])),
+    loadServerModuleCatalog: vi.fn(() => Promise.resolve({ decoderPackages: [], passes: [] })),
+    loadServerVideoDecoderPackages: vi.fn(() => Promise.resolve([]))
 }));
 
 vi.mock('webgpu-player/presentation/PresentationSetup', async importOriginal => {
@@ -2047,12 +2059,14 @@ describe('WebGPUPlayer HTML delegation', () => {
                 allowDolbyVision: false,
                 allowDolbyVisionProfile4: false,
                 allowDolbyVisionProfile7: false,
+                allowFramePoolHDR: false,
                 allowNativeDolbyVision: false,
                 allowNativeHDR: false,
                 allowRawHDR: false,
                 allowRawSDR: false,
                 authorizedExternalHDRRouteKeys: [],
                 authorizedRawHDRRouteKeys: [],
+                decoderPackages: [],
                 isRetry: false,
                 nativeMediaAudioCapabilities: null
             },
@@ -2064,12 +2078,14 @@ describe('WebGPUPlayer HTML delegation', () => {
             allowDolbyVision: false,
             allowDolbyVisionProfile4: false,
             allowDolbyVisionProfile7: false,
+            allowFramePoolHDR: false,
             allowNativeDolbyVision: false,
             allowNativeHDR: false,
             allowRawHDR: false,
             allowRawSDR: false,
             authorizedExternalHDRRouteKeys: [],
             authorizedRawHDRRouteKeys: [],
+            decoderPackages: [],
             isRetry: true,
             nativeMediaAudioCapabilities: null
         });
@@ -2189,6 +2205,7 @@ describe('WebGPUPlayer HTML delegation', () => {
                 allowDolbyVision: false,
                 allowDolbyVisionProfile4: false,
                 allowDolbyVisionProfile7: false,
+                allowFramePoolHDR: true,
                 allowNativeDolbyVision: false,
                 allowNativeHDR: false,
                 allowRawHDR: true,
@@ -2197,6 +2214,7 @@ describe('WebGPUPlayer HTML delegation', () => {
                 authorizedRawHDRRouteKeys: [
                     RAW_PQ_ROUTE_KEY
                 ],
+                decoderPackages: [],
                 isRetry: false,
                 nativeMediaAudioCapabilities: null
             },
@@ -2225,6 +2243,7 @@ describe('WebGPUPlayer HTML delegation', () => {
                 allowDolbyVision: false,
                 allowDolbyVisionProfile4: false,
                 allowDolbyVisionProfile7: false,
+                allowFramePoolHDR: true,
                 allowNativeDolbyVision: false,
                 allowNativeHDR: true,
                 allowRawHDR: true,
@@ -2235,6 +2254,7 @@ describe('WebGPUPlayer HTML delegation', () => {
                 authorizedRawHDRRouteKeys: [
                     RAW_PQ_ROUTE_KEY
                 ],
+                decoderPackages: [],
                 isRetry: false,
                 nativeMediaAudioCapabilities: null
             },
@@ -2719,12 +2739,14 @@ describe('WebGPUPlayer HTML delegation', () => {
                 allowDolbyVision: true,
                 allowDolbyVisionProfile4: true,
                 allowDolbyVisionProfile7: true,
+                allowFramePoolHDR: true,
                 allowNativeDolbyVision: true,
                 allowNativeHDR: false,
                 allowRawHDR: false,
                 allowRawSDR: false,
                 authorizedExternalHDRRouteKeys: [],
                 authorizedRawHDRRouteKeys: [],
+                decoderPackages: [],
                 isRetry: false,
                 nativeMediaAudioCapabilities: null
             },

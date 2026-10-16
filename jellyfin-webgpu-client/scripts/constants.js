@@ -21,6 +21,11 @@ const WEBGPU_PLAYER_SOURCE_DIRECTORY = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU
 const WEBGPU_PLAYER_BUILD_SCRIPT = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.scriptsDirectory, 'build.mjs');
 const WEBGPU_PLAYER_BUILD_INFO_FILE = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.buildInfoFile);
 const WEBGPU_PLAYER_LIBRARY_DIRECTORY = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.libraryOutputDirectory);
+// The engine's built decoder packages and pass files, which the add-on carries for the server plugin to offer,
+// and the package format file that names the custom section the plugin reads their headers from
+const WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.decoderOutputDirectory);
+const WEBGPU_PLAYER_PASS_DIRECTORY = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.passOutputDirectory);
+const WEBGPU_PLAYER_DECODER_PACKAGE_FORMAT_FILE = path.join(WEBGPU_PLAYER_SOURCE_DIRECTORY, 'decode', 'packages', 'DecoderPackageFormat.json');
 // The engine's vendored Mediabunny fork, which `mediabunny` resolves to, and the engine script that builds it
 const WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.mediabunnySourceDirectory);
 const WEBGPU_PLAYER_MEDIABUNNY_BUILD_SCRIPT = path.join(WEBGPU_PLAYER_DIRECTORY, WEBGPU_PLAYER_LAYOUT.scriptsDirectory, 'mediabunny.mjs');
@@ -37,6 +42,9 @@ module.exports = {
     WEBGPU_PLAYER_BUILD_SCRIPT,
     WEBGPU_PLAYER_BUILD_INFO_FILE,
     WEBGPU_PLAYER_LIBRARY_DIRECTORY,
+    WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY,
+    WEBGPU_PLAYER_DECODER_PACKAGE_FORMAT_FILE,
+    WEBGPU_PLAYER_PASS_DIRECTORY,
     WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY,
     WEBGPU_PLAYER_MEDIABUNNY_BUILD_SCRIPT
 };
