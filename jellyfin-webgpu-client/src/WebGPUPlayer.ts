@@ -163,6 +163,7 @@ import {
     readPresentationInput,
     UNAUTHORIZED_PRESENTATION_ELIGIBILITY_OPTIONS,
     type CustomPresentationEligibilityOptions,
+    type GPUVideoDecodeSessionFactoryOptions,
     type HDRRenderConfiguration,
     type PresentationInput,
     type RawDolbyVisionRouteFlags
@@ -2170,7 +2171,8 @@ export default class WebGPUPlayer {
         nativeAudioBridgeModule: typeof import('webgpu-player/audio/native/CustomDecodeNativeAudioBridge'),
         eligibility: EligibleCustomPlayback,
         audioPrewarm: BrowserAudioContextPrewarmLease | null,
-        backendGeneration: number
+        backendGeneration: number,
+        gpuVideoDecodeSessionOptions: GPUVideoDecodeSessionFactoryOptions
     ): CustomPlaybackController {
         const controllerReference: { controller: CustomPlaybackController | null } = { controller: null };
         const nativeAudioBridgeFactory = eligibility.audioTrackIndex === null ?
@@ -2198,7 +2200,7 @@ export default class WebGPUPlayer {
                 ).then(() => undefined);
             },
             // The frame-pool route decodes on the presenter's device
-            gpuVideoDecodeSessionFactory: createGPUVideoDecodeSessionFactory(this.presenter),
+            gpuVideoDecodeSessionFactory: createGPUVideoDecodeSessionFactory(this.presenter, gpuVideoDecodeSessionOptions),
             nativeAudioBridgeFactory
         });
         controllerReference.controller = customPlaybackController;
@@ -2368,7 +2370,9 @@ export default class WebGPUPlayer {
                 nativeAudioBridgeModule,
                 eligibility,
                 audioPrewarm,
-                backendGeneration
+                backendGeneration,
+                // The user's choice, which this playback keeps
+                { slicing: webGPUUserSettings.playback.enableGPUDecodeSlicing }
             );
             this.customPlaybackController = customPlaybackController;
             this.customPlaybackAudioSettings = {

@@ -72,6 +72,7 @@ type DefaultSettingKey =
     | 'audioDownmixAlgorithm'
     | 'automaticInputPeakNits'
     | 'enableCustomDecode'
+    | 'enableGPUDecodeSlicing'
     | 'enableHDRToneMapping'
     | 'forceStereoDownmix'
     | 'operator';
@@ -395,6 +396,20 @@ function createPanelHTML(): string {
                     </div>
                     <div class="fieldDescription webgpuSettingsCheckboxDescription">
                         ${translateToHTML('WebGPUEnableHDRToneMappingHelp')}
+                    </div>
+                    <div class="webgpuSettingsCheckboxRow">
+                        <label class="checkboxContainer">
+                            <input
+                                data-setting-checkbox="enableGPUDecodeSlicing"
+                                is="emby-checkbox"
+                                type="checkbox"
+                            />
+                            <span>${translateToHTML('WebGPUEnableGPUDecodeSlicing')}</span>
+                        </label>
+                        ${createDefaultButtonHTML('enableGPUDecodeSlicing', globalize.translate('WebGPUSettingNameGPUDecodeSlicing'))}
+                    </div>
+                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
+                        ${translateToHTML('WebGPUEnableGPUDecodeSlicingHelp')}
                     </div>
                     <div class="webgpuSettingsStatus" data-playback-status role="status">
                         ${translateToHTML('WebGPUPlaybackChangesRestartRequired')}
@@ -727,6 +742,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const forceStereoCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="forceStereoDownmix"]');
     const customDecodeCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
     const HDRToneMappingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableHDRToneMapping"]');
+    const GPUDecodeSlicingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableGPUDecodeSlicing"]');
     const playbackStatus = requireElement<HTMLElement>(panel, '[data-playback-status]');
     const operatorSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="operator"]');
     const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
@@ -800,8 +816,10 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         forceStereoCheckbox.checked = settings.audio.forceStereoDownmix;
         customDecodeCheckbox.checked = settings.playback.enableCustomDecode;
         HDRToneMappingCheckbox.checked = settings.playback.enableHDRToneMapping;
-        // HDR tone mapping runs only on the custom decode path
+        GPUDecodeSlicingCheckbox.checked = settings.playback.enableGPUDecodeSlicing;
+        // HDR tone mapping and GPU decode run only on the custom decode path
         HDRToneMappingCheckbox.disabled = !settings.playback.enableCustomDecode;
+        GPUDecodeSlicingCheckbox.disabled = !settings.playback.enableCustomDecode;
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
         operatorSelect.value = settings.render.settings.toneMapping.operator;
         const inputPeakSlider = requireElement<HTMLInputElement>(panel, '[data-setting-slider="inputPeakNits"]');
@@ -1022,6 +1040,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             ...settings,
             playback: {
                 enableCustomDecode: customDecodeCheckbox.checked,
+                enableGPUDecodeSlicing: GPUDecodeSlicingCheckbox.checked,
                 enableHDRToneMapping: HDRToneMappingCheckbox.checked
             }
         });
@@ -1030,9 +1049,11 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     };
     customDecodeCheckbox.addEventListener('change', onPlaybackPreferenceChange);
     HDRToneMappingCheckbox.addEventListener('change', onPlaybackPreferenceChange);
+    GPUDecodeSlicingCheckbox.addEventListener('change', onPlaybackPreferenceChange);
     cleanupCallbacks.push((): void => {
         customDecodeCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
         HDRToneMappingCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
+        GPUDecodeSlicingCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
     });
     bindDefaultButton('enableCustomDecode', (): void => {
         customDecodeCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableCustomDecode;
@@ -1040,6 +1061,10 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     });
     bindDefaultButton('enableHDRToneMapping', (): void => {
         HDRToneMappingCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableHDRToneMapping;
+        onPlaybackPreferenceChange();
+    });
+    bindDefaultButton('enableGPUDecodeSlicing', (): void => {
+        GPUDecodeSlicingCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableGPUDecodeSlicing;
         onPlaybackPreferenceChange();
     });
 

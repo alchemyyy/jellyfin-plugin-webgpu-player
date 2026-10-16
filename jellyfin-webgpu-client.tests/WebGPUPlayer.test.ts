@@ -878,6 +878,7 @@ import WebGPUPlayer, {
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
 import { getCustomPlaybackEligibility } from 'webgpu-player/capability/CustomPlaybackEligibility';
+import { createGPUVideoDecodeSessionFactory } from 'webgpu-player/presentation/PresentationSetup';
 import {
     CUSTOM_DECODE_AUDIO_PROBES,
     CUSTOM_DECODE_VIDEO_PROBES,
@@ -6761,6 +6762,20 @@ describe('WebGPUPlayer HTML delegation', () => {
             videoDecoderBackend: 'gpu',
             videoOutputMode: 'frame-pool'
         }));
+    });
+
+    it.each([ false, true ])('hands the playback\'s GPU decode sessions the stored GPU decode slicing choice, %s', async (enableGPUDecodeSlicing: boolean) => {
+        const defaults = createDefaultWebGPUUserSettings();
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({ ...defaults, playback: { ...defaults.playback, enableGPUDecodeSlicing } });
+        const player = new WebGPUPlayer();
+        attachPresentationSurface(getBackend());
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+
+        expect(vi.mocked(createGPUVideoDecodeSessionFactory)).toHaveBeenLastCalledWith(expect.anything(), { slicing: enableGPUDecodeSlicing });
+        expect(getCustomPlaybackController().gpuVideoDecodeSessionFactory).toBe(decoderPackageMockState.gpuVideoDecodeSessionFactory);
     });
 
     it('keeps the route the first eligibility chose when the GPU decoder offers fail', async () => {

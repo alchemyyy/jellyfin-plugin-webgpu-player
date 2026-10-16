@@ -49,9 +49,11 @@ export type WebGPUUserSettings = Readonly<{
         forceStereoDownmix: boolean
         outputDeviceId: string | null
     }>
-    // Both shape what the player negotiates with the server, so a change applies from the next playback
+    // Each applies from the next playback: custom decode and HDR tone mapping shape what the player negotiates with the server,
+    // and GPU decode slicing how a decoder package's GPU decoder submits its work
     playback: Readonly<{
         enableCustomDecode: boolean
+        enableGPUDecodeSlicing: boolean
         enableHDRToneMapping: boolean
     }>
     // Both apply live: the presenter replans the active session and keeps them for later ones
@@ -201,6 +203,7 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
         },
         playback: {
             enableCustomDecode: true,
+            enableGPUDecodeSlicing: false,
             enableHDRToneMapping: true
         },
         presentation: {
@@ -327,6 +330,10 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
             enableCustomDecode: normalizeBoolean(
                 playback.enableCustomDecode,
                 defaults.playback.enableCustomDecode
+            ),
+            enableGPUDecodeSlicing: normalizeBoolean(
+                playback.enableGPUDecodeSlicing,
+                defaults.playback.enableGPUDecodeSlicing
             ),
             enableHDRToneMapping: normalizeBoolean(
                 playback.enableHDRToneMapping,

@@ -362,8 +362,8 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-// One default button per setting the panel offers, HDR output included
-const DEFAULT_SETTING_BUTTON_COUNT = 18;
+// One default button per setting the panel offers, HDR output and GPU decode slicing included
+const DEFAULT_SETTING_BUTTON_COUNT = 19;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -743,7 +743,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             updateRenderSettings: vi.fn(() => true),
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
-        type SavedPlayback = { playback?: { enableCustomDecode?: boolean, enableHDRToneMapping?: boolean } };
+        type SavedPlayback = { playback?: { enableCustomDecode?: boolean, enableGPUDecodeSlicing?: boolean, enableHDRToneMapping?: boolean } };
         const readSavedPlayback = (): SavedPlayback['playback'] => (
             JSON.parse(storageMockState.value ?? '{}') as SavedPlayback
         ).playback;
@@ -758,16 +758,23 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             panel,
             '[data-setting-checkbox="enableHDRToneMapping"]'
         );
+        const GPUDecodeSlicingCheckbox = requirePanelElement<HTMLInputElement>(
+            panel,
+            '[data-setting-checkbox="enableGPUDecodeSlicing"]'
+        );
         const playbackStatus = requirePanelElement<HTMLElement>(panel, '[data-playback-status]');
         expect(customDecodeCheckbox.checked).toBe(true);
         expect(HDRToneMappingCheckbox.checked).toBe(true);
         expect(HDRToneMappingCheckbox.disabled).toBe(false);
+        expect(GPUDecodeSlicingCheckbox.checked).toBe(false);
+        expect(GPUDecodeSlicingCheckbox.disabled).toBe(false);
 
-        // HDR tone mapping runs only on the custom decode path, so its switch follows custom decode
+        // HDR tone mapping and GPU decode run only on the custom decode path, so their switches follow custom decode
         customDecodeCheckbox.checked = false;
         customDecodeCheckbox.dispatchEvent(new Event('change'));
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: false, enableHDRToneMapping: true });
+        expect(readSavedPlayback()).toEqual({ enableCustomDecode: false, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
         expect(HDRToneMappingCheckbox.disabled).toBe(true);
+        expect(GPUDecodeSlicingCheckbox.disabled).toBe(true);
         expect(playbackStatus.textContent).toContain('restart-required');
 
         requirePanelElement<HTMLButtonElement>(
@@ -776,12 +783,25 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         ).click();
         HDRToneMappingCheckbox.checked = false;
         HDRToneMappingCheckbox.dispatchEvent(new Event('change'));
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableHDRToneMapping: false });
+        GPUDecodeSlicingCheckbox.checked = true;
+        GPUDecodeSlicingCheckbox.dispatchEvent(new Event('change'));
+        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: true, enableHDRToneMapping: false });
         expect(HDRToneMappingCheckbox.disabled).toBe(false);
+        expect(GPUDecodeSlicingCheckbox.disabled).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(
+            panel,
+            '[data-default-setting="enableGPUDecodeSlicing"]'
+        ).click();
+        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: false, enableHDRToneMapping: false });
+        expect(GPUDecodeSlicingCheckbox.checked).toBe(false);
+        GPUDecodeSlicingCheckbox.checked = true;
+        GPUDecodeSlicingCheckbox.dispatchEvent(new Event('change'));
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll').click();
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableHDRToneMapping: true });
+        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
         expect(HDRToneMappingCheckbox.checked).toBe(true);
+        expect(GPUDecodeSlicingCheckbox.checked).toBe(false);
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
