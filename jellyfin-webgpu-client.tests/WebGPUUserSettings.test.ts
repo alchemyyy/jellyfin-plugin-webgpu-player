@@ -259,7 +259,7 @@ describe('WebGPUUserSettings', () => {
             .toEqual(Object.keys(parameters).slice(0, MAXIMUM_PARAMETER_COUNT));
     });
 
-    it('enables both playback features unless this browser stored a boolean choice', () => {
+    it('enables custom decode and HDR tone mapping, and leaves GPU decode slicing off, unless this browser stored a boolean choice', () => {
         const defaults = createDefaultWebGPUUserSettings();
         // Saved before the playback preferences existed
         const settingsWithoutPlayback = {
@@ -268,19 +268,23 @@ describe('WebGPUUserSettings', () => {
             version: defaults.version
         };
 
-        expect(defaults.playback).toEqual({ enableCustomDecode: true, enableHDRToneMapping: true });
+        expect(defaults.playback).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
         expect(normalizeWebGPUUserSettings(settingsWithoutPlayback).playback).toEqual(defaults.playback);
         expect(normalizeWebGPUUserSettings({
             ...defaults,
-            playback: { enableCustomDecode: false, enableHDRToneMapping: 'false' }
-        }).playback).toEqual({ enableCustomDecode: false, enableHDRToneMapping: true });
+            playback: { enableCustomDecode: false, enableGPUDecodeSlicing: 'true', enableHDRToneMapping: 'false' }
+        }).playback).toEqual({ enableCustomDecode: false, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
+        expect(normalizeWebGPUUserSettings({
+            ...defaults,
+            playback: { ...defaults.playback, enableGPUDecodeSlicing: true }
+        }).playback.enableGPUDecodeSlicing).toBe(true);
     });
 
     it('keeps playback and presentation preferences across render and audio resets', () => {
         const defaults = createDefaultWebGPUUserSettings();
         const changed = normalizeWebGPUUserSettings({
             ...defaults,
-            playback: { enableCustomDecode: false, enableHDRToneMapping: false },
+            playback: { enableCustomDecode: false, enableGPUDecodeSlicing: true, enableHDRToneMapping: false },
             presentation: { files: [ { parameters: {}, sourceKey: INVERT_SOURCE_KEY } ], hdrOutput: true }
         });
 
