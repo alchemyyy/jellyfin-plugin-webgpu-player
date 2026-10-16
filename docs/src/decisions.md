@@ -50,6 +50,10 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   Before, only native routes were advertised, so Jellyfin transcoded every codec and variant a package alone decodes, such as MPEG-2, VC-1, AV1 High, and E-AC-3 without a native decoder, before the package fallback ever saw it.
   The user's packages and the server's catalog give each package's codecs and output formats, from which the profile builds per-profile routes and widens the stock AV1 and HEVC ceilings; downloading a package for negotiation alone would cost every negotiation a download.
   A package's size limits and monochrome support are left out, so a stream past them negotiates and then renegotiates, which costs one failed start.
+- Interlaced video direct-plays to the custom path wherever the engine deinterlaces it (10-16).
+  Every route but Dolby Vision's has deinterlaced since engine 10-15, yet every route profile still required `IsInterlaced=false`, so Jellyfin transcoded the interlaced MPEG-2, VC-1, and H.264 the engine plays.
+  A route now requires a progressive scan only for HEVC and JPEG 2000, which code the fields apart, and on the Dolby Vision labels, and the stock scan limit leaves the custom containers as the runtime ceilings do.
+  Jellyfin matches an HLS transcode's `ts` and `mp4` against the same codec profiles as a direct play, so the profile cannot keep the limit for transcodes alone; the stream copy veto keeps a transcode deinterlacing instead.
 - Every raw HDR route that advertises HDR10 also advertises HDR10Plus (10-09).
   HDR10+ always carries a static HDR10 base, which raw PQ presents, so AV1 and VP9 advertise the label as HEVC does.
   Jellyfin labels a stream HDR10Plus whenever it carries HDR10+ metadata, so a route without the label never direct-plays such a stream.

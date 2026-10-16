@@ -29,7 +29,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
 3. Request PlaybackInfo.
    The add-on's axios interceptor (`compat/PlaybackInfoInterceptor.ts`) applies the player's request rules (`compat/PlaybackInfoPolicy.ts`) to the body that stock PlaybackManager built:
    - The selection request carries no `MaxStreamingBitrate`.
-   - `AllowVideoStreamCopy` becomes false when `WebGPUPlayer.supportsVideoStreamCopy` vetoes the source, which it does for any Dolby Vision descriptor.
+   - `AllowVideoStreamCopy` becomes false when `WebGPUPlayer.supportsVideoStreamCopy` vetoes the source, which it does for any Dolby Vision descriptor and any interlaced video (see [Interlaced video](#interlaced-video)).
    - When the selected source will transcode, a second request sizes the transcode with the detected bitrate.
 4. Start the session.
    `WebGPUPlayer.play` consumes the stock-profile proof.
@@ -56,7 +56,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
 5. Scope the stock video and container conditions to non-custom containers.
 6. `widenAuthorizedHDRCodecProfiles`.
 7. `appendMeasuredVideoRouteProfiles`.
-   Each route profile requires VideoRangeType, VideoBitDepth, `IsInterlaced=false`, and VideoProfile.
+   Each route profile requires VideoRangeType, VideoBitDepth, and VideoProfile, and `IsInterlaced=false` where the route takes only progressive video (see [Interlaced video](#interlaced-video)).
    A codec with several routes is split with ApplyConditions.
 8. `appendMeasuredAudioRouteProfiles`.
 9. `splitOriginalAudioRouteProfiles`.
@@ -101,7 +101,7 @@ If it would, `CustomDeviceProfile` advertises the item's exact VideoProfile (as 
 The profile advertises what the decoder packages a playback can use decode, before any of them is downloaded: the user's own packages and the server's.
 
 - A video package's route is per profile, with the depths of the formats it writes, SDR, and HDR10, HDR10Plus, and HLG when the user's HDR tone mapping is on (`allowFramePoolHDR`).
-  Each route requires `IsInterlaced=false`, as every measured route does.
+  It takes interlaced video unless its codec codes the fields apart, as every measured route does.
 - AV1 takes `main` for 4:2:0 at 8 and 10 bits, `high` for 4:4:4 at 8 and 10 bits, and `professional` for 4:2:2 and 12 bits.
   VP9 takes `profile 0` to `profile 3` by depth and chroma the same way.
 - HEVC takes `main` and `main 10` for 4:2:0, each named range extension profile for its format, and generic `Rext` at a depth whose every chroma format the package writes.
@@ -111,6 +111,15 @@ The profile advertises what the decoder packages a playback can use decode, befo
   Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
 - A package's `accepts` sizes and its `monochrome` support are not advertised.
   A stream past them negotiates, then fails eligibility and renegotiates.
+
+## Interlaced video
+
+The engine deinterlaces every route but Dolby Vision's, for each codec whose decoders keep both fields in one frame: H.264, MPEG-1, MPEG-2, VC-1, WMV3, VP8, VP9, and AV1 (`presentsInterlacedVideo`, in the engine's [Interlaced video](https://alchemyyy.github.io/WebGPU-Player/routes.html#interlaced-video)).
+
+- A route requires `IsInterlaced=false` only when its codec codes the fields apart, HEVC and JPEG 2000, or it presents a Dolby Vision label (`requiresProgressiveScan`).
+- A stock profile's `IsInterlaced` condition, which Jellyfin Web adds for H.264 and HEVC because a browser shows interlaced video woven, is removed in custom containers for a codec the engine deinterlaces, as the runtime ceilings are.
+- Jellyfin applies the same codec profiles to the containers of an HLS transcode, `ts` and `mp4`, as to direct play, so without the scan limit it would copy interlaced H.264 into HLS for the HTML player.
+  `supportsVideoStreamCopy` vetoes the copy of any interlaced source instead, so a transcode re-encodes and deinterlaces it, as it does with the stock profile.
 
 ## Audio
 
@@ -146,7 +155,7 @@ Every non-retry profile also waits for the raw SDR authorization, whatever the s
 - The server matches a profile container against any token of the probed container.
   Every MP4/MOV file probes as `mov,mp4,m4a,3gp,3g2,mj2`, so a stock split never names an alias of a codec's route containers (`getCustomContainerFamilyForVideoCodec`).
   A stock HEVC split scoped to `mj2,webm`, for example, rejects every Dolby Vision range in MP4 files.
-- Width, Height, VideoLevel, and VideoFramerate are removed only for custom containers.
+- Width, Height, VideoLevel, and VideoFramerate are removed only for custom containers, as is IsInterlaced for a codec the engine deinterlaces.
   Bitrate is stripped everywhere on non-retry profiles.
 - HEVC routes expand to every (VideoProfile, VideoRangeType) pair, with `VideoBitDepth Equals 0` as the value that always fails.
   AV1 and VP9 expand the same way when they have more than one route, so their native 8-bit SDR and raw 10-bit SDR share one SDR pair with both depths.
@@ -157,4 +166,4 @@ Every non-retry profile also waits for the raw SDR authorization, whatever the s
 - A profile condition cannot express color primaries, so 10-bit SDR AV1 or VP9 tagged BT.601 or BT.2020 negotiates and then fails eligibility: the raw SDR keys are BT.709 only.
 - A P10 Matroska stream without a CCID, labeled by transfer, negotiates through the static HDR ranges, but it declares no base, so it plays only through its RPU route.
 - `customProfileAugmentationAvailable` stays set for the lifetime of the player instance.
-- Dolby Vision sources always disable HLS video stream copy, so an HLS fallback re-encodes the video.
+- Dolby Vision and interlaced sources always disable HLS video stream copy, so an HLS fallback re-encodes the video.

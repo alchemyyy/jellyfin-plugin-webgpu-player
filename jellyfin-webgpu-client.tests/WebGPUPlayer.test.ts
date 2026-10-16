@@ -1763,14 +1763,13 @@ describe('WebGPUPlayer HTML delegation', () => {
     });
 
     it.each([
-        [ 'interlaced MPEG-2', createPlaybackSelectionItem('mpeg2-interlaced', {
+        // HEVC codes interlaced video as field pictures, which no decoder weaves for the deinterlacing pass
+        [ 'interlaced HEVC', createPlaybackSelectionItem('hevc-interlaced', {
             AverageFrameRate: 29.97003,
             BitDepth: 8,
-            Codec: 'MPEG2VIDEO',
-            Height: 480,
+            Codec: 'HEVC',
             IsInterlaced: true,
-            Profile: 'Main',
-            Width: 720
+            Profile: 'Main'
         }, [{
             Channels: 2,
             Codec: 'AC3',
@@ -1844,14 +1843,12 @@ describe('WebGPUPlayer HTML delegation', () => {
         const player = new WebGPUPlayer();
         getBackend().canPlayItem = vi.fn(() => true);
         const playOptions = { fullscreen: true };
-        const item = createPlaybackSelectionItem('mpeg2-interlaced', {
+        const item = createPlaybackSelectionItem('hevc-interlaced', {
             AverageFrameRate: 29.97003,
             BitDepth: 8,
-            Codec: 'MPEG2VIDEO',
-            Height: 480,
+            Codec: 'HEVC',
             IsInterlaced: true,
-            Profile: 'Main',
-            Width: 720
+            Profile: 'Main'
         }, [{
             Channels: 2,
             Codec: 'AC3',
@@ -1869,7 +1866,10 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(player.canPlayItem(item, playOptions)).toBe(true);
     });
 
-    it('keeps high-frame-rate progressive MPEG-2 metadata eligible with custom decode enabled', () => {
+    it.each([
+        [ 'high-frame-rate progressive', { Height: 540 } ],
+        [ 'interlaced', { Height: 480, IsInterlaced: true } ]
+    ])('keeps %s MPEG-2 metadata eligible with custom decode enabled', (_label, scanFields) => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
         const canPlayItem = vi.fn(() => true);
@@ -1879,9 +1879,9 @@ describe('WebGPUPlayer HTML delegation', () => {
             AverageFrameRate: 29.97003,
             BitDepth: 8,
             Codec: 'MPEG2VIDEO',
-            Height: 540,
             Profile: 'Main',
-            Width: 720
+            Width: 720,
+            ...scanFields
         });
 
         playbackPreferencesMockState.customDecodeEnabled = true;
@@ -2041,6 +2041,17 @@ describe('WebGPUPlayer HTML delegation', () => {
         });
 
         expect(player.supportsVideoStreamCopy(item, 'dolby-vision-av1-source')).toBe(false);
+    });
+
+    it('blocks interlaced video stream copy, which the HTML player would show woven, so a transcode deinterlaces', () => {
+        const player = new WebGPUPlayer();
+        const interlacedItem = createPlaybackSelectionItem('interlaced-h264', { BitDepth: 8, Codec: 'H264', IsInterlaced: true, Profile: 'High' });
+        const progressiveItem = createPlaybackSelectionItem('progressive-h264', { BitDepth: 8, Codec: 'H264', Profile: 'High' });
+        const unknownScanItem = createPlaybackSelectionItem('unknown-scan-h264', { BitDepth: 8, Codec: 'H264', IsInterlaced: undefined, Profile: 'High' });
+
+        expect(player.supportsVideoStreamCopy(interlacedItem, 'interlaced-h264-source')).toBe(false);
+        expect(player.supportsVideoStreamCopy(progressiveItem, 'progressive-h264-source')).toBe(true);
+        expect(player.supportsVideoStreamCopy(unknownScanItem, 'unknown-scan-h264-source')).toBe(true);
     });
 
     it('widens a custom-decode profile only when enabled and never on retry', async () => {

@@ -221,7 +221,7 @@ function createAV1Capabilities(rawAV1Supported: boolean): CustomDecodeCapabiliti
         rawHDRVideo,
         telemetry: {
             audioProbeCount: CUSTOM_AUDIO_CODECS.length,
-            bundledAudioCodecCount: 0,
+            mediabunnyAudioCodecCount: 0,
             nativeSurroundAudioProbeCount: 0,
             nativeHDRVideoProbeCount: 0,
             nativeUltraHDVideoProbeCount: 0,
@@ -512,6 +512,23 @@ const AV1_VIDEO_RANGE_MATRIX: readonly AV1DirectPlayMatrixRow[] = [
         label: 'Dolby Vision 10.2 over an 8-bit base, labeled DOVIWithSDR',
         runtimeEligible: true,
         videoStream: createProfile10Stream(2, 'DOVIWithSDR', 'sdr', { BitDepth: 8 })
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        // The deinterlacing pass presents interlaced video on every route but Dolby Vision's
+        expectedRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
+        label: 'SDR Main 8-bit, interlaced',
+        runtimeEligible: true,
+        videoStream: createSDRAV1Stream({ IsInterlaced: true })
+    },
+    {
+        deviceProfileAdvertised: false,
+        directPlaySupported: false,
+        expectedIneligibilityReason: 'interlaced-video-unsupported',
+        label: 'Dolby Vision 10.1, labeled DOVIWithHDR10, interlaced',
+        runtimeEligible: false,
+        videoStream: createProfile10Stream(1, 'DOVIWithHDR10', 'pq', { IsInterlaced: true })
     }
 ];
 

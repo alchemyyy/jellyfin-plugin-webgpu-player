@@ -20,11 +20,10 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
    - Presentation times: AVI stamps packets in decode order, so HEVC in AVI is refused, and H.264 with B-frames relies on Mediabunny's sample sink to reorder, which it does not on WebKit.
      FFmpeg also writes HEVC in AVI with a zero codec tag unless told otherwise.
    - Audio: WAVE_FORMAT_EXTENSIBLE is unmapped, and FLAC and Vorbis in AVI carry no decoder description the fork reads, so the AVI rule leaves them out.
-7. Interlaced video.
-   Since 10-15 the engine deinterlaces in presentation (yadif, double rate by default), and its prefilter and eligibility accept interlaced H.264, MPEG-2, VC-1, and WMV3; only interlaced HEVC, interlaced JPEG 2000, and the Dolby Vision routes stay refused.
-   The add-on still adds `IsInterlaced` equals false to its widened codec conditions and to its measured route profiles (`CustomDeviceProfile.ts`), so the server still transcodes interlaced sources instead of direct-playing them to the custom path.
-   Closing it: drop that condition for the codecs the engine now presents interlaced, keep it for HEVC, JPEG 2000, and the Dolby Vision profiles, and test the negotiation with interlaced MPEG-2 and H.264 items.
-   Jellyfin's MediaStream reports `IsInterlaced` but no field order, so each frame's order comes from its decoder, parser, or container, else top field first; a deinterlacing choice in the add-on's settings would call `WebGPUPresenter.setDeinterlaceMode` (double rate, single rate, or off).
+7. A deinterlacing choice in the add-on's settings.
+   Since 10-16 interlaced video direct-plays to the custom path wherever the engine deinterlaces it, always at double rate.
+   Jellyfin's MediaStream reports `IsInterlaced` but no field order, so each frame's order comes from its decoder, parser, or container, else top field first.
+   A choice in the settings would call `WebGPUPresenter.setDeinterlaceMode` (double rate, single rate, or off).
 8. VobSub (`dvdsub`) subtitles.
    The augmented profile lists vtt, ass, ssa, and pgssub only, so the server burns a selected VobSub track in, the play method becomes Transcode, and the custom path is ineligible.
    A 4K source is then re-encoded just to burn in a bitmap.
@@ -127,9 +126,9 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     A package's `accepts` size conditions and its `monochrome` support are not advertised, so a stream past them, or a 4:0:0 stream for a package without `monochrome`, negotiates and then renegotiates after a failed start.
     Closing it needs the server's catalog to carry the `accepts` conditions, and Width, Height, and pixel format conditions in the package routes.
 25. The add-on's tests do not build.
-    `jellyfin-webgpu-client.tests` has 54 typecheck errors from the engine's removals and moves.
-    `WebGPUPlayer.test.ts` fails 30 tests: some still expect the removed `bundled-hevc` backend and `loadGPUVideoDecoderSources`, and its controller mock lacks `getPresentationTargetTime` and expects color pipeline configurations without `videoFields`.
-    `custom/CustomDeviceProfile.test.ts` fails 92 tests, because its capability builder reads the removed `CUSTOM_BUNDLED_AUDIO_CODECS`.
+    `jellyfin-webgpu-client.tests` has 50 typecheck errors from the engine's removals and moves, all in the custom decode suites' bundled decoder capabilities (`bundledHEVC`, `bundledDTS`, and the like).
+    `WebGPUPlayer.test.ts` fails 28 tests: some still expect the removed `bundled-hevc` backend and `loadGPUVideoDecoderSources`, and its controller mock lacks `getPresentationTargetTime` and expects color pipeline configurations without `videoFields`.
+    `custom/CustomDeviceProfile.test.ts` fails 27 tests and `custom/HEVCDirectPlaySupportMatrix.test.ts` 28, which expect capabilities and routes the package-based engine removed, such as the bundled HEVC, DTS, and TrueHD decoders.
     Closing it needs the tests rewritten against the package-based engine.
 
 ## Settled decisions

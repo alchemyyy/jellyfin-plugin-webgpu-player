@@ -40,6 +40,7 @@ import {
     getDolbyVisionProfile8HDR10BaseColorMetadata,
     getDolbyVisionProfile8HLGBaseColorMetadata,
     getPresentationInputColorMetadata,
+    getPresentationVideoFields,
     isKnownSDRPresentationInput
 } from 'webgpu-player/presentation/PresentationInput';
 import {
@@ -998,6 +999,10 @@ export default class WebGPUPlayer {
     }
 
     /** Blocks HLS video copy for Dolby Vision sources while preserving direct play. */
+    /**
+     * Vetoes video stream copy of a source the HTML player would present wrongly: Dolby Vision, and interlaced video, which a browser shows woven.
+     * The custom profile drops the stock scan limit for codecs the engine deinterlaces, so without the veto a transcode would copy such video instead of deinterlacing it.
+     */
     supportsVideoStreamCopy(
         item: unknown,
         mediaSourceId?: string | null,
@@ -1006,7 +1011,12 @@ export default class WebGPUPlayer {
         const presentationOptions = Array.isArray(mediaStreams) ?
             { mediaSource: { MediaStreams: mediaStreams } } :
             getDeviceProfilePresentationOptions(item, mediaSourceId);
-        return presentationOptions === null || getDolbyVisionPresentationDescriptor(presentationOptions) === null;
+        if (presentationOptions === null) {
+            return true;
+        }
+        const scan = getPresentationVideoFields(presentationOptions).scan;
+        return getDolbyVisionPresentationDescriptor(presentationOptions) === null
+            && (scan === 'progressive' || scan === 'unknown');
     }
 
     async getDeviceProfile(item: unknown, options?: unknown): Promise<unknown> {
