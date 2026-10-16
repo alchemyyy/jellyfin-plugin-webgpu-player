@@ -114,10 +114,11 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     - A truncated L1 block is skipped rather than rejecting the RPU.
     - An L1 block in the wrong section is skipped rather than kept as all zeros.
     - There is no limit on block count; input size bounds it.
-23. Report the Mediabunny defects the engine contains upstream, or fix them in the fork.
-    Header-stripped laced Matroska blocks (`CustomDecodeInputFormats.ts`) and the unhandled `close()` after a custom decoder fails (`HandledDecodeFailures.ts`) both remain in Mediabunny 1.61.5 and in the fork the engine now pins; the engine book's `decisions.md` describes them.
-    So do the gaps the engine works around through Mediabunny's internals: BlockAdditions beyond BlockAddID 1, Matroska FlagInterlaced and FieldOrder, `dvc1`, the Dolby Vision sample entries, the MJ2 signature box, and a Matroska `V_AV1` CodecPrivate.
-    Fixing one in the fork would let the engine drop its workaround; reporting one upstream is a public action and needs the project owner's decision.
+23. Fix in the fork the Mediabunny gaps the engine works around through Mediabunny's internals.
+    BlockAdditions beyond BlockAddID 1, Matroska FlagInterlaced and FieldOrder, `dvc1`, the Dolby Vision sample entries, the MJ2 signature box, and a Matroska `V_AV1` CodecPrivate remain in Mediabunny 1.61.5 and in the fork; the engine book's `decisions.md` describes them.
+    Fixing one in the fork, on its own branch cut from upstream's `main`, would let the engine drop its workaround.
+    The two defects are fixed in the fork (10-16) and their workarounds are gone: laced header stripping on branch `fix-matroska-laced-header-stripping`, and the unclosed custom decoder on `fix-custom-decoder-close-after-failure`.
+    Upstream pull requests from those branches are the project owner's to open.
 
 ## Jellyfin integration
 
