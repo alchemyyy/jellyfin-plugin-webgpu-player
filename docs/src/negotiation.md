@@ -93,8 +93,9 @@ Jellyfin labels many Dolby Vision streams the engine can present outside the gen
 - a P10 Matroska stream without a CCID, by transfer.
 
 For a non-retry Dolby Vision item, `getHDRDeviceProfileOptions` passes the item's streams as `itemMediaSource`.
-`CustomDeviceProfile` asks the engine's `hasEligibleCustomVideoRoute` whether the runtime would present the item with the measured capabilities and authorizations.
+`CustomDeviceProfile` asks the engine's `hasEligibleCustomVideoRoute` whether the runtime would present the item with the measured capabilities and authorizations, the video packages of `decoderPackages`, and `allowFramePoolHDR`.
 If it would, `CustomDeviceProfile` advertises the item's exact VideoProfile (as the existing route token), VideoBitDepth, and VideoRangeType as one more HEVC or AV1 route.
+So without native HEVC decode, a stream whose declared base the HEVC decoder package decodes, such as Profile 7 or 8.1, is advertised.
 
 ## Decoder packages
 
@@ -109,7 +110,7 @@ The profile advertises what the decoder packages a playback can use decode, befo
 - A package codec with stock CodecProfiles, AV1 or HEVC, widens their custom-container ceiling with its profiles and depths, as a raw route does (`createRawCodecProfilePlans`, `createAuthorizedHEVCProfilePlan`).
 - An audio package's codec is a decoded route at every channel count its decoded PCM path presents; DTS and TrueHD keep their exact profile routes.
   Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
-- A package's `accepts` sizes and its `monochrome` support are not advertised.
+- A package's `accepts` sizes and its `monochrome` support are not advertised, and the item route check skips them too.
   A stream past them negotiates, then fails eligibility and renegotiates.
 
 ## Interlaced video

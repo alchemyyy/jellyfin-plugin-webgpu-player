@@ -29,6 +29,7 @@ import {
 import {
     augmentDeviceProfileForCustomDecode,
     createBitrateIndependentDeviceProfile,
+    type CustomDeviceProfileOptions,
     type DecoderPackageRouteSummary
 } from 'addons/webGPUPlayer/custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from 'addons/webGPUPlayer/custom/NativeDirectPlayCompatibility';
@@ -4058,6 +4059,35 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         expect(isDirectPlayAdvertised(genericResult.profile, rangeExtensionStream)).toBe(false);
         expect(isDirectPlayAdvertised(itemResult.profile, rangeExtensionStream)).toBe(true);
         expect(isDirectPlayAdvertised(mainItemResult.profile, mainStream)).toBe(false);
+    });
+
+    it('advertises a Dolby Vision item whose declared base the HEVC decoder package decodes without native HEVC', () => {
+        // Profile 8.1, whose compatibility ID 1 declares an HDR10 base
+        const mediaStream = createVideoStream('hevc', 'Main 10', 10, 'DOVIWithHDR10', {
+            BlPresentFlag: true,
+            ColorPrimaries: 'bt2020',
+            ColorSpace: 'bt2020nc',
+            ColorTransfer: 'smpte2084',
+            DvBlSignalCompatibilityId: 1,
+            DvProfile: 8,
+            ElPresentFlag: false,
+            RpuPresentFlag: true,
+            VideoRange: 'HDR'
+        });
+        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] });
+        const options: CustomDeviceProfileOptions = { allowFramePoolHDR: true, allowRawHDR: false, decoderPackages: [ HEVC_DECODER_PACKAGE ] };
+        const itemMediaSource = { MediaStreams: [ mediaStream ] };
+        const isAdvertised = (profileOptions: CustomDeviceProfileOptions): boolean => isDirectPlayAdvertised(
+            augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities, profileOptions).profile,
+            mediaStream
+        );
+
+        // The generic package routes carry no Dolby Vision label
+        expect(isAdvertised(options)).toBe(false);
+        expect(isAdvertised({ ...options, itemMediaSource })).toBe(true);
+        // The frame pool presents the HDR10 base only under the user's HDR tone mapping, and only a video package decodes it
+        expect(isAdvertised({ ...options, allowFramePoolHDR: false, itemMediaSource })).toBe(false);
+        expect(isAdvertised({ ...options, decoderPackages: [ EAC3_DECODER_PACKAGE ], itemMediaSource })).toBe(false);
     });
 
     it('never widens a retry, even for a Dolby Vision item with a route', () => {
