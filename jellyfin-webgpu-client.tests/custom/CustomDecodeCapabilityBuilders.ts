@@ -5,12 +5,19 @@ import type {
     CustomVideoCodec
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 import {
+    H264_JELLYFIN_PROFILE_NAMES,
+    H264_PROFILE_PROBE_CODED_HEIGHT,
+    H264_PROFILE_PROBE_CODED_WIDTH,
+    H264_PROFILES,
+    type H264ProfileCapabilities
+} from 'webgpu-player/capability/H264ProfileCapabilities';
+import {
     HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS,
     type HEVCRangeExtensionCapability,
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 
-// Capability records shared by the custom decode suites: WebCodecs codec results, HEVC range-extension probe results, and the bundled HEVC qualifications
+// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension probe results, and the bundled HEVC qualifications
 
 /** Builds a WebCodecs codec capability as the configuration probe alone reports it. */
 export function createConfigCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
@@ -36,6 +43,24 @@ export function createVerifiedCodecCapability<Codec extends CustomAudioCodec | C
         reason: supported ? 'decode-output-verified' : 'config-unsupported',
         status: supported ? 'supported' : 'unsupported'
     };
+}
+
+/** Builds every H.264 profile's probe result, each with decoded-output evidence or none. */
+export function createH264ProfileCapabilities(supported: boolean): H264ProfileCapabilities {
+    const capabilities = {} as Record<typeof H264_PROFILES[number], H264ProfileCapabilities[typeof H264_PROFILES[number]]>;
+    for (const profile of H264_PROFILES) {
+        capabilities[profile] = Object.freeze({
+            codecString: profile,
+            codedHeight: H264_PROFILE_PROBE_CODED_HEIGHT,
+            codedWidth: H264_PROFILE_PROBE_CODED_WIDTH,
+            evidence: supported ? 'decoded-output' : 'none',
+            jellyfinProfileName: H264_JELLYFIN_PROFILE_NAMES[profile],
+            profile,
+            reason: supported ? 'decode-output-verified' : 'config-unsupported',
+            status: supported ? 'supported' : 'unsupported'
+        });
+    }
+    return Object.freeze(capabilities);
 }
 
 /** Builds the output-copy probe result of one HEVC range-extension variant from its probe definition. */

@@ -57,6 +57,7 @@ import {
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 import {
     hasEligibleCustomVideoRoute,
+    presentsInterlacedVideo,
     type CustomPlaybackEligibilityOptions
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import { getDolbyVisionPresentationSelection } from 'webgpu-player/presentation/PresentationInput';
@@ -225,6 +226,12 @@ const AV1_DOLBY_VISION_VIDEO_RANGE_TYPES = [
     ...DOLBY_VISION_VIDEO_RANGE_TYPES,
     DOLBY_VISION_INVALID_VIDEO_RANGE_TYPE
 ] as const;
+// The labels a Dolby Vision route presents, which never deinterlaces
+const DOLBY_VISION_RANGE_TYPE_SET = new Set<string>([
+    ...DOLBY_VISION_VIDEO_RANGE_TYPES,
+    ...DOLBY_VISION_PROFILE_7_VIDEO_RANGE_TYPES,
+    DOLBY_VISION_INVALID_VIDEO_RANGE_TYPE
+]);
 // Every Jellyfin range label except Unknown; exact routes cover each one per profile
 const JELLYFIN_VIDEO_RANGE_TYPES = [
     'SDR',
@@ -1054,6 +1061,20 @@ function removeNativeRuntimeConditions(
     return conditions.filter(condition => !NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(condition.Property ?? ''));
 }
 
+/**
+ * Returns whether a stock condition limits only the browser's own playback of the codec, which the custom path does not share:
+ * a runtime ceiling, or a scan limit on a codec whose interlaced streams the engine deinterlaces.
+ */
+function isNativeOnlyVideoCondition(condition: ProfileCondition, codec: CustomVideoCodec): boolean {
+    return NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(condition.Property ?? '')
+        || (condition.Property === VIDEO_INTERLACED_PROPERTY && presentsInterlacedVideo(codec));
+}
+
+function hasNativeOnlyVideoConditions(codecProfile: CodecProfile, codec: CustomVideoCodec): boolean {
+    return hasNativeRuntimeConditions(codecProfile.ApplyConditions)
+        || codecProfile.Conditions?.some(condition => isNativeOnlyVideoCondition(condition, codec)) === true;
+}
+
 function getDeclaredDirectPlayVideoCodecs(profile: DeviceProfile): string[] {
     const codecs: string[] = [];
     for (const directPlayProfile of profile.DirectPlayProfiles ?? []) {
@@ -1097,7 +1118,7 @@ function createRuntimeConditionProfile(
         runtimeProfile.ApplyConditions = removeNativeRuntimeConditions(codecProfile.ApplyConditions);
     }
     if (codecProfile.Conditions) {
-        runtimeProfile.Conditions = removeNativeRuntimeConditions(codecProfile.Conditions);
+        runtimeProfile.Conditions = codecProfile.Conditions.filter(condition => !isNativeOnlyVideoCondition(condition, codec));
     }
     return runtimeProfile;
 }
@@ -1141,9 +1162,7 @@ function createScopedVideoRuntimeProfiles(
     if (
         codecProfile.Type !== VIDEO_CODEC_PROFILE_TYPE
         || codecProfile.SubContainer
-        || isMeasuredVideoRouteProfile(codecProfile)
-        || (!hasNativeRuntimeConditions(codecProfile.Conditions)
-            && !hasNativeRuntimeConditions(codecProfile.ApplyConditions))
+        || isAddedVideoRouteProfile(codecProfile)
     ) {
         return null;
     }
@@ -1157,7 +1176,10 @@ function createScopedVideoRuntimeProfiles(
         supportedVideoCodecs
     );
     const containerScope = getCustomContainerScope(codecProfile.Container);
-    if (supportedProfileCodecs.length === 0 || containerScope.customContainers.length === 0) {
+    if (
+        containerScope.customContainers.length === 0
+        || !supportedProfileCodecs.some(codec => hasNativeOnlyVideoConditions(codecProfile, codec))
+    ) {
         return null;
     }
 
@@ -1362,7 +1384,7 @@ function getAuthorizedHDRVideoProfiles(
 function createRawHDRConditions(
     conditions: NonNullable<CodecProfile['Conditions']>,
     includeSDR: boolean,
-    rawHDRCodecs: readonly string[],
+    rawHDRCodecs: readonly CustomVideoCodec[],
     rawHDRVideoRangeTypes: readonly string[],
     codecProfilePlan: AuthorizedCodecProfilePlan | null = null
 ): NonNullable<CodecProfile['Conditions']> | null {
@@ -1379,9 +1401,12 @@ function createRawHDRConditions(
     const videoRangeTypeValue = codecProfilePlan?.rangeTypes.join('|')
         ?? getRawHDRVideoRangeTypeValue(includeSDR, rawHDRVideoRangeTypes);
 
+    // A codec the engine deinterlaces takes interlaced streams; the measured routes still refuse them on Dolby Vision labels
+    const presentsInterlaced = rawHDRCodecs.every(presentsInterlacedVideo);
     const applicableConditions = conditions.filter(condition => (
         condition.Property !== VIDEO_PROFILE_PROPERTY
         && !NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES.has(condition.Property ?? '')
+        && !(presentsInterlaced && condition.Property === VIDEO_INTERLACED_PROPERTY)
     ));
     const widenedConditions = applicableConditions.map(condition => {
         if (condition.Condition === EQUALS_ANY_CONDITION
@@ -1434,20 +1459,35 @@ function createRawHDRConditions(
             Value: authorizedVideoProfiles.join('|')
         });
     }
-    if (!widenedConditions.some(condition => (
-        condition.IsRequired === true
-        && condition.Property === VIDEO_INTERLACED_PROPERTY
-        && condition.Condition === 'Equals'
-        && condition.Value === 'false'
-    ))) {
-        widenedConditions.push({
-            Condition: 'Equals',
-            IsRequired: true,
-            Property: VIDEO_INTERLACED_PROPERTY,
-            Value: 'false'
-        });
+    if (!presentsInterlaced && !widenedConditions.some(isProgressiveScanCondition)) {
+        widenedConditions.push(createProgressiveScanCondition());
     }
     return widenedConditions;
+}
+
+function createProgressiveScanCondition(): ProfileCondition {
+    return {
+        Condition: EQUALS_CONDITION,
+        IsRequired: true,
+        Property: VIDEO_INTERLACED_PROPERTY,
+        Value: 'false'
+    };
+}
+
+function isProgressiveScanCondition(condition: ProfileCondition): boolean {
+    return condition.IsRequired === true
+        && condition.Property === VIDEO_INTERLACED_PROPERTY
+        && condition.Condition === EQUALS_CONDITION
+        && condition.Value === 'false';
+}
+
+/**
+ * Returns whether a route takes only progressive streams: its codec codes interlaced fields apart, or it presents a Dolby Vision label,
+ * whose routes never deinterlace.
+ */
+function requiresProgressiveScan(route: MeasuredVideoRoute): boolean {
+    return !presentsInterlacedVideo(route.codec)
+        || route.rangeTypes.some(rangeType => DOLBY_VISION_RANGE_TYPE_SET.has(rangeType));
 }
 
 type RawHDRCodecProfilePlan = {
@@ -1459,12 +1499,14 @@ type RawHDRCodecRoutePlan = {
     widened: boolean
 };
 
-function isMeasuredVideoRouteProfile(codecProfile: CodecProfile): boolean {
+/**
+ * Returns whether the add-on built the codec profile, as a measured route or a widened stock profile, so another augmentation leaves it alone.
+ * Each requires VideoRangeType or a progressive scan, which Jellyfin Web's own profiles never require.
+ */
+function isAddedVideoRouteProfile(codecProfile: CodecProfile): boolean {
     return codecProfile.Conditions?.some(condition => (
-        condition.IsRequired === true
-        && condition.Property === VIDEO_INTERLACED_PROPERTY
-        && condition.Condition === 'Equals'
-        && condition.Value === 'false'
+        (condition.IsRequired === true && condition.Property === VIDEO_RANGE_TYPE_PROPERTY)
+        || isProgressiveScanCondition(condition)
     )) === true;
 }
 
@@ -1507,7 +1549,7 @@ function createRawHDRCodecProfilePlan(
     if (
         codecProfile.Type !== VIDEO_CODEC_PROFILE_TYPE
         || codecProfile.SubContainer
-        || isMeasuredVideoRouteProfile(codecProfile)
+        || isAddedVideoRouteProfile(codecProfile)
     ) {
         return null;
     }
@@ -1723,12 +1765,9 @@ function createMeasuredRouteConditions(route: MeasuredVideoRoute): NonNullable<C
         Property: VIDEO_BIT_DEPTH_PROPERTY,
         Value: route.bitDepths.join('|')
     });
-    conditions.push({
-        Condition: 'Equals',
-        IsRequired: true,
-        Property: VIDEO_INTERLACED_PROPERTY,
-        Value: 'false'
-    });
+    if (requiresProgressiveScan(route)) {
+        conditions.push(createProgressiveScanCondition());
+    }
     if (route.profiles.length > 0) {
         conditions.push({
             Condition: EQUALS_ANY_CONDITION,

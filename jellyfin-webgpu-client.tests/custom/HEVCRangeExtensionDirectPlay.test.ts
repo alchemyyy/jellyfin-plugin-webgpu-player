@@ -93,7 +93,7 @@ function createCapabilities(
         rawHDRVideo,
         telemetry: {
             audioProbeCount: 0,
-            bundledAudioCodecCount: 0,
+            mediabunnyAudioCodecCount: 0,
             nativeHDRVideoProbeCount: 0,
             nativeSurroundAudioProbeCount: 0,
             nativeUltraHDVideoProbeCount: 0,

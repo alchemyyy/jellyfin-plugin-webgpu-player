@@ -6,6 +6,7 @@ import {
     type DecoderPackageRouteSummary
 } from 'addons/webGPUPlayer/custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from 'addons/webGPUPlayer/custom/NativeDirectPlayCompatibility';
+import { CUSTOM_PROFILE_VIDEO_CONTAINERS } from 'webgpu-player/capability/CustomContainerCodecSupport';
 import {
     CUSTOM_AUDIO_CODECS,
     CUSTOM_RAW_HDR_VIDEO_CODECS,
@@ -18,7 +19,7 @@ import {
     type CustomVideoCodec
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 
-import { createConfigCodecCapability } from './CustomDecodeCapabilityBuilders';
+import { createConfigCodecCapability, createH264ProfileCapabilities } from './CustomDecodeCapabilityBuilders';
 
 // The decoder packages the engine's decoder projects build, as the server's catalog describes them
 const MPEG2_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'mpeg2video', 'mpeg1video' ], kind: 'video', outputFormats: [ 'I420', 'I422', 'I444' ] };
@@ -30,7 +31,11 @@ const EAC3_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], ki
 const UNKNOWN_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'uncompressed' ], kind: 'video', outputFormats: [ 'RGBA' ] };
 
 const MATROSKA_CONTAINER = 'mkv';
+const MPEG4_CONTAINER = 'mp4';
 const TRANSPORT_STREAM_CONTAINER = 'ts';
+// The value a stock profile split takes for every container the engine does not play
+const NON_CUSTOM_VIDEO_CONTAINERS = `-${CUSTOM_PROFILE_VIDEO_CONTAINERS.join(',')}`;
+const STOCK_H264_MAXIMUM_LEVEL = '52';
 const STEREO_CHANNEL_COUNT = 2;
 const SURROUND_CHANNEL_COUNT = 6;
 const SAMPLE_RATE = 48_000;
@@ -59,6 +64,7 @@ function createCapabilities(supportedVideoCodecs: readonly CustomVideoCodec[] = 
     }
     return {
         audio,
+        h264Profiles: createH264ProfileCapabilities(true),
         rawHDRVideo,
         telemetry: {
             audioProbeCount: 0,
@@ -100,6 +106,23 @@ function createStockProfile(): DeviceProfile {
         Name: 'HTML profile',
         TranscodingProfiles: []
     };
+}
+
+/** Returns the stock profile with Jellyfin Web's H.264 limits in a browser: a level ceiling, and no interlaced streams, which the browser shows woven. */
+function createStockProfileWithH264ScanLimit(): DeviceProfile {
+    const profile = createStockProfile();
+    profile.CodecProfiles = [
+        ...(profile.CodecProfiles ?? []),
+        {
+            Codec: 'h264',
+            Conditions: [
+                { Condition: 'LessThanEqual', IsRequired: false, Property: 'VideoLevel', Value: STOCK_H264_MAXIMUM_LEVEL },
+                { Condition: 'NotEquals', IsRequired: false, Property: 'IsInterlaced', Value: 'true' }
+            ],
+            Type: 'Video'
+        }
+    ];
+    return profile;
 }
 
 function createVideoStream(codec: string, profile: string, bitDepth: number, overrides: StreamRecord = {}): StreamRecord {
@@ -145,7 +168,7 @@ function augment(
 }
 
 describe('augmentDeviceProfileForCustomDecode with decoder packages', () => {
-    it('advertises a codec only a package decodes, in each container that carries it, as progressive SDR at its depths', () => {
+    it('advertises a codec only a package decodes, in each container that carries it, as SDR at its depths and either scan', () => {
         const mpeg2Stream = createVideoStream('mpeg2video', 'Main', EIGHT_BIT_DEPTH);
 
         const withoutPackage = augment([]);
@@ -154,8 +177,30 @@ describe('augmentDeviceProfileForCustomDecode with decoder packages', () => {
         expect(isDirectPlayAdvertised(withoutPackage, MATROSKA_CONTAINER, mpeg2Stream)).toBe(false);
         expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, mpeg2Stream)).toBe(true);
         expect(isDirectPlayAdvertised(withPackage, TRANSPORT_STREAM_CONTAINER, mpeg2Stream)).toBe(true);
-        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, { ...mpeg2Stream, IsInterlaced: true })).toBe(false);
+        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, { ...mpeg2Stream, IsInterlaced: true })).toBe(true);
+        expect(isDirectPlayAdvertised(withPackage, TRANSPORT_STREAM_CONTAINER, { ...mpeg2Stream, IsInterlaced: true })).toBe(true);
         expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, { ...mpeg2Stream, BitDepth: TEN_BIT_DEPTH })).toBe(false);
+    });
+
+    it('advertises interlaced HEVC from no package, since HEVC codes its fields apart', () => {
+        const mainStream = createVideoStream('hevc', 'Main 10', TEN_BIT_DEPTH);
+
+        const withPackage = augment([ HEVC_PACKAGE ]);
+
+        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, mainStream)).toBe(true);
+        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, { ...mainStream, IsInterlaced: true })).toBe(false);
+    });
+
+    it('lifts the browser\'s scan limit on H.264 in the containers the engine plays, which deinterlaces it', () => {
+        const interlacedStream = createVideoStream('h264', 'High', EIGHT_BIT_DEPTH, { IsInterlaced: true });
+        const stockProfile = createStockProfileWithH264ScanLimit();
+
+        const augmented = augmentDeviceProfileForCustomDecode(stockProfile, createCapabilities(), { decoderPackages: [] }).profile;
+
+        expect(isDirectPlayAdvertised(stockProfile, MPEG4_CONTAINER, interlacedStream)).toBe(false);
+        expect(isDirectPlayAdvertised(augmented, MPEG4_CONTAINER, interlacedStream)).toBe(true);
+        expect(isDirectPlayAdvertised(augmented, MATROSKA_CONTAINER, interlacedStream)).toBe(true);
+        expect(augmented.CodecProfiles).toContainEqual({ ...stockProfile.CodecProfiles?.[1], Container: NON_CUSTOM_VIDEO_CONTAINERS });
     });
 
     it('widens AV1\'s stock Main ceiling to the profiles the package writes', () => {

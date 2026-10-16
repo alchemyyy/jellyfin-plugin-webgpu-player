@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     CUSTOM_AUDIO_CODECS,
-    CUSTOM_BUNDLED_AUDIO_CODECS,
+    CUSTOM_MEDIABUNNY_PCM_AUDIO_CODECS,
     CUSTOM_NATIVE_SURROUND_AUDIO_CODECS,
     CUSTOM_NATIVE_ULTRA_HD_VIDEO_CODECS,
     CUSTOM_RAW_HDR_VIDEO_CODECS,
@@ -24,17 +24,12 @@ import {
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 import {
     augmentDeviceProfileForCustomDecode,
-    createBitrateIndependentDeviceProfile
+    createBitrateIndependentDeviceProfile,
+    type DecoderPackageRouteSummary
 } from 'addons/webGPUPlayer/custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from 'addons/webGPUPlayer/custom/NativeDirectPlayCompatibility';
 import { CUSTOM_CONTAINER_CODEC_RULES } from 'webgpu-player/capability/CustomContainerCodecSupport';
-import {
-    H264_JELLYFIN_PROFILE_NAMES,
-    H264_PROFILE_PROBE_CODED_HEIGHT,
-    H264_PROFILE_PROBE_CODED_WIDTH,
-    H264_PROFILES,
-    type H264ProfileCapabilities
-} from 'webgpu-player/capability/H264ProfileCapabilities';
+import type { H264ProfileCapabilities } from 'webgpu-player/capability/H264ProfileCapabilities';
 import {
     HEVC_RANGE_EXTENSION_VARIANTS,
     type HEVCRangeExtensionCapability,
@@ -50,6 +45,7 @@ import type {
 import {
     createBundledHEVCCapabilities,
     createConfigCodecCapability,
+    createH264ProfileCapabilities,
     createHEVCRangeExtensionCapability
 } from './CustomDecodeCapabilityBuilders';
 
@@ -67,21 +63,30 @@ const RAW_HDR_PROFILE_OPTIONS = {
 const ULTRA_HD_8K_WIDTH = 7_680;
 const ULTRA_HD_8K_HEIGHT = 4_320;
 
-function createH264ProfileCapabilities(supported: boolean): H264ProfileCapabilities {
-    const capabilities = {} as Record<typeof H264_PROFILES[number], H264ProfileCapabilities[typeof H264_PROFILES[number]]>;
-    for (const profile of H264_PROFILES) {
-        capabilities[profile] = Object.freeze({
-            codecString: profile,
-            codedHeight: H264_PROFILE_PROBE_CODED_HEIGHT,
-            codedWidth: H264_PROFILE_PROBE_CODED_WIDTH,
-            evidence: supported ? 'decoded-output' : 'none',
-            jellyfinProfileName: H264_JELLYFIN_PROFILE_NAMES[profile],
-            profile,
-            reason: supported ? 'decode-output-verified' : 'config-unsupported',
-            status: supported ? 'supported' : 'unsupported'
-        });
+// The decoder packages the engine's decoder projects build, as the server's catalog describes them
+const MPEG2_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'mpeg2video', 'mpeg1video' ], kind: 'video', outputFormats: [ 'I420', 'I422', 'I444' ] };
+const VC1_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'vc1', 'wmv3' ], kind: 'video', outputFormats: [ 'I420' ] };
+const JPEG2000_DECODER_PACKAGE: DecoderPackageRouteSummary = {
+    codecs: [ 'jpeg2000' ],
+    kind: 'video',
+    outputFormats: [ 'I420', 'I420P10', 'I420P12', 'I422', 'I422P10', 'I422P12', 'I444', 'I444P10', 'I444P12' ]
+};
+const EAC3_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], kind: 'audio', outputFormats: [] };
+
+/** Returns the containers of a video codec's container rules, as its measured route profiles list them. */
+function getCustomVideoCodecContainers(codec: CustomVideoCodec): string {
+    const containers: string[] = [];
+    for (const rule of CUSTOM_CONTAINER_CODEC_RULES) {
+        if (!rule.videoCodecs.includes(codec)) {
+            continue;
+        }
+        for (const container of rule.profileContainers) {
+            if (!containers.includes(container)) {
+                containers.push(container);
+            }
+        }
     }
-    return Object.freeze(capabilities);
+    return containers.join(',');
 }
 
 function createBundledDTSCapability(): NonNullable<CustomDecodeCapabilities['bundledDTS']> {
@@ -356,7 +361,7 @@ function createCapabilities({
         rawHDRVideo,
         telemetry: {
             audioProbeCount: CUSTOM_WEB_CODECS_AUDIO_CODECS.length,
-            bundledAudioCodecCount: CUSTOM_BUNDLED_AUDIO_CODECS.length,
+            mediabunnyAudioCodecCount: CUSTOM_MEDIABUNNY_PCM_AUDIO_CODECS.length,
             nativeSurroundAudioProbeCount: nativeSurroundAudioCapabilityHarness.probeCount,
             nativeHDRVideoProbeCount: 0,
             nativeUltraHDVideoProbeCount: nativeUltraHDVideoCapabilityHarness.probeCount,
@@ -602,100 +607,70 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }
     });
 
-    it('advertises only the exact qualified progressive MPEG-2 Matroska route', () => {
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'mpeg2video' ], supportedAudioCodecs: [ 'aac' ] }));
+    it('advertises MPEG-2 from its decoder package at its depth and either scan, in every container that carries it', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] }),
+            { decoderPackages: [ MPEG2_DECODER_PACKAGE ] }
+        );
 
-        expect(result.profile.DirectPlayProfiles).toContainEqual({
-            AudioCodec: 'aac',
-            Container: 'mkv',
-            Type: 'Video',
-            VideoCodec: 'mpeg2video'
-        });
-        expect(result.profile.DirectPlayProfiles?.some(profile => (
-            profile.VideoCodec === 'mpeg2video'
-            && profile.Container !== 'mkv'
-        ))).toBe(false);
         const measuredProfile = result.profile.CodecProfiles?.find(profile => profile.Codec === 'mpeg2video');
-        expect(measuredProfile).toMatchObject({
-            Container: 'mkv',
+        expect(measuredProfile).toEqual({
+            Codec: 'mpeg2video',
+            Conditions: [
+                { Condition: 'EqualsAny', IsRequired: true, Property: 'VideoRangeType', Value: 'SDR' },
+                { Condition: 'Equals', IsRequired: true, Property: 'VideoBitDepth', Value: '8' }
+            ],
+            Container: getCustomVideoCodecContainers('mpeg2video'),
             Type: 'Video'
         });
-        expect(measuredProfile?.Conditions).toEqual(expect.arrayContaining([
-            expect.objectContaining({ Property: 'VideoBitDepth', Value: '8' }),
-            expect.objectContaining({ Property: 'VideoProfile', Value: 'main' }),
-            expect.objectContaining({ Property: 'IsInterlaced', Value: 'false' })
-        ]));
-        expect(measuredProfile?.Conditions?.some(condition => (
-            condition.Property === 'VideoBitrate'
-            || condition.Property === 'Width'
-            || condition.Property === 'Height'
-            || condition.Property === 'VideoLevel'
-            || condition.Property === 'VideoFramerate'
-        ))).toBe(false);
     });
 
     it.each([ 'ac3', 'eac3' ] as const)(
-        'advertises exact qualified progressive Advanced VC-1 Matroska with %s audio',
+        'advertises VC-1 and WMV3 from their decoder package at either scan, with %s audio from its package',
         (audioCodec) => {
-            const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'vc1' ], supportedAudioCodecs: [ audioCodec ] }));
+            const result = augmentDeviceProfileForCustomDecode(
+                createBaseProfile(),
+                createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [] }),
+                { decoderPackages: [ VC1_DECODER_PACKAGE, EAC3_DECODER_PACKAGE ] }
+            );
 
-            expect(result.profile.DirectPlayProfiles).toContainEqual({
-                AudioCodec: audioCodec,
-                Container: 'mkv',
-                Type: 'Video',
-                VideoCodec: 'vc1'
-            });
             expect(result.profile.DirectPlayProfiles?.some(profile => (
-                profile.VideoCodec === 'vc1'
-                && profile.Container !== 'mkv'
-            ))).toBe(false);
-            const measuredProfile = result.profile.CodecProfiles?.find(profile => profile.Codec === 'vc1');
-            expect(measuredProfile).toMatchObject({
-                Container: 'mkv',
-                Type: 'Video'
-            });
-            expect(measuredProfile?.Conditions).toEqual(expect.arrayContaining([
-                expect.objectContaining({ Property: 'VideoBitDepth', Value: '8' }),
-                expect.objectContaining({ Property: 'VideoProfile', Value: 'advanced' }),
-                expect.objectContaining({ Property: 'IsInterlaced', Value: 'false' })
-            ]));
-            expect(measuredProfile?.Conditions?.some(condition => (
-                condition.Property === 'Width'
-                || condition.Property === 'Height'
-                || condition.Property === 'VideoLevel'
-                || condition.Property === 'VideoFramerate'
-            ))).toBe(false);
+                profile.Container === 'mkv'
+                && profile.VideoCodec?.split(',').includes('vc1') === true
+                && profile.AudioCodec?.split(',').includes(audioCodec) === true
+            ))).toBe(true);
+            for (const codec of VC1_DECODER_PACKAGE.codecs) {
+                expect(result.profile.CodecProfiles?.find(profile => profile.Codec === codec)).toEqual({
+                    Codec: codec,
+                    Conditions: [
+                        { Condition: 'EqualsAny', IsRequired: true, Property: 'VideoRangeType', Value: 'SDR' },
+                        { Condition: 'Equals', IsRequired: true, Property: 'VideoBitDepth', Value: '8' }
+                    ],
+                    Container: getCustomVideoCodecContainers(codec as CustomVideoCodec),
+                    Type: 'Video'
+                });
+            }
         }
     );
 
-    it('advertises only the exact qualified OpenJPEG MJ2 route', () => {
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'jpeg2000' ], supportedAudioCodecs: [ 'aac' ] }));
+    it('advertises JPEG 2000 from its decoder package as progressive only, since it codes interlaced fields apart', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] }),
+            { decoderPackages: [ JPEG2000_DECODER_PACKAGE ] }
+        );
 
-        expect(result.profile.DirectPlayProfiles).toContainEqual({
-            AudioCodec: 'aac',
-            Container: 'mov,mj2',
-            Type: 'Video',
-            VideoCodec: 'jpeg2000'
-        });
-        expect(result.profile.DirectPlayProfiles?.some(profile => (
-            profile.VideoCodec === 'jpeg2000'
-            && profile.Container !== 'mov,mj2'
-        ))).toBe(false);
-        const measuredProfile = result.profile.CodecProfiles?.find(profile => profile.Codec === 'jpeg2000');
-        expect(measuredProfile).toMatchObject({
-            Container: 'mov,mj2',
+        expect(result.profile.CodecProfiles?.find(profile => profile.Codec === 'jpeg2000')).toEqual({
+            Codec: 'jpeg2000',
+            Conditions: [
+                { Condition: 'EqualsAny', IsRequired: true, Property: 'VideoRangeType', Value: 'SDR' },
+                { Condition: 'EqualsAny', IsRequired: true, Property: 'VideoBitDepth', Value: '8|10|12' },
+                { Condition: 'Equals', IsRequired: true, Property: 'IsInterlaced', Value: 'false' }
+            ],
+            Container: getCustomVideoCodecContainers('jpeg2000'),
             Type: 'Video'
         });
-        expect(measuredProfile?.Conditions).toEqual(expect.arrayContaining([
-            expect.objectContaining({ Property: 'VideoBitDepth', Value: '8' }),
-            expect.objectContaining({ Property: 'IsInterlaced', Value: 'false' })
-        ]));
-        expect(measuredProfile?.Conditions?.some(condition => (
-            condition.Property === 'Width'
-            || condition.Property === 'Height'
-            || condition.Property === 'VideoLevel'
-            || condition.Property === 'VideoFramerate'
-        ))).toBe(false);
     });
 
     it('sanitizes a non-custom WebGPU selection profile without mutation', () => {
