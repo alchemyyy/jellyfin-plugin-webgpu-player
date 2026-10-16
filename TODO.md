@@ -4,26 +4,11 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 
 ## Playback gaps
 
-1. 10-bit SDR AV1 and VP9 in BT.601 or BT.2020 color.
-   These negotiate, because a profile condition cannot express primaries, and then fail eligibility, because the raw SDR keys are BT.709 only.
-   Closing it needs BT.601 and BT.2020 raw SDR keys: an SDR gamut conversion in the raw shader, a CPU reference for each, and first-use authorization vectors.
-   8-bit range-extension SDR needs the same keys.
-2. MP4 Dolby Vision Profile 10.0, the `dav1` sample entry.
-   FFmpeg, and so Jellyfin's probe, maps `dav1` to no codec, so the server never offers such a file for direct play.
-   A one-line mapping in FFmpeg or jellyfin-ffmpeg fixes it; no jellyfin-ffmpeg patch maps it yet.
-   Submitting that patch upstream is a public action and needs the project owner's decision.
-   The engine maps `dav1` itself, and Matroska Profile 10.0 already plays.
-3. Dolby Vision Profile 10 at 8 bits or outside the Main profile.
-   It has no RPU route, because raw AV1 is qualified at 10 bits only; a declared SDR base still plays.
-   Closing it needs raw AV1 qualification, raw keys, and authorization vectors for those formats.
-4. AV1 HDR and Dolby Vision have no native route.
-   Nothing neutralizes an AV1 sequence header's color, so HDR AV1 and Profile 10 always reconstruct from software-decoded raw I420P10, which costs CPU at 4K.
-   Closing it needs AV1 color neutralization like the HEVC one, with its own external authorization, so hardware VideoFrames can present.
 5. MPEG-2 streams whose picture grows mid-stream.
    The decoder opens at the container's coded size and refuses a later, larger picture, so the item falls back.
    A broadcast transport stream that switches resolution produces such a picture.
    Reopening the decoder at the new size when a sequence header changes it would play them.
-6. AVI, and the legacy codecs it usually carries.
+*6. AVI, and the legacy codecs it usually carries.
    The engine's prefilter declines AVI, FLV, ASF, and MPEG program streams, because no route's container carries them and Mediabunny 1.52.2 demuxes none of them.
    It also declines MPEG-4 Part 2 (DivX, Xvid), H.263, MS-MPEG4, and Theora in any container, because no route decodes them.
    Jellyfin's HTML player then plays them through a server transcode.
@@ -41,12 +26,32 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
    A 4K source is then re-encoded just to burn in a bitmap.
    The host's libbitsub already renders VobSub.
    Closing it needs a `dvdsub` subtitle profile and a delivery the server supports for an external `.idx`/`.sub` pair (not yet checked), then libbitsub's VobSub path on both backends.
+*10. MPEG-2 and VC-1 in MPEG-TS and M2TS.
+    Mediabunny 1.52.2 drops VC-1's stream type 0xEA, and its video setup and packet splitter handle only AVC and HEVC, in private methods the engine cannot wrap, so neither codec is reachable in a transport stream.
+    Closing it needs Mediabunny to surface those streams, through an upstream change (a public action that needs the project owner's decision) or an engine input format of its own like the Matroska and Motion JPEG 2000 fixes; the engine then needs only the codec ID, extradata from the first key packet, and both codecs in the transport stream rule.
+
+## AV1
+
+1. 10-bit SDR AV1 and VP9 in BT.601 or BT.2020 color.
+   These negotiate, because a profile condition cannot express primaries, and then fail eligibility, because the raw SDR keys are BT.709 only.
+   Closing it needs BT.601 and BT.2020 raw SDR keys: an SDR gamut conversion in the raw shader, a CPU reference for each, and first-use authorization vectors.
+   8-bit range-extension SDR needs the same keys.
+2. MP4 Dolby Vision Profile 10.0, the `dav1` sample entry.
+   FFmpeg, and so Jellyfin's probe, maps `dav1` to no codec, so the server never offers such a file for direct play.
+   A one-line mapping in FFmpeg or jellyfin-ffmpeg fixes it; no jellyfin-ffmpeg patch maps it yet.
+   Submitting that patch upstream is a public action and needs the project owner's decision.
+   The engine maps `dav1` itself, and Matroska Profile 10.0 already plays.
+3. Dolby Vision Profile 10 at 8 bits or outside the Main profile.
+   It has no RPU route, because raw AV1 is qualified at 10 bits only; a declared SDR base still plays.
+   Closing it needs raw AV1 qualification, raw keys, and authorization vectors for those formats.
+4. AV1 HDR and Dolby Vision have no native route.
+   Nothing neutralizes an AV1 sequence header's color, so HDR AV1 and Profile 10 always reconstruct from software-decoded raw I420P10, which costs CPU at 4K.
+   Closing it needs AV1 color neutralization like the HEVC one, with its own external authorization, so hardware VideoFrames can present.
 9. AV1 above level 5.x, 8K included.
    The AV1 decoder package accepts pictures up to 8192x4352 and 8,912,896 samples, so level 6 streams have no route; 239 of AOM's Argon conformance streams are past that limit.
    Closing it needs a frame store above 1 GB at 8K (ten frame buffers of 16-bit samples; one byte per sample for 8-bit content would halve it), records past the 64 MiB packet bound in the worst case (the engine now takes `packet:` up to 512 MiB where the device holds the ring), the package's `accepts` raised to level 6, and a conformance run over those Argon streams.
-10. MPEG-2 and VC-1 in MPEG-TS and M2TS.
-    Mediabunny 1.52.2 drops VC-1's stream type 0xEA, and its video setup and packet splitter handle only AVC and HEVC, in private methods the engine cannot wrap, so neither codec is reachable in a transport stream.
-    Closing it needs Mediabunny to surface those streams, through an upstream change (a public action that needs the project owner's decision) or an engine input format of its own like the Matroska and Motion JPEG 2000 fixes; the engine then needs only the codec ID, extradata from the first key packet, and both codecs in the transport stream rule.
+22. Anamorphic AV1.
+    Playback is already correct; stripping Jellyfin's `IsAnamorphic` flag is worth doing only if it ever blocks a route.
 
 ## Startup performance
 
@@ -70,53 +75,30 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 
 ## Playback performance
 
-13. Every HEVC packet is walked two or three times and its base layer rebuilt.
-    The HDR10+ queue walks the NAL units twice, and `splitDolbyVisionHEVCAccessUnit` walks them again and re-encodes the base layer into a new buffer even when it removes nothing; the AV1 splitter already returns an unchanged unit uncopied.
-    At 60 Mbps, one walk of an Annex B packet, as MPEG-TS and M2TS carry, costs about 7 ms per second.
-    Closing it needs one walk per packet shared by every consumer, the input returned unchanged when nothing is removed (or a `subarray` when only trailing RPU units are), and `transfer` to `EncodedVideoChunk` when the engine owns the buffer.
-14. The DTS decoder builds without SIMD.
-    The DTS package builds libdcadec with `-O3` but without `-msimd128` or LTO.
-    Adding `-msimd128` is low risk; moving the E-AC-3 and TrueHD packages from `-Oz` to `-O3` would grow the served binaries, which costs first-load time.
-15. Small per-frame and per-sample overheads.
-    The AudioWorklet scans every output sample for telemetry on its render thread (`analyzeOutput`).
-    The presenter decodes each frame's 3232-byte RPU snapshot on the main thread to check header fields the worker already validated.
-    Raw-plane frames create a bind group per frame although their texture views are stable.
+14. E-AC-3 and TrueHD build for size.
+    Their FFmpeg packages build with `-Oz`, SIMD, and LTO (`decoders/rules.mk`); the DTS package has built with `-O3`, SIMD, and LTO since 10-15.
+    At `-O3` the E-AC-3 module grows from 520,036 to 538,985 bytes and the TrueHD module from 314,641 to 325,929, 3.6% each, which a first play downloads.
+    Closing it is a choice between that size and a decode speedup that is not measured.
 
 ## Playback smoothness
 
-16. The video clock jumps back 70 to 80 ms when playback starts.
-    Until `getOutputTimestamp()` returns a usable timestamp, `BrowserCustomAudioOutput.mapOutputTelemetry` falls back to the worklet's rendered position, which runs ahead of the audible one by the output latency and buffering.
-    The first correlated audio report then pulls the clock back by that amount, so the first frames hold for about two frame durations.
-    A timing trace on an Intel Arc laptop showed jumps of 72 to 81 ms against a reported output latency of 64 to 72 ms.
-    Closing it needs the uncorrelated fallback to subtract the context's `outputLatency` plus `baseLatency` when the browser reports them, so the first correlated report corrects by a few milliseconds; without them, today's behavior stays.
 17. The first frames after a start or seek take 130 to 270 ms of GPU work.
-    On the same laptop, resuming 4K HDR10+ HEVC mid-GOP, the first two presented frames' GPU work took 266 and 129 ms, Chrome held back two animation frames (127 and 103 ms) without a long task, and one frame dropped.
+    On an Intel Arc laptop, resuming 4K HDR10+ HEVC mid-GOP, the first two presented frames' GPU work took 266 and 129 ms, Chrome held back two animation frames (127 and 103 ms) without a long task, and one frame dropped.
     Two causes are suspected, and neither is confirmed:
     - The seek preroll decodes from the preceding keyframe to the start position as fast as the decoder returns frames, so it reaches the hardware decoder as one burst, the same contention the owned decode's packet pacing removed from steady playback.
     - The presenter's first draw may compile its HDR pipeline in the GPU process, and the first import of decoder textures may add to it.
     Telling them apart takes a timed run that starts at 0, with no preroll, beside one that resumes mid-GOP, or a second seek in the same session, when the pipeline is already built.
-    Closing it needs, for the preroll, a deliberately slower preroll, which trades seek time for a smoother first frame; for the pipeline, creating it with `createRenderPipelineAsync` during startup, inside the play request, before the first frame is due.
+    Closing it needs, for the preroll, smaller batches into the decoder rather than a slower preroll; for the pipeline, compiling the presentation plan's pipeline variants with `createRenderPipelineAsync` during startup, inside the play request, before the first frame is due, possibly with an LRU cache of built pipelines that bounds their memory.
 
 ## Robustness
 
-18. Single-layer RPUs that reuse a dual-layer RPU's mapping.
-    The bridge does not carry the reused mapping's layer and NLQ flags over.
-    Only a malformed stream mixes them, so this is robustness work, not a playback gap.
 19. RPUs the parser still rejects.
-    A header from which no profile is inferred is rejected; FFmpeg uses the container's profile instead, which would close it.
     A linear interpolation piece next to an MMR piece is rejected by necessity: an MMR piece maps all three components, so the linear piece has no scalar value to rise from or end on.
     The RPU format extension, missing sequence information, and display metadata compression above method 1 are rejected as FFmpeg rejects them.
-20. Linear interpolation next to a polynomial piece is a guess.
-    Each linear piece codes its rise from the previous pivot's value (annex A.2.4.2 of US 10,701,399 B2), but the annex never defines that value for a polynomial piece.
-    The bridge uses the polynomial's value at its start pivot, and ends a linear piece before a polynomial continuously with it.
-    No sample with such a mix is known; FFmpeg rejects linear interpolation outright.
-    A real sample would confirm or correct it.
 21. RPU parser choices more permissive than FFmpeg, each a small change to reverse:
     - A truncated L1 block is skipped rather than rejecting the RPU.
     - An L1 block in the wrong section is skipped rather than kept as all zeros.
     - There is no limit on block count; input size bounds it.
-22. Anamorphic AV1.
-    Playback is already correct; stripping Jellyfin's `IsAnamorphic` flag is worth doing only if it ever blocks a route.
 23. Report the Mediabunny defects the engine contains upstream.
     Header-stripped laced Matroska blocks (`CustomDecodeInputFormats.ts`) and the unhandled `close()` after a custom decoder fails (`HandledDecodeFailures.ts`) both remain in Mediabunny 1.61.3; the engine book's `decisions.md` describes them.
     Reporting them is a public action and needs the project owner's decision.
