@@ -81,7 +81,9 @@ Engine rows: [Dolby Vision](https://alchemyyy.github.io/WebGPU-Player/codec-supp
 | P4, CCID 2 | SDR, or HDR10 or HLG by transfer (SDR under a `dvhe` sample entry) | Yes |
 | P20, any CCID or none | HDR10, HLG, or SDR by transfer (SDR under a `dvh1` sample entry) | Yes |
 | P4, P5, P7, P8, or P20 over Rext or a named alias | Any | Item route |
-| P4, P5, P7, P8, or P20 over 8-bit Main | Any | Item route |
+| P8, CCID 2, over 8-bit Main | DOVIWithSDR | Item route; its SDR base presents natively |
+| P4 over 8-bit Main | SDR by transfer | Yes; its SDR base presents natively |
+| P5, or P7 or P8 with CCID 0, over 8-bit Main | Any | No; no route decodes 8-bit Main planes for the RPU, and no base is declared |
 
 ## Dolby Vision over AV1
 

@@ -121,11 +121,10 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     Since 10-16 the profile is built from the user's packages and the server's catalog as well, so Jellyfin direct-plays MPEG-2, VC-1, JPEG 2000, AV1 High and Professional, HEVC range extensions, and package-decoded audio.
     A package's `accepts` size conditions and its `monochrome` support are not advertised, so a stream past them, or a 4:0:0 stream for a package without `monochrome`, negotiates and then renegotiates after a failed start.
     Closing it needs the server's catalog to carry the `accepts` conditions, and Width, Height, and pixel format conditions in the package routes.
-25. The add-on's tests do not build.
-    `jellyfin-webgpu-client.tests` has 50 typecheck errors from the engine's removals and moves, all in the custom decode suites' bundled decoder capabilities (`bundledHEVC`, `bundledDTS`, and the like).
-    `WebGPUPlayer.test.ts` fails 28 tests: some still expect the removed `bundled-hevc` backend and `loadGPUVideoDecoderSources`, and its controller mock lacks `getPresentationTargetTime` and expects color pipeline configurations without `videoFields`.
-    `custom/CustomDeviceProfile.test.ts` fails 27 tests and `custom/HEVCDirectPlaySupportMatrix.test.ts` 28, which expect capabilities and routes the package-based engine removed, such as the bundled HEVC, DTS, and TrueHD decoders.
-    Closing it needs the tests rewritten against the package-based engine.
+25. Without native HEVC decode, a Dolby Vision Profile 7 or 8 stream with a declared base is not advertised, though the engine plays its base through the HEVC decoder package.
+    `getItemEligibilityOptions` in `CustomDeviceProfile.ts` hands the engine's item route check neither GPU decoder offers nor `allowFramePoolHDR`, and the generic package routes cover no Dolby Vision label, so the server transcodes such a stream.
+    `custom/HEVCDirectPlaySupportMatrix.test.ts` fails the 9 rows of this case until it closes.
+    Closing it needs the item route check to see the package routes; negotiation holds only the packages' codecs and output formats, not the offers the engine selects from.
 
 ## Settled decisions
 

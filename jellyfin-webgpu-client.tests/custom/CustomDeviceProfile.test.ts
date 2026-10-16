@@ -8,6 +8,8 @@ import {
     CUSTOM_MEDIABUNNY_PCM_AUDIO_CODECS,
     CUSTOM_NATIVE_SURROUND_AUDIO_CODECS,
     CUSTOM_NATIVE_ULTRA_HD_VIDEO_CODECS,
+    CUSTOM_PACKAGE_AUDIO_CODECS,
+    CUSTOM_PACKAGE_VIDEO_CODECS,
     CUSTOM_RAW_HDR_VIDEO_CODECS,
     CUSTOM_VIDEO_CODECS,
     CUSTOM_WEB_CODECS_AUDIO_CODECS,
@@ -18,6 +20,8 @@ import {
     type CustomNativeSurroundAudioCodecCapability,
     type CustomNativeUltraHDVideoCodec,
     type CustomNativeUltraHDVideoCodecCapability,
+    type CustomPackageAudioCodec,
+    type CustomPackageVideoCodec,
     type CustomRawHDRVideoCodec,
     type CustomRawHDRVideoCodecCapability,
     type CustomVideoCodec
@@ -28,7 +32,10 @@ import {
     type DecoderPackageRouteSummary
 } from 'addons/webGPUPlayer/custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from 'addons/webGPUPlayer/custom/NativeDirectPlayCompatibility';
-import { CUSTOM_CONTAINER_CODEC_RULES } from 'webgpu-player/capability/CustomContainerCodecSupport';
+import {
+    CUSTOM_CONTAINER_CODEC_RULES,
+    CUSTOM_PROFILE_VIDEO_CONTAINERS
+} from 'webgpu-player/capability/CustomContainerCodecSupport';
 import type { H264ProfileCapabilities } from 'webgpu-player/capability/H264ProfileCapabilities';
 import {
     HEVC_RANGE_EXTENSION_VARIANTS,
@@ -43,10 +50,10 @@ import type {
     NativeMediaAudioLayoutCapability
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import {
-    createBundledHEVCCapabilities,
     createConfigCodecCapability,
     createH264ProfileCapabilities,
-    createHEVCRangeExtensionCapability
+    createHEVCRangeExtensionCapability,
+    createNoEngineDecoderCodecCapability
 } from './CustomDecodeCapabilityBuilders';
 
 const RAW_PQ_ROUTE_KEY = 'I420P10:bt2020-ncl:bt2020:limited:pq';
@@ -72,8 +79,44 @@ const JPEG2000_DECODER_PACKAGE: DecoderPackageRouteSummary = {
     outputFormats: [ 'I420', 'I420P10', 'I420P12', 'I422', 'I422P10', 'I422P12', 'I444', 'I444P10', 'I444P12' ]
 };
 const EAC3_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], kind: 'audio', outputFormats: [] };
+const DTS_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'dts' ], kind: 'audio', outputFormats: [] };
+const TRUEHD_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'mlp', 'truehd' ], kind: 'audio', outputFormats: [] };
+const HEVC_DECODER_PACKAGE: DecoderPackageRouteSummary = {
+    codecs: [ 'hevc' ],
+    kind: 'video',
+    outputFormats: [ 'I420', 'I420P10', 'I420P12', 'I422', 'I422P10', 'I422P12', 'I444', 'I444P10', 'I444P12' ]
+};
+// The packages that decode every codec the engine has no decoder of
+const PACKAGE_CODEC_DECODER_PACKAGES: readonly DecoderPackageRouteSummary[] = [
+    MPEG2_DECODER_PACKAGE,
+    VC1_DECODER_PACKAGE,
+    JPEG2000_DECODER_PACKAGE,
+    EAC3_DECODER_PACKAGE,
+    DTS_DECODER_PACKAGE,
+    TRUEHD_DECODER_PACKAGE
+];
+
+// The codecs a capability probe can find supported; the probe reports every other codec as having no engine decoder
+type EngineVideoCodec = Exclude<CustomVideoCodec, CustomPackageVideoCodec>;
+type EngineAudioCodec = Exclude<CustomAudioCodec, CustomPackageAudioCodec>;
+const PACKAGE_VIDEO_CODEC_SET: ReadonlySet<CustomVideoCodec> = new Set<CustomVideoCodec>(CUSTOM_PACKAGE_VIDEO_CODECS);
+const PACKAGE_AUDIO_CODEC_SET: ReadonlySet<CustomAudioCodec> = new Set<CustomAudioCodec>(CUSTOM_PACKAGE_AUDIO_CODECS);
+
+function isEngineVideoCodec(codec: CustomVideoCodec): codec is EngineVideoCodec {
+    return !PACKAGE_VIDEO_CODEC_SET.has(codec);
+}
+
+function isEngineAudioCodec(codec: CustomAudioCodec): codec is EngineAudioCodec {
+    return !PACKAGE_AUDIO_CODEC_SET.has(codec);
+}
+
+const ENGINE_VIDEO_CODECS: readonly EngineVideoCodec[] = CUSTOM_VIDEO_CODECS.filter(isEngineVideoCodec);
+const ENGINE_AUDIO_CODECS: readonly EngineAudioCodec[] = CUSTOM_AUDIO_CODECS.filter(isEngineAudioCodec);
 // The containers whose rules carry DTS: ISO BMFF, Matroska, and MPEG-TS
 const DTS_PROFILE_CONTAINERS = 'mp4,m4v,mov,mkv,ts,m2ts,mts';
+// Every container the engine plays, as a measured audio route lists them, and the value a stock profile split takes for every other container
+const CUSTOM_VIDEO_CONTAINERS = CUSTOM_PROFILE_VIDEO_CONTAINERS.join(',');
+const NON_CUSTOM_VIDEO_CONTAINERS = `-${CUSTOM_VIDEO_CONTAINERS}`;
 
 /** Returns the containers of a video codec's container rules, as its measured route profiles list them. */
 function getCustomVideoCodecContainers(codec: CustomVideoCodec): string {
@@ -89,128 +132,6 @@ function getCustomVideoCodecContainers(codec: CustomVideoCodec): string {
         }
     }
     return containers.join(',');
-}
-
-function createBundledDTSCapability(): NonNullable<CustomDecodeCapabilities['bundledDTS']> {
-    return Object.freeze({
-        channelBedOnly: true,
-        codec: 'dts',
-        codecString: 'dts',
-        decodeMilliseconds: 8,
-        libraryVersion: 131_073,
-        maximumChannelCount: 8,
-        measuredRealTimeFactor: 32,
-        objectAudioRendered: false,
-        profiles: Object.freeze([
-            'core',
-            'core-96-24',
-            'es',
-            'hd-hra',
-            'hd-ma'
-        ] as const),
-        reason: 'decode-output-verified',
-        sampleRates: Object.freeze([ 48_000, 96_000, 192_000 ] as const),
-        status: 'supported',
-        verifiedVectorCount: 7,
-        verifiedProfileMask: 0x1f
-    });
-}
-
-function createBundledDTSCapabilityProperties(
-    supportedAudioCodecs: ReadonlySet<CustomAudioCodec>
-): Readonly<Pick<CustomDecodeCapabilities, 'bundledDTS'>> | Readonly<Record<string, never>> {
-    if (!supportedAudioCodecs.has('dts')) {
-        return {};
-    }
-    return { bundledDTS: createBundledDTSCapability() };
-}
-
-function createBundledTrueHDCapability(): NonNullable<CustomDecodeCapabilities['bundledTrueHD']> {
-    return Object.freeze({
-        channelBedOnly: true,
-        channelCounts: Object.freeze([ 2, 6 ] as const),
-        codecs: Object.freeze([ 'truehd', 'mlp' ] as const),
-        decodeMilliseconds: 12,
-        library: 'ffmpeg-libavcodec',
-        libraryVersion: 4_079_728,
-        majorSyncRecoveryVerified: true,
-        measuredRealTimeFactor: 12,
-        objectAudioRendered: false,
-        passthrough: false,
-        reason: 'decode-output-verified',
-        sampleRates: Object.freeze([ 48_000, 96_000, 192_000 ] as const),
-        status: 'supported',
-        verifiedChannelCountMask: (1 << 2) | (1 << 6),
-        verifiedCodecMask: 0x03,
-        verifiedVectorCount: 4,
-        verifiedSampleRateMask: 0x07
-    });
-}
-
-function createBundledTrueHDCapabilityProperties(
-    supportedAudioCodecs: ReadonlySet<CustomAudioCodec>
-): Readonly<Pick<CustomDecodeCapabilities, 'bundledTrueHD'>> | Readonly<Record<string, never>> {
-    if (!supportedAudioCodecs.has('mlp') && !supportedAudioCodecs.has('truehd')) {
-        return {};
-    }
-    return { bundledTrueHD: createBundledTrueHDCapability() };
-}
-
-function createBundledJPEG2000Capability(): NonNullable<CustomDecodeCapabilities['bundledJPEG2000']> {
-    return Object.freeze({
-        bitDepth: 8,
-        codec: 'jpeg2000',
-        codecString: 'mjp2',
-        decodedRGBAByteLength: 2_073_600,
-        decodedRGBAFingerprint: 1_076_220_778,
-        reason: 'decode-output-verified',
-        status: 'supported'
-    });
-}
-
-function createBundledJPEG2000CapabilityProperties(
-    supportedVideoCodecs: ReadonlySet<CustomVideoCodec>
-): Readonly<Pick<CustomDecodeCapabilities, 'bundledJPEG2000'>> | Readonly<Record<string, never>> {
-    if (!supportedVideoCodecs.has('jpeg2000')) {
-        return {};
-    }
-    return { bundledJPEG2000: createBundledJPEG2000Capability() };
-}
-
-function createBundledMPEG2Capability(): NonNullable<CustomDecodeCapabilities['bundledMPEG2']> {
-    return Object.freeze({
-        codec: 'mpeg2video',
-        decodedFrameByteLength: 3_110_400,
-        decodedFrameCount: 12,
-        decodedI420Fingerprint: 544_635_241,
-        decodedTotalByteLength: 37_324_800,
-        reason: 'decode-output-verified',
-        status: 'supported'
-    });
-}
-
-function createBundledMPEG2CapabilityProperties(
-    supportedVideoCodecs: ReadonlySet<CustomVideoCodec>
-): Readonly<Pick<CustomDecodeCapabilities, 'bundledMPEG2'>> | Readonly<Record<string, never>> {
-    if (!supportedVideoCodecs.has('mpeg2video')) {
-        return {};
-    }
-    return { bundledMPEG2: createBundledMPEG2Capability() };
-}
-
-function createBundledVC1CapabilityProperties(
-    supportedVideoCodecs: ReadonlySet<CustomVideoCodec>
-): Readonly<Pick<CustomDecodeCapabilities, 'bundledVC1'>> | Readonly<Record<string, never>> {
-    if (!supportedVideoCodecs.has('vc1')) {
-        return {};
-    }
-    return {
-        bundledVC1: Object.freeze({
-            ...createBundledMPEG2Capability(),
-            codec: 'vc1',
-            decodedI420Fingerprint: 182_587_665
-        })
-    };
 }
 
 type NativeUltraHDVideoCapabilityHarness = Readonly<{
@@ -289,10 +210,10 @@ function createNativeUltraHDVideoCapabilityHarness(
     };
 }
 
-/** What each capability probe found supported; a codec a list leaves out is unsupported. */
+/** What each capability probe found supported; a codec a list leaves out is unsupported, and a codec only a package decodes is never supported. */
 type CapabilityOptions = Readonly<{
-    supportedVideoCodecs: readonly CustomVideoCodec[]
-    supportedAudioCodecs: readonly CustomAudioCodec[]
+    supportedVideoCodecs: readonly EngineVideoCodec[]
+    supportedAudioCodecs: readonly EngineAudioCodec[]
     supportedRawHDRVideoCodecs?: readonly CustomRawHDRVideoCodec[]
     nativeDolbyVisionSupported?: boolean
     supportedNativeUltraHDVideoCodecs?: readonly CustomNativeUltraHDVideoCodec[]
@@ -311,29 +232,26 @@ function createCapabilities({
     const supportedAudioSet = new Set(supportedAudioCodecs);
     const video = {} as Record<CustomVideoCodec, CustomDecodeCodecCapability<CustomVideoCodec>>;
     for (const codec of CUSTOM_VIDEO_CODECS) {
-        video[codec] = createConfigCodecCapability(codec, supportedVideoSet.has(codec));
+        video[codec] = isEngineVideoCodec(codec) ?
+            createConfigCodecCapability(codec, supportedVideoSet.has(codec)) :
+            createNoEngineDecoderCodecCapability(codec);
     }
     const audio = {} as Record<CustomAudioCodec, CustomDecodeCodecCapability<CustomAudioCodec>>;
     for (const codec of CUSTOM_AUDIO_CODECS) {
-        audio[codec] = createConfigCodecCapability(codec, supportedAudioSet.has(codec));
+        audio[codec] = isEngineAudioCodec(codec) ?
+            createConfigCodecCapability(codec, supportedAudioSet.has(codec)) :
+            createNoEngineDecoderCodecCapability(codec);
     }
     const supportedRawHDRVideoSet = new Set(supportedRawHDRVideoCodecs);
     const rawHDRVideo = {} as Record<CustomRawHDRVideoCodec, CustomRawHDRVideoCodecCapability>;
     for (const codec of CUSTOM_RAW_HDR_VIDEO_CODECS) {
         const supported = supportedRawHDRVideoSet.has(codec);
-        const bundledHEVC = codec === 'hevc' && supported && !supportedVideoSet.has('hevc');
-        let capabilityReason: CustomRawHDRVideoCodecCapability['reason'] = supported ?
-            'output-copy-supported' :
-            'output-copy-unsupported';
-        if (bundledHEVC) {
-            capabilityReason = 'bundled-software-decoder';
-        }
         rawHDRVideo[codec] = {
             bitDepth: 10,
             codec,
-            codecString: bundledHEVC ? 'hvc1.2.4.L153.B0' : codec,
+            codecString: codec,
             format: 'I420P10',
-            reason: capabilityReason,
+            reason: supported ? 'output-copy-supported' : 'output-copy-unsupported',
             status: supported ? 'supported' : 'unsupported'
         };
     }
@@ -341,14 +259,6 @@ function createCapabilities({
     const nativeSurroundAudioCapabilityHarness = createNativeSurroundAudioCapabilityHarness(supportedNativeSurroundAudioCodecs);
     return {
         audio,
-        ...createBundledDTSCapabilityProperties(supportedAudioSet),
-        ...createBundledTrueHDCapabilityProperties(supportedAudioSet),
-        ...(supportedVideoSet.has('hevc') || supportedRawHDRVideoSet.has('hevc') ? {
-            bundledHEVC: createBundledHEVCCapabilities()
-        } : {}),
-        ...createBundledJPEG2000CapabilityProperties(supportedVideoSet),
-        ...createBundledMPEG2CapabilityProperties(supportedVideoSet),
-        ...createBundledVC1CapabilityProperties(supportedVideoSet),
         h264Profiles: createH264ProfileCapabilities(supportedVideoSet.has('h264')),
         nativeDolbyVisionHEVC: {
             bitDepth: 10,
@@ -587,10 +497,11 @@ function getAppliedTranscodeAudioSampleRates(
 }
 
 describe('augmentDeviceProfileForCustomDecode', () => {
-    it('advertises every independently supported container codec composition', () => {
+    it('advertises every container codec composition the engine and the packages of the other codecs decode', () => {
         const result = augmentDeviceProfileForCustomDecode(
             createBaseProfile(),
-            createCapabilities({ supportedVideoCodecs: CUSTOM_VIDEO_CODECS, supportedAudioCodecs: CUSTOM_AUDIO_CODECS })
+            createCapabilities({ supportedVideoCodecs: ENGINE_VIDEO_CODECS, supportedAudioCodecs: ENGINE_AUDIO_CODECS }),
+            { decoderPackages: PACKAGE_CODEC_DECODER_PACKAGES }
         );
 
         for (const rule of CUSTOM_CONTAINER_CODEC_RULES) {
@@ -700,12 +611,13 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         expect(original.MaxStreamingBitrate).toBe(20_000_000);
     });
 
-    it('advertises exact bundled HEVC Main when native HEVC is unavailable', () => {
+    it('advertises exact HEVC Main from its decoder package when native HEVC is unavailable', () => {
         const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] });
-        capabilities.bundledHEVC = createBundledHEVCCapabilities();
 
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities);
+        const unpackagedResult = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities);
+        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities, { decoderPackages: [ HEVC_DECODER_PACKAGE ] });
 
+        expect(unpackagedResult.telemetry.supportedVideoCodecs).not.toContain('hevc');
         expect(result.telemetry.supportedVideoCodecs).toContain('hevc');
         const hevcProfile = result.profile.CodecProfiles?.find(profile => (
             profile.Codec === 'hevc'
@@ -715,7 +627,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             ))
         ));
         expect(hevcProfile).toBeDefined();
-        // The bundled decoder has no frame-size cap, and no stock native runtime condition carries over
+        // The package route carries no frame-size cap, and no stock native runtime condition carries over
         expect(hevcProfile?.Conditions?.some(condition => (
             condition.Property === 'Width'
             || condition.Property === 'Height'
@@ -724,14 +636,14 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         ))).toBe(false);
     });
 
-    it('advertises the bundled HEVC routes at any frame size', () => {
-        // Without native HEVC, Main and the raw Main 10 planes both decode through the bundled decoder
+    it('advertises the HEVC decoder package routes at any frame size', () => {
+        // Without native HEVC, Main and Main 10 both decode through the package into the frame pool, which may present HDR here
         const result = augmentDeviceProfileForCustomDecode(
             createBaseProfile(),
-            withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] })),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] })),
             {
-                allowRawHDR: true,
-                authorizedRawHDRRouteKeys: [ RAW_PQ_ROUTE_KEY ]
+                allowFramePoolHDR: true,
+                decoderPackages: [ HEVC_DECODER_PACKAGE ]
             }
         );
         const eightKOverrides = { Height: ULTRA_HD_8K_HEIGHT, Width: ULTRA_HD_8K_WIDTH };
@@ -834,7 +746,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities);
         const measuredH264Profile = result.profile.CodecProfiles?.find(profile => (
             profile.Codec === 'h264'
-            && profile.Container === 'mp4,m4v,mov,mkv,ts,m2ts,mts'
+            && profile.Container === getCustomVideoCodecContainers('h264')
             && profile.Conditions?.some(condition => condition.Property === 'VideoRangeType')
         ));
         expect(measuredH264Profile?.Conditions).toContainEqual(expect.objectContaining({
@@ -885,9 +797,9 @@ describe('augmentDeviceProfileForCustomDecode', () => {
     );
 
     it('advertises 4K HEVC Main with six-channel E-AC-3 from Ultra HD evidence', () => {
-        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'eac3' ], supportedNativeUltraHDVideoCodecs: [ 'hevc' ] });
+        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [], supportedNativeUltraHDVideoCodecs: [ 'hevc' ] });
 
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities);
+        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities, { decoderPackages: [ EAC3_DECODER_PACKAGE ] });
         const codecProfiles = result.profile.CodecProfiles ?? [];
         const measuredHEVCProfile = codecProfiles.find(codecProfile => (
             codecProfile.Codec === 'hevc'
@@ -898,9 +810,9 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         ));
 
         expect(result.telemetry.supportedVideoCodecs).toEqual([ 'hevc' ]);
-        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'eac3' ]);
+        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'ac3', 'eac3' ]);
         expect(result.profile.DirectPlayProfiles).toContainEqual({
-            AudioCodec: 'eac3',
+            AudioCodec: 'ac3,eac3',
             Container: 'mkv',
             Type: 'Video',
             VideoCodec: 'hevc'
@@ -924,7 +836,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
     });
 
     it('advertises exact native HEVC Main 10 SDR with six-channel E-AC-3', () => {
-        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'eac3' ] });
+        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [] });
         capabilities.nativeHDRHEVC = {
             bitDepth: 10,
             codec: 'hevc',
@@ -933,7 +845,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             status: 'supported'
         };
 
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities);
+        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities, { decoderPackages: [ EAC3_DECODER_PACKAGE ] });
         const codecProfiles = result.profile.CodecProfiles ?? [];
         const nativeMain10SDRProfile = codecProfiles.find(codecProfile => (
             codecProfile.Codec === 'hevc'
@@ -948,9 +860,9 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         ));
 
         expect(result.telemetry.supportedVideoCodecs).toEqual([ 'hevc' ]);
-        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'eac3' ]);
+        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'ac3', 'eac3' ]);
         expect(result.profile.DirectPlayProfiles).toContainEqual({
-            AudioCodec: 'eac3',
+            AudioCodec: 'ac3,eac3',
             Container: 'mkv',
             Type: 'Video',
             VideoCodec: 'hevc'
@@ -975,7 +887,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
     });
 
     it('keeps native HEVC Main and Main 10 SDR as exact alternatives', () => {
-        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'eac3' ], supportedNativeUltraHDVideoCodecs: [ 'hevc' ] });
+        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ], supportedNativeUltraHDVideoCodecs: [ 'hevc' ] });
         capabilities.nativeHDRHEVC = {
             bitDepth: 10,
             codec: 'hevc',
@@ -1009,7 +921,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
     });
 
     it('omits native HEVC Main 10 SDR without exact decoded-output evidence', () => {
-        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'eac3' ] });
+        const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] });
         capabilities.nativeHDRHEVC = {
             bitDepth: 10,
             codec: 'hevc',
@@ -1060,6 +972,13 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Type: 'Video',
             VideoCodec: 'h264'
         });
+        // AVI carries no Vorbis decoder description Mediabunny reads
+        expect(addedProfiles).toContainEqual({
+            AudioCodec: 'aac',
+            Container: 'avi',
+            Type: 'Video',
+            VideoCodec: 'h264,vp8'
+        });
         expect(addedProfiles).not.toContainEqual(expect.objectContaining({
             AudioCodec: expect.stringContaining('aac'),
             Container: 'webm'
@@ -1070,8 +989,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }));
         expect(result.telemetry).toMatchObject({
             addedAudioProfileCount: 0,
-            addedProfileCount: 4,
-            addedVideoProfileCount: 4,
+            addedProfileCount: 5,
+            addedVideoProfileCount: 5,
             reason: 'augmented',
             supportedAudioCodecs: [ 'aac', 'vorbis' ],
             supportedVideoCodecs: [ 'h264', 'vp8' ],
@@ -1089,7 +1008,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
     });
@@ -1103,7 +1022,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             );
             const measuredProfile = result.profile.CodecProfiles?.find(profile => (
                 profile.Codec === codec
-                && profile.Container === 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+                && profile.Container === CUSTOM_VIDEO_CONTAINERS
             ));
 
             // Mono, the 3.0 order these decoders produce, stereo, and the measured 5.1 bed
@@ -1117,8 +1036,12 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }
     );
 
-    it('advertises bundled AC-3 codecs only in compatible video containers', () => {
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'ac3', 'eac3' ] }));
+    it('advertises AC-3 codecs from their decoder package only in compatible video containers', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] }),
+            { decoderPackages: [ EAC3_DECODER_PACKAGE ] }
+        );
         const addedProfiles = result.profile.DirectPlayProfiles?.slice(1) ?? [];
 
         expect(addedProfiles).toContainEqual({
@@ -1153,7 +1076,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1167,7 +1090,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         const codecProfiles = result.profile.CodecProfiles ?? [];
@@ -1206,11 +1129,15 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Type: 'VideoAudio'
         });
 
-        const result = augmentDeviceProfileForCustomDecode(original, createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'eac3' ] }));
+        const result = augmentDeviceProfileForCustomDecode(
+            original,
+            createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [] }),
+            { decoderPackages: [ EAC3_DECODER_PACKAGE ] }
+        );
         const codecProfiles = result.profile.CodecProfiles ?? [];
 
         expect(result.profile.DirectPlayProfiles).toContainEqual({
-            AudioCodec: 'eac3',
+            AudioCodec: 'ac3,eac3',
             Container: 'mkv',
             Type: 'Video',
             VideoCodec: 'hevc'
@@ -1231,7 +1158,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
     it('keeps sample-rate validation target-neutral for server negotiation', () => {
         const result = augmentDeviceProfileForCustomDecode(
             createBaseProfile(),
-            createCapabilities({ supportedVideoCodecs: [ 'av1' ], supportedAudioCodecs: [ 'aac', 'eac3', 'opus' ], supportedNativeUltraHDVideoCodecs: [ 'av1' ], supportedNativeSurroundAudioCodecs: [ 'opus' ] })
+            createCapabilities({ supportedVideoCodecs: [ 'av1' ], supportedAudioCodecs: [ 'aac', 'opus' ], supportedNativeUltraHDVideoCodecs: [ 'av1' ], supportedNativeSurroundAudioCodecs: [ 'opus' ] }),
+            { decoderPackages: [ EAC3_DECODER_PACKAGE ] }
         );
         const codecProfiles = result.profile.CodecProfiles ?? [];
         const stereoRoute: AudioRouteVector = {
@@ -1273,8 +1201,12 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }));
     });
 
-    it('advertises DTS in Matroska, ISO BMFF, and MPEG-TS with measured beds and runtime rate validation', () => {
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'dts' ] }));
+    it('advertises DTS from its decoder package in Matroska, ISO BMFF, and MPEG-TS with measured beds and runtime rate validation', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] }),
+            { decoderPackages: [ DTS_DECODER_PACKAGE ] }
+        );
         const addedProfiles = result.profile.DirectPlayProfiles?.slice(1) ?? [];
 
         expect(addedProfiles).toContainEqual({
@@ -1483,15 +1415,14 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         expect(result.telemetry.supportedAudioCodecs).toEqual([ 'dts' ]);
     });
 
-    it('does not advertise DTS without exact decoder evidence', () => {
-        const capabilitiesWithExactEvidence = createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'dts' ] });
-        const {
-            bundledDTS: discardedBundledDTSEvidence,
-            ...capabilitiesWithoutExactEvidence
-        } = capabilitiesWithExactEvidence;
-        expect(discardedBundledDTSEvidence).toBeDefined();
+    it('does not advertise DTS without a DTS decoder package', () => {
+        const capabilities = createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] });
 
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilitiesWithoutExactEvidence);
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            { decoderPackages: [ EAC3_DECODER_PACKAGE, TRUEHD_DECODER_PACKAGE ] }
+        );
 
         expect(result.telemetry.supportedAudioCodecs).not.toContain('dts');
         expect(result.profile.DirectPlayProfiles?.some(profile => (
@@ -1502,12 +1433,17 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         ))).toBe(false);
     });
 
-    it('advertises TrueHD in Matroska and ISO BMFF with measured beds and runtime rate validation', () => {
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'truehd' ] }));
+    it('advertises TrueHD from its decoder package in Matroska and ISO BMFF with measured beds and runtime rate validation', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] }),
+            { decoderPackages: [ TRUEHD_DECODER_PACKAGE ] }
+        );
         const addedProfiles = result.profile.DirectPlayProfiles?.slice(1) ?? [];
 
+        // The package decodes MLP too, which only Matroska carries
         expect(addedProfiles).toContainEqual({
-            AudioCodec: 'truehd',
+            AudioCodec: 'mlp,truehd',
             Container: 'mkv',
             Type: 'Video',
             VideoCodec: 'h264'
@@ -1605,15 +1541,19 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             profile: null,
             sampleRate: 192_001
         })).toBe(true);
-        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'truehd' ]);
+        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'mlp', 'truehd' ]);
     });
 
-    it('advertises the measured MLP bed across bounded source rates', () => {
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'mlp' ] }));
+    it('advertises the measured MLP bed from the TrueHD decoder package across bounded source rates', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] }),
+            { decoderPackages: [ TRUEHD_DECODER_PACKAGE ] }
+        );
         const codecProfiles = result.profile.CodecProfiles ?? [];
 
         expect(result.profile.DirectPlayProfiles).toContainEqual({
-            AudioCodec: 'mlp',
+            AudioCodec: 'mlp,truehd',
             Container: 'mkv',
             Type: 'Video',
             VideoCodec: 'h264'
@@ -1643,23 +1583,27 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             profile: null,
             sampleRate: 96_000
         })).toBe(true);
-        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'mlp' ]);
+        expect(result.telemetry.supportedAudioCodecs).toEqual([ 'mlp', 'truehd' ]);
     });
 
-    it('does not advertise TrueHD without exact decoder evidence', () => {
-        const capabilitiesWithExactEvidence = createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'truehd' ] });
-        const {
-            bundledTrueHD: discardedBundledTrueHDEvidence,
-            ...capabilitiesWithoutExactEvidence
-        } = capabilitiesWithExactEvidence;
-        expect(discardedBundledTrueHDEvidence).toBeDefined();
+    it('does not advertise TrueHD or MLP without a TrueHD decoder package', () => {
+        const capabilities = createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] });
 
-        const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilitiesWithoutExactEvidence);
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            capabilities,
+            { decoderPackages: [ EAC3_DECODER_PACKAGE, DTS_DECODER_PACKAGE ] }
+        );
 
-        expect(result.telemetry.supportedAudioCodecs).not.toContain('truehd');
-        expect(result.profile.DirectPlayProfiles?.some(profile => (
-            profile.AudioCodec?.split(',').includes('truehd') === true
-        ))).toBe(false);
+        for (const codec of TRUEHD_DECODER_PACKAGE.codecs) {
+            expect(result.telemetry.supportedAudioCodecs).not.toContain(codec);
+            expect(result.profile.DirectPlayProfiles?.some(profile => (
+                profile.AudioCodec?.split(',').includes(codec) === true
+            ))).toBe(false);
+            expect(result.profile.CodecProfiles?.some(profile => (
+                profile.Codec?.split(',').includes(codec) === true
+            ))).toBe(false);
+        }
     });
 
     it('advertises Mediabunny PCM containers, layouts, and bounded rates', () => {
@@ -1706,7 +1650,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
     });
@@ -1756,7 +1700,11 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             }
         ];
 
-        const result = augmentDeviceProfileForCustomDecode(original, createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'aac', 'eac3' ] }));
+        const result = augmentDeviceProfileForCustomDecode(
+            original,
+            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'aac' ] }),
+            { decoderPackages: [ EAC3_DECODER_PACKAGE ] }
+        );
 
         expect(result.profile.CodecProfiles).toContainEqual({
             Codec: 'aac',
@@ -1765,23 +1713,23 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'AudioProfile',
                 Value: 'HE-AAC'
             } ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
             Codec: 'dts',
             Conditions: original.CodecProfiles[1].Conditions,
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
             ...original.CodecProfiles[1],
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         });
 
         const measuredEAC3Profile = result.profile.CodecProfiles?.find(profile => (
             profile.Codec === 'eac3'
-            && profile.Container === 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            && profile.Container === CUSTOM_VIDEO_CONTAINERS
         ));
         expect(measuredEAC3Profile?.Conditions).toContainEqual(expect.objectContaining({
             Property: 'AudioChannels',
@@ -1823,12 +1771,12 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
             ...original.CodecProfiles[0],
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         });
     });
 
@@ -1856,7 +1804,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         const result = augmentDeviceProfileForCustomDecode(original, createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'flac' ] }));
         const customFLACProfiles = result.profile.CodecProfiles?.filter(profile => (
             profile.Codec === 'flac'
-            && profile.Container === 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            && profile.Container === CUSTOM_VIDEO_CONTAINERS
         )) ?? [];
 
         expect(customFLACProfiles).toContainEqual({
@@ -1870,7 +1818,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(customFLACProfiles.some(profile => profile.Conditions?.some(condition => (
@@ -1878,7 +1826,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         )))).toBe(false);
         expect(result.profile.CodecProfiles).toContainEqual({
             ...original.CodecProfiles[0],
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         });
     });
 
@@ -1910,7 +1858,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Value: '48000'
                 }
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1929,7 +1877,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Value: '48000'
                 }
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.DirectPlayProfiles).toContainEqual(expect.objectContaining({
@@ -1939,7 +1887,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }));
     });
 
-    it('lets bounded software Dolby routes supersede exact native rate profiles', () => {
+    it('lets bounded package-decoded Dolby routes supersede exact native rate profiles', () => {
         const original = createBaseProfile();
         if (!original.CodecProfiles) {
             throw new Error('The base profile codec constraints are unavailable');
@@ -1964,8 +1912,9 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         });
         const result = augmentDeviceProfileForCustomDecode(
             original,
-            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'ac3', 'eac3' ] }),
+            createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [] }),
             {
+                decoderPackages: [ EAC3_DECODER_PACKAGE ],
                 nativeMediaAudioCapabilities: createNativeMediaAudioCapabilities(
                     new Set([ 'ac3:2:48000', 'eac3:2:48000', 'eac3:6:48000' ])
                 )
@@ -1973,7 +1922,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         );
         const dolbyProfiles = result.profile.CodecProfiles?.filter(profile => (
             profile.Codec?.split(',').some(codec => codec === 'ac3' || codec === 'eac3')
-            && profile.Container === 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            && profile.Container === CUSTOM_VIDEO_CONTAINERS
         )) ?? [];
 
         expect(dolbyProfiles).toContainEqual({
@@ -1987,7 +1936,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(dolbyProfiles).toContainEqual({
@@ -2001,7 +1950,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
-            Container: 'mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts',
+            Container: CUSTOM_VIDEO_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(dolbyProfiles.some(profile => (
@@ -2058,7 +2007,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Value: 'SDR|HDR10|HLG|HDR10Plus'
                 })
             ]),
-            Container: 'mp4,m4v,mov,mkv,webm'
+            Container: getCustomVideoCodecContainers('vp9')
         }));
         // VP9 splits into exact profile and range pairs, where HDR10+ follows HDR10 onto the raw route
         expect(result.profile.CodecProfiles?.some(profile => (
@@ -2121,7 +2070,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'VideoRangeType',
                 Value: 'SDR|HDR10|HLG|HDR10Plus'
             }) ]),
-            Container: 'mp4,m4v,mov,mkv,webm'
+            Container: getCustomVideoCodecContainers('vp9')
         }));
         expect(result.profile.CodecProfiles?.some(profile => (
             profile.Codec === 'hevc'
@@ -2187,8 +2136,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         } ];
         const result = augmentDeviceProfileForCustomDecode(
             original,
-            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'eac3' ], nativeDolbyVisionSupported: true }),
-            { allowNativeDolbyVision: true, allowRawHDR: false }
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [], nativeDolbyVisionSupported: true }),
+            { allowNativeDolbyVision: true, allowRawHDR: false, decoderPackages: [ EAC3_DECODER_PACKAGE ] }
         );
         const widenedProfile = result.profile.CodecProfiles?.find(profile => (
             profile.Codec === 'hevc'
@@ -2336,7 +2285,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 expect.objectContaining({ Property: 'VideoLevel', Value: '120' }),
                 expect.objectContaining({ Property: 'VideoFramerate', Value: '30' })
             ]),
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         }));
         expect(pqAuthorization.profile.CodecProfiles?.some(profile => (
             profile.Conditions?.some(condition => condition.Value?.includes('HLG'))
@@ -2455,7 +2404,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }));
     });
 
-    it('keeps native and bundled raw HDR routes dimension-neutral', () => {
+    it('keeps native and raw HDR routes dimension-neutral', () => {
         const original = createBaseProfile();
         original.CodecProfiles = [ {
             Codec: 'hevc',
@@ -2468,14 +2417,6 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Type: 'Video'
         } ];
         const capabilities = createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'flac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] });
-        capabilities.rawHDRVideo = {
-            ...capabilities.rawHDRVideo,
-            hevc: {
-                ...capabilities.rawHDRVideo.hevc,
-                codecString: 'hvc1.2.4.L153.B0',
-                reason: 'bundled-software-decoder'
-            }
-        };
         capabilities.nativeHDRHEVC = {
             bitDepth: 10,
             codec: 'hevc',
@@ -2699,7 +2640,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             } ],
             Type: 'Video'
         } ];
-        const capabilities = createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'truehd' ], supportedRawHDRVideoCodecs: [ 'hevc' ] });
+        const capabilities = createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [], supportedRawHDRVideoCodecs: [ 'hevc' ] });
         capabilities.nativeHDRHEVC = {
             bitDepth: 10,
             codec: 'hevc',
@@ -2718,7 +2659,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 allowRawHDR: false,
                 authorizedExternalHDRRouteKeys: [
                     'external-hevc-main10-bt709-limited:pq-v1'
-                ]
+                ],
+                decoderPackages: [ TRUEHD_DECODER_PACKAGE ]
             }
         );
         const profile8Profiles = result.profile.CodecProfiles?.filter(profile => (
@@ -3103,7 +3045,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
 
         expect(disabledResult.profile.CodecProfiles).toContainEqual({
             ...original.CodecProfiles[0],
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         });
         expect(disabledResult.profile.CodecProfiles).not.toContainEqual(original.CodecProfiles[0]);
         const nativeSDRProfile = disabledResult.profile.CodecProfiles?.find(profile => (
@@ -3299,8 +3241,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         original.MaxStreamingBitrate = 20_000_000;
         const result = augmentDeviceProfileForCustomDecode(
             original,
-            createCapabilities({ supportedVideoCodecs: CUSTOM_VIDEO_CODECS, supportedAudioCodecs: CUSTOM_AUDIO_CODECS }),
-            { isRetry: true }
+            createCapabilities({ supportedVideoCodecs: ENGINE_VIDEO_CODECS, supportedAudioCodecs: ENGINE_AUDIO_CODECS }),
+            { decoderPackages: PACKAGE_CODEC_DECODER_PACKAGES, isRetry: true }
         );
 
         expect(result.profile).toEqual(original);
@@ -3401,12 +3343,12 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         expect(result.profile.CodecProfiles).toContainEqual(original.CodecProfiles[2]);
         expect(result.profile.CodecProfiles).toContainEqual({
             ...original.CodecProfiles[3],
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         });
         expect(result.profile.CodecProfiles).not.toContainEqual(original.CodecProfiles[3]);
         expect(result.profile.CodecProfiles).toContainEqual({
             ...original.CodecProfiles[4],
-            Container: '-mp4,m4v,mov,mj2,mkv,webm,ts,m2ts,mts'
+            Container: NON_CUSTOM_VIDEO_CONTAINERS
         });
         expect(result.profile.CodecProfiles).toContainEqual(original.CodecProfiles[5]);
         expect(result.profile.CodecProfiles).not.toContainEqual(original.CodecProfiles[4]);
@@ -3474,7 +3416,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         });
     });
 
-    it('advertises proven bundled HEVC raw decode without native HEVC WebCodecs', () => {
+    it('advertises proven raw HEVC Main 10 planes without native HEVC SDR decode', () => {
         const result = augmentDeviceProfileForCustomDecode(
             createBaseProfile(),
             createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] }),
@@ -3516,21 +3458,9 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         expect(result.telemetry.supportedVideoCodecs).toEqual([ 'hevc' ]);
     });
 
-    it('does not export bundled HEVC qualification resolution as a source ceiling', () => {
+    it('does not export the raw HEVC probe\'s level as a source ceiling', () => {
         const capabilities = createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] });
-        const bundledHEVC = createBundledHEVCCapabilities();
-        capabilities.bundledHEVC = {
-            ...bundledHEVC,
-            reason: 'partial',
-            qualifications: {
-                ...bundledHEVC.qualifications,
-                'main10-4k': {
-                    ...bundledHEVC.qualifications['main10-4k'],
-                    reason: 'output-mismatch',
-                    status: 'unsupported'
-                }
-            }
-        };
+        // A Level 4 probe string, which a 1080p vector carries
         capabilities.rawHDRVideo = {
             ...capabilities.rawHDRVideo,
             hevc: {
@@ -3797,38 +3727,16 @@ function getMeasuredRoutePairs(profile: DeviceProfile, codec: string): string[] 
     return pairs;
 }
 
-/** Adds unqualified range-extension evidence, which makes HEVC split into exact pairs as the probes always do. */
-function withUnqualifiedHEVCRangeExtensions(capabilities: CustomDecodeCapabilities): CustomDecodeCapabilities {
+/** Adds range-extension evidence, unqualified apart from the given variants, which makes HEVC split into exact pairs as the probes always do. */
+function withUnqualifiedHEVCRangeExtensions(
+    capabilities: CustomDecodeCapabilities,
+    supportedVariants: readonly HEVCRangeExtensionVariant[] = []
+): CustomDecodeCapabilities {
     const hevcRangeExtensions = {} as Record<HEVCRangeExtensionVariant, HEVCRangeExtensionCapability>;
     for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
-        hevcRangeExtensions[variant] = createHEVCRangeExtensionCapability(variant, false);
+        hevcRangeExtensions[variant] = createHEVCRangeExtensionCapability(variant, supportedVariants.includes(variant));
     }
     return { ...capabilities, hevcRangeExtensions };
-}
-
-function createCapabilitiesWithoutBundledMain10(
-    supportedVideoCodecs: readonly CustomVideoCodec[],
-    supportedRawHDRVideoCodecs: readonly CustomRawHDRVideoCodec[]
-): CustomDecodeCapabilities {
-    const capabilities = createCapabilities({ supportedVideoCodecs, supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs });
-    const bundledHEVC = createBundledHEVCCapabilities();
-    capabilities.bundledHEVC = {
-        qualifications: {
-            ...bundledHEVC.qualifications,
-            'main10-1080p': {
-                ...bundledHEVC.qualifications['main10-1080p'],
-                reason: 'output-mismatch',
-                status: 'unsupported'
-            },
-            'main10-4k': {
-                ...bundledHEVC.qualifications['main10-4k'],
-                reason: 'output-mismatch',
-                status: 'unsupported'
-            }
-        },
-        reason: 'partial'
-    };
-    return capabilities;
 }
 
 describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes', () => {
@@ -3899,7 +3807,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         );
         const widenedProfile = result.profile.CodecProfiles?.find(profile => (
             profile.Codec === 'av1'
-            && profile.Container === 'mp4,m4v,mov,mkv,webm'
+            && profile.Container === getCustomVideoCodecContainers('av1')
             && profile.ApplyConditions === undefined
         ));
 
@@ -3961,7 +3869,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         routeKeys,
         supported
     }) => {
-        // HEVC decodes only in the bundled decoder here, with no native Main 10 SDR route
+        // HEVC decodes only to raw Main 10 planes here, with no native Main 10 SDR route
         const result = augmentDeviceProfileForCustomDecode(
             createBaseProfileWithStockHEVC('main'),
             withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [ 'av1', 'vp9' ], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'av1', 'vp9', 'hevc' ] })),
@@ -3978,7 +3886,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Main', 8, 'SDR'))).toBe(true);
     });
 
-    it('needs the bundled Main 10 qualification for 10-bit SDR from the bundled HEVC decoder', () => {
+    it('needs raw HEVC Main 10 output for 10-bit SDR without native HEVC decode', () => {
         const options = {
             allowRawHDR: false,
             allowRawSDR: true,
@@ -3993,7 +3901,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         );
         const unqualified = augmentDeviceProfileForCustomDecode(
             createBaseProfileWithStockHEVC('main'),
-            withUnqualifiedHEVCRangeExtensions(createCapabilitiesWithoutBundledMain10([], [ 'hevc' ])),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] })),
             options
         );
 
@@ -4115,26 +4023,41 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         expect(isDirectPlayAdvertised(result.profile, createProfile10Stream(2, 'DOVIWithSDR', { BitDepth: 10 }))).toBe(false);
     });
 
-    it('advertises an 8-bit HEVC Main Dolby Vision item through its own exact route', () => {
-        const mediaStream = createVideoStream('hevc', 'Main', 8, 'DOVIInvalid', {
+    it('advertises an 8-bit HEVC range-extension Dolby Vision item through its own exact route', () => {
+        const dolbyVisionFields = {
             BlPresentFlag: true,
             DvBlSignalCompatibilityId: 0,
             DvProfile: 8,
             ElPresentFlag: false,
             RpuPresentFlag: true
+        };
+        const rangeExtensionStream = createVideoStream('hevc', 'Rext', 8, 'DOVIInvalid', {
+            ...dolbyVisionFields,
+            PixelFormat: 'yuv420p'
         });
-        const capabilities = withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] }));
+        // No raw route decodes 8-bit Main planes, so an 8-bit Main base layer without a compatible base has no route
+        const mainStream = createVideoStream('hevc', 'Main', 8, 'DOVIInvalid', dolbyVisionFields);
+        const capabilities = withUnqualifiedHEVCRangeExtensions(
+            createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] }),
+            [ 'rext420-8' ]
+        );
         const options = { allowDolbyVision: true, allowRawHDR: false };
 
-        const genericResult = augmentDeviceProfileForCustomDecode(createBaseProfile(), capabilities, options);
+        const genericResult = augmentDeviceProfileForCustomDecode(createBaseProfileWithStockHEVC('main|main 10'), capabilities, options);
         const itemResult = augmentDeviceProfileForCustomDecode(
-            createBaseProfile(),
+            createBaseProfileWithStockHEVC('main|main 10'),
             capabilities,
-            { ...options, itemMediaSource: { MediaStreams: [ mediaStream ] } }
+            { ...options, itemMediaSource: { MediaStreams: [ rangeExtensionStream ] } }
+        );
+        const mainItemResult = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockHEVC('main|main 10'),
+            capabilities,
+            { ...options, itemMediaSource: { MediaStreams: [ mainStream ] } }
         );
 
-        expect(isDirectPlayAdvertised(genericResult.profile, mediaStream)).toBe(false);
-        expect(isDirectPlayAdvertised(itemResult.profile, mediaStream)).toBe(true);
+        expect(isDirectPlayAdvertised(genericResult.profile, rangeExtensionStream)).toBe(false);
+        expect(isDirectPlayAdvertised(itemResult.profile, rangeExtensionStream)).toBe(true);
+        expect(isDirectPlayAdvertised(mainItemResult.profile, mainStream)).toBe(false);
     });
 
     it('never widens a retry, even for a Dolby Vision item with a route', () => {
@@ -4184,7 +4107,7 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         }))).toBe(true);
     });
 
-    it('advertises the generic Profile 7 ranges with or without the bundled Main 10 qualification', () => {
+    it('advertises the generic Profile 7 ranges from the raw base layer alone, and not without raw HEVC', () => {
         const stream = createVideoStream('hevc', 'Main 10', 10, 'DOVIWithEL', {
             BlPresentFlag: true,
             ColorPrimaries: 'bt2020',
@@ -4198,19 +4121,19 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         });
         const options = { allowDolbyVisionProfile7: true, allowRawHDR: false };
 
-        const qualified = augmentDeviceProfileForCustomDecode(
+        const rawResult = augmentDeviceProfileForCustomDecode(
             createBaseProfileWithStockHEVC('main|main 10'),
             withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'aac' ], supportedRawHDRVideoCodecs: [ 'hevc' ] })),
             options
         );
-        const unqualified = augmentDeviceProfileForCustomDecode(
+        const nativeOnlyResult = augmentDeviceProfileForCustomDecode(
             createBaseProfileWithStockHEVC('main|main 10'),
-            withUnqualifiedHEVCRangeExtensions(createCapabilitiesWithoutBundledMain10([ 'hevc' ], [ 'hevc' ])),
+            withUnqualifiedHEVCRangeExtensions(createCapabilities({ supportedVideoCodecs: [ 'hevc' ], supportedAudioCodecs: [ 'aac' ] })),
             options
         );
 
-        // Without the bundled Main 10 qualification, which decodes the EL, Profile 7 still reconstructs from its BL
-        expect(isDirectPlayAdvertised(qualified.profile, stream)).toBe(true);
-        expect(isDirectPlayAdvertised(unqualified.profile, stream)).toBe(true);
+        // No decoder decodes the EL, so Profile 7 reconstructs from its BL's raw Main 10 planes
+        expect(isDirectPlayAdvertised(rawResult.profile, stream)).toBe(true);
+        expect(isDirectPlayAdvertised(nativeOnlyResult.profile, stream)).toBe(false);
     });
 });
