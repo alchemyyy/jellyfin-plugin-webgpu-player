@@ -64,13 +64,19 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     - Promotion to full speed when `getDeviceProfile` asks, so a play is never slower than today.
     - No start while media is playing, and optionally none on weak or constrained clients (`navigator.hardwareConcurrency`, `navigator.connection.saveData`).
     - The idle wait outside `runTimed`, and a background timeout that neither sets the scheduler's `timedOut` poison nor lands in the page-lifetime probe promise; the on-demand path reruns timed-out probes.
-12. Persist probe verdicts across page loads.
-    Every page load reprobes, so each session's first play pays the full probe cost.
-    Store the capability result in localStorage, keyed by `__COMMIT_SHA__`, `navigator.userAgent`, and `GPUAdapter.info`.
-    The engine asset key alone is not enough: it hashes only the libraries output, not the main-thread probe code or expected fingerprints.
-    Persist only definitive `supported` and `unsupported` verdicts, never `timeout` or `error`, using the versioned storage pattern of `WebGPUUserSettings.ts`.
-    A cache hit resolves `getDeviceProfile` at once; a background reprobe then refreshes the entry.
-    Revalidation is background work with the same contention as warming, so it belongs on the gated scheduler above, or after a playback session ends until that scheduler exists.
+12. Persist probe verdicts across page loads and browser restarts.
+    Every page load reprobes, so each session's first play pays the full probe cost; `localStorage` survives restarts, so one store covers both.
+    Rough plan:
+    - The engine owns the store in `src/capability/`: `CustomDecodeCapabilityProbe` reads it before running a probe and writes each definitive result.
+    - One fixed storage key holds a schema version, the fingerprint, the write time, and each probe's verdict by its `CustomDecodeProbe` name; another schema or fingerprint is a miss that overwrites it, so updates leave no orphaned entries.
+    - Only `supported` and `unsupported` are stored, never `unknown` (timeout, exception) or `not-probed`; video probes run per item, so verdicts merge into the store as items play.
+    - The fingerprint is the host's build key, the adapter's `info` with its sorted `features` and its `limits`, and `navigator.userAgent` with Chromium's `getHighEntropyValues(['fullVersionList', 'platformVersion'])`, since the UA alone carries only the major version and a frozen OS.
+    - The host passes its build key as it passes `configureEngineAssets({ cacheKey })`: the add-on the engine `assetKey` plus webpack's `__webpack_hash__`, which covers the main-thread probe code and expected fingerprints the `assetKey` misses; the sandbox the `assetKey` plus a value set at each Vite server start.
+      `__COMMIT_SHA__` does not do, because every uncommitted build of a commit reads `<sha>-dirty`.
+    - A hit resolves `getDeviceProfile` at once, and the hit probes rerun in the background and overwrite their verdicts, on the gated scheduler above, or after the playback session ends until it exists.
+    - A route a stored verdict admitted that fails to configure or to output its first frame clears the store, so the next negotiation reprobes: driver updates, OS codec packs, the hardware-acceleration setting, and Chrome's software fallback after GPU process crashes change no fingerprint.
+    - The engine exports a clear function and a read of the stored fingerprint and age; the sandbox shows both beside a "Clear probe cache" button, and the add-on's settings dialog may offer the same clear.
+    - Tests cover fingerprint and schema misses, merging across items, `unknown` never stored, and the clear after a runtime failure.
     The engine book's `routes.md` "Probes and caching" and `decisions.md` change with it.
 
 ## Playback performance
