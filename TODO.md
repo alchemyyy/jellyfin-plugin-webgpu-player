@@ -79,6 +79,11 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
     Their FFmpeg packages build with `-Oz`, SIMD, and LTO (`decoders/rules.mk`); the DTS package has built with `-O3`, SIMD, and LTO since 10-15.
     At `-O3` the E-AC-3 module grows from 520,036 to 538,985 bytes and the TrueHD module from 314,641 to 325,929, 3.6% each, which a first play downloads.
     Closing it is a choice between that size and a decode speedup that is not measured.
+29. Annex B HEVC reaches the native decoder with its own start codes.
+    Since engine 8b5883c the Dolby Vision split passes the demuxed packet itself when it removes nothing, and a view of its leading bytes when it removes only trailing NAL units, where it used to rebuild every access unit with four-byte start codes.
+    MKV and MP4 packets are length-prefixed, so their bytes are unchanged; MPEG-TS and M2TS packets now keep their three-byte start codes and any leading zero bytes.
+    That is valid Annex B, but no real playback has confirmed that Chromium's hardware decoders take it.
+    Closing it needs a native-route playback of HEVC in MPEG-TS or M2TS, a Dolby Vision Profile 8 stream among them, so both the unchanged packet and the leading-bytes view reach the decoder.
 
 ## Playback smoothness
 
