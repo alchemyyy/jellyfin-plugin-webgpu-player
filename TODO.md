@@ -17,7 +17,7 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
      The fork identifies MPEG-4 Part 2 in Matroska, MP4, and AVI (PR #156), so a package alone would play it there.
    - DivX packed B-frames: the fork's AVI demuxer does not unpack them, so a packed DivX stream needs that before it plays.
    - OpenDML: the fork reads only `idx1`, so the worker refuses an AVI video track that outruns it (`opendml-index-unread`); an AVI past about 1 GiB needs the `indx` and `ix##` indexes read.
-   - Presentation times: AVI stamps packets in decode order, so HEVC in AVI is refused, and H.264 with B-frames relies on Mediabunny's sample sink to reorder, which it does not on WebKit.
+   - Presentation times: AVI stamps packets in decode order, so HEVC in AVI is refused, and H.264 with B-frames relies on Mediabunny's sample sink to reorder, which it does not on WebKit, so WebKit plays only Baseline H.264 from AVI (10-16).
      FFmpeg also writes HEVC in AVI with a zero codec tag unless told otherwise.
    - Audio: WAVE_FORMAT_EXTENSIBLE is unmapped, and FLAC and Vorbis in AVI carry no decoder description the fork reads, so the AVI rule leaves them out.
 7. A deinterlacing choice in the add-on's settings.
@@ -84,10 +84,6 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 
 ## Playback performance
 
-14. E-AC-3 and TrueHD build for size.
-    Their FFmpeg packages build with `-Oz`, SIMD, and LTO (`decoders/rules.mk`); the DTS package has built with `-O3`, SIMD, and LTO since 10-15.
-    At `-O3` the E-AC-3 module grows from 520,036 to 538,985 bytes and the TrueHD module from 314,641 to 325,929, 3.6% each, which a first play downloads.
-    Closing it is a choice between that size and a decode speedup that is not measured.
 29. Annex B HEVC reaches the native decoder with its own start codes.
     Since engine 8b5883c the Dolby Vision split passes the demuxed packet itself when it removes nothing, and a view of its leading bytes when it removes only trailing NAL units, where it used to rebuild every access unit with four-byte start codes.
     MKV and MP4 packets are length-prefixed, so their bytes are unchanged; MPEG-TS and M2TS packets now keep their three-byte start codes and any leading zero bytes.
@@ -116,7 +112,7 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 23. Fix in the fork the Mediabunny gaps the engine works around through Mediabunny's internals.
     BlockAdditions beyond BlockAddID 1, Matroska FlagInterlaced and FieldOrder, `dvc1`, the Dolby Vision sample entries, the MJ2 signature box, and a Matroska `V_AV1` CodecPrivate remain in Mediabunny 1.61.5 and in the fork; the engine book's `decisions.md` describes them.
     Fixing one in the fork, on its own branch cut from upstream's `main`, would let the engine drop its workaround.
-    The two defects are fixed in the fork (10-16) and their workarounds are gone: laced header stripping on branch `fix-matroska-laced-header-stripping`, and the unclosed custom decoder on `fix-custom-decoder-close-after-failure`.
+    The two defects are fixed in the fork (10-16) and their workarounds are gone: laced header stripping on branch `fix-matroska-laced-header-stripping`, and the unclosed custom decoder, with the custom encoder's same defect, on `fix-custom-decoder-close-after-failure`.
     Upstream pull requests from those branches are the project owner's to open.
 
 ## Jellyfin integration

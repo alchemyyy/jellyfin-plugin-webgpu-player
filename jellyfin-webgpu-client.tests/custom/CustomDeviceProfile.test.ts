@@ -72,6 +72,8 @@ const JPEG2000_DECODER_PACKAGE: DecoderPackageRouteSummary = {
     outputFormats: [ 'I420', 'I420P10', 'I420P12', 'I422', 'I422P10', 'I422P12', 'I444', 'I444P10', 'I444P12' ]
 };
 const EAC3_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], kind: 'audio', outputFormats: [] };
+// The containers whose rules carry DTS: ISO BMFF, Matroska, and MPEG-TS
+const DTS_PROFILE_CONTAINERS = 'mp4,m4v,mov,mkv,ts,m2ts,mts';
 
 /** Returns the containers of a video codec's container rules, as its measured route profiles list them. */
 function getCustomVideoCodecContainers(codec: CustomVideoCodec): string {
@@ -1271,7 +1273,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         }));
     });
 
-    it('advertises DTS in Matroska and ISO BMFF with measured beds and runtime rate validation', () => {
+    it('advertises DTS in Matroska, ISO BMFF, and MPEG-TS with measured beds and runtime rate validation', () => {
         const result = augmentDeviceProfileForCustomDecode(createBaseProfile(), createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ 'dts' ] }));
         const addedProfiles = result.profile.DirectPlayProfiles?.slice(1) ?? [];
 
@@ -1287,10 +1289,17 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Type: 'Video',
             VideoCodec: 'h264'
         });
+        expect(addedProfiles).toContainEqual({
+            AudioCodec: 'dts',
+            Container: 'ts,m2ts,mts',
+            Type: 'Video',
+            VideoCodec: 'h264'
+        });
         expect(addedProfiles.some(profile => (
             profile.AudioCodec?.split(',').includes('dts') === true
             && profile.Container !== 'mkv'
             && profile.Container !== 'mp4,m4v,mov'
+            && profile.Container !== 'ts,m2ts,mts'
         ))).toBe(false);
         expect(result.profile.CodecProfiles).toContainEqual({
             Codec: 'dts',
@@ -1309,7 +1318,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
                 }
             ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1334,7 +1343,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Value: 'DTS-HD MA|DTS-HD MA + DTS:X'
                 }
             ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1353,7 +1362,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'AudioProfile',
                 Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1372,7 +1381,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'AudioProfile',
                 Value: 'DTS-HD MA'
             } ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         // Jellyfin cannot express ChannelLayout, so runtime eligibility requires 2.1 or 3.0
@@ -1392,7 +1401,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'AudioProfile',
                 Value: 'DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1411,7 +1420,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'AudioProfile',
                 Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         expect(result.profile.CodecProfiles).toContainEqual({
@@ -1430,7 +1439,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'AudioProfile',
                 Value: 'DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
-            Container: 'mp4,m4v,mov,mkv',
+            Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
         const codecProfiles = result.profile.CodecProfiles ?? [];
