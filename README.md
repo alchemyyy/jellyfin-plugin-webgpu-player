@@ -63,7 +63,7 @@ Please oh please have your LLM generate and run tests on what it produces. This 
 - bash (Git Bash on Windows) and git.
 - The .NET 10 SDK, for the server plugin.
 - Node.js 24 or later and npm 11 or later, for the client add-on and the engine.
-- For the engine's WebAssembly decoders, which the first build of a checkout compiles: GNU Make, Emscripten 4.0.13 (activated with `emsdk_env` or named by `EMSDK`), and rustup. The engine pins Rust 1.96.1 with the `wasm32-unknown-unknown` target.
+- For the engine's WebAssembly modules and decoder packages, which the first build of a checkout compiles: GNU Make, Emscripten 4.0.13 (activated with `emsdk_env` or named by `EMSDK`), rustup, CMake, Perl, and GNU patch. The engine pins Rust 1.96.1 with the `wasm32-unknown-unknown` target.
 - On Windows, long path support. The engine's decoder build creates paths over 260 characters, so enable `LongPathsEnabled` and Git's `core.longpaths`. GNU Make and the MSVC linker that cargo uses must accept long paths too.
 
 Only for specific tasks:
@@ -85,7 +85,7 @@ cd jellyfin-plugin-webgpu-player
 `build.sh` initializes the submodules, builds the client add-on, embeds it, and builds the plugin. `./build.sh --help` lists its options.
 
 - Jellyfin Web is a shallow submodule pinned to the commit the add-on builds against, and is only read. `--jellyfin-web-path` builds against another checkout.
-- The first build of a checkout also compiles the engine's WebAssembly decoders, in the background while the add-on's npm build runs.
+- The first build of a checkout also compiles the engine's WebAssembly modules and decoder packages, in the background while the add-on's npm install and the hls.js build run. The plugin carries every package and pass file and offers them to clients; its dashboard settings page manages them.
 - `--publish` runs `dotnet publish` instead of `dotnet build`, for packaging.
 - The add-on's own checks run from `jellyfin-webgpu-client/`: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`.
 
@@ -109,6 +109,8 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 | `Jellyfin.Plugin.WebGPUPlayer/` | Server plugin: project, entry point and service registration |
 | `Jellyfin.Plugin.WebGPUPlayer/Transformations/` | The `index.html` and `config.json` rewrites: File Transformation registration and callbacks, the choice of rewriter, and the fallback middleware |
 | `Jellyfin.Plugin.WebGPUPlayer/Addon/` | Embedded add-on catalog and the asset route |
+| `Jellyfin.Plugin.WebGPUPlayer/Modules/` | The decoder packages and pass files the server offers: the store of bundled files, uploads, and disabled keys in the plugin's data folder, the readers of package and pass headers, and their routes |
+| `Jellyfin.Plugin.WebGPUPlayer/Configuration/` | The plugin's dashboard settings page and its controller, which manage the server's decoders and passes |
 | `bin/` | Build output, one folder per project (generated, gitignored): the two .NET projects, and the client add-on in `bin/jellyfin-webgpu-client/` |
 | `jellyfin-webgpu-client/` | Client add-on: a private npm package with the add-on sources in `src/` and their webpack, Vitest, ESLint and stylelint configuration |
 | `jellyfin-webgpu-client/src/strings/` | The add-on's text: `en-us.json` is the source, and each translation is a `<locale>.json` beside it, written by Weblate |
@@ -146,4 +148,4 @@ The Weblate component:
 | Language code style | BCP style using hyphen as a separator, lower cased |
 | Source language | English |
 
-Nothing else needs translating. The server plugin shows no text of its own, and Jellyfin does not translate plugin names or descriptions. The engine renders no text either: the add-on translates the codes it reports.
+Nothing else needs translating. The server plugin's settings page is English only, as Jellyfin's plugin pages are, and Jellyfin does not translate plugin names or descriptions. The engine renders no text either: the add-on translates the codes it reports.

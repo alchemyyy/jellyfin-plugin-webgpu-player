@@ -2,6 +2,7 @@
 // The add-on runs inside an unmodified Jellyfin Web host, loaded through the plugin manager's window path.
 // Host modules come from the read-only Jellyfin Web source tree at JELLYFIN_WEB_DIR; npm packages and loaders come only from this package's node_modules.
 // Every folder comes from scripts/constants.js
+const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const CopyPlugin = require('copy-webpack-plugin');
@@ -11,9 +12,12 @@ const {
     ADDON_SOURCE_DIRECTORY,
     WEBGPU_PLAYER_BUILD_INFO_FILE,
     WEBGPU_PLAYER_BUILD_SCRIPT,
+    WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY,
+    WEBGPU_PLAYER_DECODER_PACKAGE_FORMAT_FILE,
     WEBGPU_PLAYER_HLS_DIRECTORY,
     WEBGPU_PLAYER_LIBRARY_DIRECTORY,
     WEBGPU_PLAYER_MEDIABUNNY_DIRECTORY,
+    WEBGPU_PLAYER_PASS_DIRECTORY,
     WEBGPU_PLAYER_SOURCE_DIRECTORY
 } = require('./scripts/constants');
 const { resolveJellyfinWebDirectory, resolveJellyfinWebSourceDirectory } = require('./scripts/jellyfin-web');
@@ -33,6 +37,11 @@ const MANIFEST_FILE_NAME = 'addon-manifest.json';
 const UNIQUE_NAME = 'webgpuPlayerAddon';
 // Never the host's bare webpackChunk global
 const CHUNK_LOADING_GLOBAL = 'webpackChunkWebGPUPlayerAddon';
+// The add-on folders of the engine's decoder packages and pass files, which the manifest lists for the server plugin to offer
+const DECODER_PACKAGE_ASSET_DIRECTORY = 'wgpud';
+const PASS_ASSET_DIRECTORY = 'wgpup';
+// The manifest also relays the custom section that carries a package's header, which the plugin reads
+const DECODER_PACKAGE_FORMAT = require(WEBGPU_PLAYER_DECODER_PACKAGE_FORMAT_FILE);
 
 // The engine assembles its served workers, decoders, licenses, and qualification streams first
 execFileSync(
@@ -44,6 +53,13 @@ execFileSync(
     { stdio: 'inherit' }
 );
 const WEBGPU_PLAYER_BUILD_INFO = require(WEBGPU_PLAYER_BUILD_INFO_FILE);
+// The asset build writes the pass files, but the decoder packages build with their own toolchains, so a checkout may lack them
+if (!fs.existsSync(WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY)) {
+    throw new Error(
+        `The engine's decoder packages are not built: ${WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY} is missing. `
+        + 'Run ./build.sh in the plugin root, or `make -C wgpud sources` and `npm run decoders` in the engine.'
+    );
+}
 
 let COMMIT_SHA = '';
 try {
@@ -206,6 +222,14 @@ class HostClosureGuardPlugin {
 }
 
 /** Writes addon-manifest.json: the hashed entry file and the engine asset key. */
+/** Returns the paths of the compilation's assets in an add-on folder, in order. */
+function listAssetsInDirectory(compilation, directory) {
+    return compilation.getAssets()
+        .map(asset => asset.name)
+        .filter(name => name.startsWith(`${directory}/`))
+        .sort();
+}
+
 class AddonManifestPlugin {
     apply(compiler) {
         compiler.hooks.thisCompilation.tap('AddonManifestPlugin', compilation => {
@@ -218,9 +242,13 @@ class AddonManifestPlugin {
                         compilation.errors.push(new Error('WebGPU player add-on entry produced no JavaScript file'));
                         return;
                     }
+                    // The copies run at an earlier stage, so both folders are complete here
                     const manifest = {
                         entry: entryFile,
-                        assetKey: WEBGPU_PLAYER_BUILD_INFO.assetKey
+                        assetKey: WEBGPU_PLAYER_BUILD_INFO.assetKey,
+                        decoderPackageSection: DECODER_PACKAGE_FORMAT.decoderSection,
+                        decoderPackages: listAssetsInDirectory(compilation, DECODER_PACKAGE_ASSET_DIRECTORY),
+                        passes: listAssetsInDirectory(compilation, PASS_ASSET_DIRECTORY)
                     };
                     compilation.emitAsset(MANIFEST_FILE_NAME, new sources.RawSource(JSON.stringify(manifest, null, 2) + '\n'));
                 }
@@ -375,6 +403,18 @@ module.exports = {
                     from: WEBGPU_PLAYER_LIBRARY_DIRECTORY,
                     info: { minimized: true },
                     to: 'libraries'
+                },
+                {
+                    // The server plugin offers these to clients through its decoder package route
+                    from: WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY,
+                    info: { minimized: true },
+                    to: DECODER_PACKAGE_ASSET_DIRECTORY
+                },
+                {
+                    // The server plugin offers these to clients through its pass route
+                    from: WEBGPU_PLAYER_PASS_DIRECTORY,
+                    info: { minimized: true },
+                    to: PASS_ASSET_DIRECTORY
                 }
             ]
         }),

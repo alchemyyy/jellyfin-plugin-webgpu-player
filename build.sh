@@ -3,9 +3,11 @@
 #
 # Initializes the client's submodules when needed (not recursively): the engine, the hls.js fork, and the pinned
 # Jellyfin Web, unless --jellyfin-web-path names another checkout, and of the engine's own only its Mediabunny fork.
-# Builds the engine's WebAssembly decoders in the background when they are missing (make, with Emscripten and rustup).
+# Builds the engine's WebAssembly modules in the background when they are missing (make, with Emscripten and rustup).
 # Meanwhile it runs `npm ci` in jellyfin-webgpu-client/ when its node_modules is missing, and builds the hls.js fork.
-# Once the decoders are built, it runs `npm run build` there against a read-only Jellyfin Web source tree.
+# The engine's decoder packages, which the plugin offers to every client, build in the background once npm ci is done,
+# when they are missing; their build fetches the engine's codec source submodules itself.
+# Once both builds are done, it runs `npm run build` there against a read-only Jellyfin Web source tree.
 # Then it runs dotnet build or dotnet publish, which embeds the add-on build in bin/jellyfin-webgpu-client/ in the plugin.
 # Works in Git Bash on Windows and in bash on Linux and macOS.
 
@@ -38,13 +40,14 @@ Options:
                               JELLYFIN_WEB_DIR. Nothing is written to it. Defaults to the pinned submodule in
                               jellyfin-webgpu-client/vendor/jellyfin-web/.
   --skip-npm                  Reuse the existing add-on build in bin/jellyfin-webgpu-client/ instead of running
-                              the decoder and npm builds.
+                              the WebAssembly, decoder package, and npm builds.
   --configuration <name>      The dotnet build configuration: Debug or Release (default).
   --publish                   Run dotnet publish instead of dotnet build.
   -h, --help                  Show this help.
 
-The first build of a checkout also builds the engine's WebAssembly decoders. That needs GNU Make, Emscripten 4.0.13
-(activated with emsdk_env, or EMSDK naming the emsdk directory), and rustup; see the engine's docs/src/decoders.md.
+The first build of a checkout also builds the engine's WebAssembly modules and decoder packages. That needs GNU Make,
+Emscripten 4.0.13 (activated with emsdk_env, or EMSDK naming the emsdk directory), rustup, CMake, Perl, and GNU patch;
+see the engine's docs/src/decoders.md and docs/src/decoder-packages.md.
 
 Examples:
   ./build.sh
@@ -125,7 +128,7 @@ if [ "$skip_npm" = false ]; then
         jellyfin_web_path="$script_directory/$jellyfin_web_submodule_path"
     fi
 
-    # Not recursive: the engine's codec source submodules serve only its decoder projects, which this build does not build
+    # Not recursive: the engine's codec source submodules serve only its decoder projects, whose build fetches them
     for submodule_path in "${submodule_paths[@]}"; do
         if [ ! -e "$script_directory/$submodule_path/.git" ]; then
             git -C "$script_directory" submodule update --init -- "$submodule_path" \
@@ -162,12 +165,29 @@ if [ "$skip_npm" = false ]; then
         (cd "$client_directory" && npm ci) || fail 'npm ci failed'
     fi
 
+    # The decoder packages are build outputs of the same toolchains, and the add-on build carries them.
+    # Their build checks each package with the engine's own loader through esbuild, which npm ci installed
+    decoder_package_directory="$engine_directory/$(engine_layout decoderOutputDirectory)" \
+        || fail 'Cannot read the engine layout (Node.js is required)'
+    decoder_package_build_process_id=''
+    if [ ! -d "$decoder_package_directory" ]; then
+        printf 'Building the engine decoder packages into %s\n' "$decoder_package_directory"
+        decoders_directory="$(native_path "$engine_directory/$(engine_layout decodersDirectory)")"
+        decoder_package_script="$(native_path "$engine_directory/$(engine_layout scriptsDirectory)/decoder-packages.mjs")"
+        { make -C "$decoders_directory" sources && node "$decoder_package_script"; } &
+        decoder_package_build_process_id=$!
+    fi
+
     # npm run build builds the fork too, but only after the decoders; it finds the bundle built here and skips it
     (cd "$client_directory" && node scripts/build-hls.js) || fail 'The hls.js fork build failed'
 
     if [ -n "$wasm_build_process_id" ]; then
         wait "$wasm_build_process_id" \
             || fail "The engine WebAssembly build failed; see the engine's docs/src/decoders.md for the toolchain"
+    fi
+    if [ -n "$decoder_package_build_process_id" ]; then
+        wait "$decoder_package_build_process_id" \
+            || fail "The engine decoder package build failed; see the engine's docs/src/decoder-packages.md for the toolchain"
     fi
 
     # The variable is scoped to the build command, so the caller's environment is left as it was

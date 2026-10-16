@@ -11,6 +11,7 @@ import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassL
 import {
     MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH,
     MAXIMUM_PRESENTATION_FILE_COUNT,
+    MAXIMUM_SERVER_PASS_FILE_NAME_LENGTH,
     WEBGPU_USER_SETTINGS_STORAGE_KEY,
     WEBGPU_USER_SETTINGS_VERSION,
     createConfiguredHDRRenderSettings,
@@ -37,6 +38,17 @@ const TEXT_PARAMETER_VALUE = '0.5';
 const SATURATION_SOURCE_KEY = 1;
 const INVERT_SOURCE_KEY = 2;
 const INVALID_SOURCE_KEYS: readonly unknown[] = [ 0, -1, 1.5, String(SATURATION_SOURCE_KEY), Number.NaN, Number.MAX_SAFE_INTEGER + 1 ];
+// A server pass file version a stored file came from, and origins that name none
+const SERVER_PASS_FILE_NAME = 'sharpen.wgsl';
+const SERVER_CONTENT_HASH = 'c'.repeat(64);
+const INVALID_SERVER_ORIGINS: readonly unknown[] = [
+    null,
+    SERVER_PASS_FILE_NAME,
+    { contentHash: SERVER_CONTENT_HASH, fileName: ' ' },
+    { contentHash: SERVER_CONTENT_HASH, fileName: 'p'.repeat(MAXIMUM_SERVER_PASS_FILE_NAME_LENGTH + 1) },
+    { contentHash: 'C'.repeat(64), fileName: SERVER_PASS_FILE_NAME },
+    { contentHash: SERVER_CONTENT_HASH.slice(1), fileName: SERVER_PASS_FILE_NAME }
+];
 
 function createStorage(initialValue: string | null = null): WebGPUUserSettingsStorage {
     let value = initialValue;
@@ -201,6 +213,28 @@ describe('WebGPUUserSettings', () => {
             hdrOutput: true
         });
         expect(malformed.presentation).toEqual(defaults.presentation);
+    });
+
+    it('keeps a stored file\'s server origin only when it names one server file version', () => {
+        const origin = { contentHash: SERVER_CONTENT_HASH, fileName: SERVER_PASS_FILE_NAME };
+        const normalized = normalizeWebGPUUserSettings({
+            ...createDefaultWebGPUUserSettings(),
+            presentation: {
+                files: [
+                    { parameters: {}, server: origin, sourceKey: SATURATION_SOURCE_KEY },
+                    ...INVALID_SERVER_ORIGINS.map((server: unknown, index: number): Record<string, unknown> => ({
+                        parameters: {},
+                        server,
+                        sourceKey: INVERT_SOURCE_KEY + index
+                    }))
+                ],
+                hdrOutput: false
+            }
+        });
+
+        expect(normalized.presentation.files[0]).toEqual({ parameters: {}, server: origin, sourceKey: SATURATION_SOURCE_KEY });
+        expect(normalized.presentation.files.slice(1).every((file: StoredPresentationFile): boolean => file.server === undefined)).toBe(true);
+        expect(normalized.presentation.files).toHaveLength(INVALID_SERVER_ORIGINS.length + 1);
     });
 
     it('caps stored shader files and their parameters at the first ones within the limits', () => {

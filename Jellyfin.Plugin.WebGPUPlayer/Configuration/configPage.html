@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>WebGPU Player</title>
+</head>
+<body>
+    <div id="WebGPUPlayerConfigurationPage" data-role="page" class="page type-interior pluginConfigurationPage" data-controller="__plugin/WebGPUPlayerConfig.js">
+        <div data-role="content">
+            <div class="content-primary">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">WebGPU Player</h2>
+                    <p class="fieldDescription">
+                        The server offers these decoders and passes to every WebGPU Player client.
+                        A client downloads a decoder when a playback needs it, and a pass when its user adds it in the player's settings.
+                        An upload replaces the bundled decoder of its id, or the bundled pass file of its name, until it is deleted.
+                    </p>
+                </div>
+
+                <div class="verticalSection">
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h3 class="sectionTitle">Decoders</h3>
+                        <button is="emby-button" type="button" class="raised button-alt" data-upload="decoderPackages">
+                            <span>Upload decoders</span>
+                        </button>
+                    </div>
+                    <p class="fieldDescription">Decoder packages (.wasm): GPU video decoders and software audio decoders.</p>
+                    <input type="file" accept=".wasm,application/wasm" multiple hidden data-files="decoderPackages">
+                    <div class="paperList" data-list="decoderPackages"></div>
+                </div>
+
+                <div class="verticalSection">
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h3 class="sectionTitle">Passes</h3>
+                        <button is="emby-button" type="button" class="raised button-alt" data-upload="passes">
+                            <span>Upload passes</span>
+                        </button>
+                    </div>
+                    <p class="fieldDescription">Pass files (.wgsl): postprocessing passes a user can add to the player's presentation.</p>
+                    <input type="file" accept=".wgsl,text/plain" multiple hidden data-files="passes">
+                    <div class="paperList" data-list="passes"></div>
+                </div>
+
+                <div class="fieldDescription" data-status role="status" aria-live="polite"></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

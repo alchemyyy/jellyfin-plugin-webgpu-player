@@ -5,7 +5,7 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 
 | Path | Holds |
 | --- | --- |
-| `Jellyfin.Plugin.WebGPUPlayer/` | The server plugin: the web client rewrites and the asset route |
+| `Jellyfin.Plugin.WebGPUPlayer/` | The server plugin: the web client rewrites, the asset route, and the decoders and passes it offers, with their routes and settings page |
 | `jellyfin-webgpu-client/` | The add-on, a private npm package with its sources in `src/` |
 | `jellyfin-webgpu-client/vendor/webgpu-player/` | The engine: a submodule, and an npm workspace of the add-on |
 | `jellyfin-webgpu-client/vendor/webgpu-player-hls/` | The hls.js fork, a submodule |
@@ -53,19 +53,24 @@ The add-on supplies each one itself:
 
 ## Settings
 
-Every setting is local to the browser profile.
+Every setting is local to the browser profile; the server's decoders and passes are managed on the plugin's settings page (see [Decoders and passes from the server](server-modules.md)).
 
 - `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, and the presentation settings in localStorage under `<userId>-webGPUPlaybackSettings` (version 4).
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
 - The presentation settings are HDR output, off by default, and the user's WGSL shader files in order, each with its parameter values and its source's key.
   A file holds one or more passes, as an mpv user shader does, and its passes run in file order and share its parameter values.
+  A file added from the server's passes also keeps its origin, the server's file name and SHA-256, so a newer version on the server replaces its source.
   A preset holds at most 16 files of at most 16,777,216 characters each; the limit only keeps a mistaken pick, such as a media file, out of storage.
 - The sources live in IndexedDB, in the `passSources` store of the `webGPUPlayerPresentation` database (`PresentationPassStore.ts`), since localStorage holds about 5 MB for everything on the origin.
   Each added file's source gets a key that counts up from 1, and a source goes once neither the panel's settings nor the stored settings hold its key.
 - Settings of any other version are not read, so a stored value from another version loads as the defaults.
 - HDR output applies when `WebGPUPlayer` is constructed, at plugin load, while the stored files load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
   Every change in the settings panel applies live, and the presenter keeps the preset across sessions; a stored preset that loads after a panel change yields to it.
+- The settings panel's sections are playback, tone mapping and display, presentation (HDR output), shader passes, audio, and decoders.
+  Each setting restores its default from an icon button beside it.
+- The shader pass section adds files from this device, or from the passes the server offers, which download when added.
+  The decoder section lists the user's own packages and names the server's.
 - The settings panel shows each file with the state of each of its passes from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
   A file whose source the store does not hold shows `source-missing` with its key, stays out of the preset, and can be removed.
   A source the store refuses, or a settings save the browser refuses, is reported in the section's status with the browser's error.
@@ -100,8 +105,9 @@ What they do:
   The pinned Jellyfin Web in `vendor/jellyfin-web/` is the host's read-only source, so nothing lints it.
 - `test` runs the add-on's suites; `npm test -w webgpu-player` runs the engine's.
 - `build` builds the hls.js fork's `dist/hls.js`, the one bundle the add-on imports, when it is missing, runs the engine's asset build, copies `bin/libraries/` (engine) into the add-on's `libraries/`, and writes the add-on to `bin/jellyfin-webgpu-client/`.
-- `./build.sh` in the plugin root builds the decoders (when `bin/wasm/` (engine) is missing), the add-on, and the plugin that embeds it.
-  Only the asset build reads the decoders, so they build in the background while `npm ci` and the hls.js fork build run.
+  It also copies the engine's decoder packages and pass files, `bin/wgpud/` and `bin/wgpup/` (engine), into the add-on's `wgpud/` and `wgpup/`, which the plugin offers; it stops when the packages are not built.
+- `./build.sh` in the plugin root builds the WebAssembly modules (when `bin/wasm/` (engine) is missing), the decoder packages (when `bin/wgpud/` (engine) is missing), the add-on, and the plugin that embeds it.
+  Only the add-on build reads them, so they build in the background while `npm ci` and the hls.js fork build run; the packages start once `npm ci` installed the esbuild their check needs.
 
 Engine changes must also pass the engine's own checks, from its root.
 

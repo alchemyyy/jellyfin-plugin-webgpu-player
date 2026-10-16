@@ -23,6 +23,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    - It stops there when custom decode is off or the engine's `getCustomPlaybackRuntimeAvailability` fails (secure context, Worker, `navigator.gpu`, `VideoFrame`).
    - It awaits the engine's `probeCustomDecodeCapabilities(item)` and the native-media audio probe.
      PlaybackInfo waits until the probes the item selects settle; a probe an earlier item ran is not repeated.
+   - In parallel, `getDeviceProfileDecoderPackages` lists what the user's decoder packages and the server's catalog decode, the video ones only when the presenter's device holds a frame pool (see [Decoders and passes from the server](server-modules.md)).
    - `getHDRDeviceProfileOptions` waits for the GPU authorizations the item's HDR scope needs (5 s each; see [Probe scopes](#probe-scopes)) and returns the flags and route keys.
    - `CustomDeviceProfile.augmentDeviceProfileForCustomDecode` builds the profile, and `HostCompatibleWebGPUPlayer` marks it so the PlaybackInfo interceptor recognizes the request.
 3. Request PlaybackInfo.
@@ -36,6 +37,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
 5. Check eligibility.
    `startCustomPlaybackBounded` (25 s) calls the engine's `getCustomPlaybackEligibility` with the route flags and authorized keys the profile adopted.
    Every HDR and Dolby Vision flag also requires the user's HDR tone mapping setting, and `allowRawSDR` needs only a settled `:sdr` raw key.
+   A direct play without a native video route downloads the server's video packages its video needs, and an eligibility that refused the audio track downloads the server's audio packages of the track's codec, then runs again.
 6. Fall back.
    An ineligible, timed-out, or failed start falls back.
    Without the renegotiation flag, the add-on's HTML player plays the same source in the same session.
@@ -48,7 +50,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
 `augmentDeviceProfileForCustomDecode`, in order:
 
 1. Strip bitrate.
-2. Find the supported video and audio codecs.
+2. Find the supported video and audio codecs, a decoder package's among them.
 3. Add one DirectPlayProfile per rule in the engine's `CUSTOM_CONTAINER_CODEC_RULES`.
 4. Add the custom subtitle profiles (vtt, ass/ssa, pgssub).
 5. Scope the stock video and container conditions to non-custom containers.
@@ -93,6 +95,22 @@ Jellyfin labels many Dolby Vision streams the engine can present outside the gen
 For a non-retry Dolby Vision item, `getHDRDeviceProfileOptions` passes the item's streams as `itemMediaSource`.
 `CustomDeviceProfile` asks the engine's `hasEligibleCustomVideoRoute` whether the runtime would present the item with the measured capabilities and authorizations.
 If it would, `CustomDeviceProfile` advertises the item's exact VideoProfile (as the existing route token), VideoBitDepth, and VideoRangeType as one more HEVC or AV1 route.
+
+## Decoder packages
+
+The profile advertises what the decoder packages a playback can use decode, before any of them is downloaded: the user's own packages and the server's.
+
+- A video package's route is per profile, with the depths of the formats it writes, SDR, and HDR10, HDR10Plus, and HLG when the user's HDR tone mapping is on (`allowFramePoolHDR`).
+  Each route requires `IsInterlaced=false`, as every measured route does.
+- AV1 takes `main` for 4:2:0 at 8 and 10 bits, `high` for 4:4:4 at 8 and 10 bits, and `professional` for 4:2:2 and 12 bits.
+  VP9 takes `profile 0` to `profile 3` by depth and chroma the same way.
+- HEVC takes `main` and `main 10` for 4:2:0, each named range extension profile for its format, and generic `Rext` at a depth whose every chroma format the package writes.
+- A codec only packages decode, such as MPEG-2, VC-1, or JPEG 2000, takes one route without a profile condition.
+- A package codec with stock CodecProfiles, AV1 or HEVC, widens their custom-container ceiling with its profiles and depths, as a raw route does (`createRawCodecProfilePlans`, `createAuthorizedHEVCProfilePlan`).
+- An audio package's codec is a decoded route at every channel count its decoded PCM path presents; DTS and TrueHD keep their exact profile routes.
+  Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
+- A package's `accepts` sizes and its `monochrome` support are not advertised.
+  A stream past them negotiates, then fails eligibility and renegotiates.
 
 ## Audio
 

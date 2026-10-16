@@ -75,6 +75,28 @@ const audioOutputManagerMockState = vi.hoisted(() => {
     };
 });
 
+// What the server offers the panel when it opens: a catalog, or the failure its read rejects with; and each pass file's source by name
+const serverModuleMockState = vi.hoisted(() => ({
+    catalog: { decoderPackages: [], passes: [] } as {
+        decoderPackages: Array<Record<string, unknown>>
+        passes: Array<{ byteLength: number, contentHash: string, fileName: string, passNames: string[] }>
+    },
+    catalogFailure: null as string | null,
+    passSources: new Map<string, string>()
+}));
+
+vi.mock('addons/webGPUPlayer/ServerModules', () => ({
+    fetchServerPassSource: vi.fn((fileName: string): Promise<string> => {
+        const source = serverModuleMockState.passSources.get(fileName);
+        return source === undefined ?
+            Promise.reject(new Error(`server-request-failed: WebGPUPlayer/Passes/${fileName} HTTP 404`)) :
+            Promise.resolve(source);
+    }),
+    loadServerModuleCatalog: vi.fn(() => (serverModuleMockState.catalogFailure === null ?
+        Promise.resolve(serverModuleMockState.catalog) :
+        Promise.reject(new Error(serverModuleMockState.catalogFailure))))
+}));
+
 vi.mock('components/layoutManager', () => ({
     default: { tv: false }
 }));
@@ -372,6 +394,18 @@ const QUOTA_ERROR = new DOMException('The quota has been exceeded', 'QuotaExceed
 // One file of the saturation pass, then the invert pass, as an mpv-style shader of several passes
 const SATURATION_THEN_INVERT_FILE_SOURCE = `${SATURATION_PASS_SOURCE}${INVERT_PASS_SOURCE}`;
 const SATURATION_THEN_INVERT_PASS_COUNT = 2;
+// Two versions of one server pass file, by their content hashes, and the catalog entries the server offers
+const FIRST_SERVER_CONTENT_HASH = 'a'.repeat(64);
+const SECOND_SERVER_CONTENT_HASH = 'b'.repeat(64);
+const SERVER_SATURATION_PASS = {
+    byteLength: SATURATION_PASS_SOURCE.length,
+    contentHash: FIRST_SERVER_CONTENT_HASH,
+    fileName: SATURATION_PASS_FILE_NAME,
+    passNames: [ SATURATION_PASS_NAME ]
+};
+const SERVER_HEVC_PACKAGE = { codecs: [ 'hevc' ], id: 'hevc', kind: 'video', name: 'HEVC', outputFormats: [ 'I420' ] };
+const SERVER_TRUEHD_PACKAGE = { codecs: [ 'truehd', 'mlp' ], id: 'truehd', kind: 'audio', name: 'TrueHD', outputFormats: [] };
+const SERVER_UNAVAILABLE_FAILURE = 'server-request-failed: WebGPUPlayer/Catalog HTTP 502';
 
 type PresentationPlayerMethods = Pick<
     WebGPUPlayer,
@@ -496,6 +530,9 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         }));
 
         const defaults = createDefaultWebGPUUserSettings();
+        serverModuleMockState.catalog = { decoderPackages: [], passes: [] };
+        serverModuleMockState.catalogFailure = null;
+        serverModuleMockState.passSources.clear();
         // The suite unstubs its globals after each test
         indexedDBFake.install();
         indexedDBFake.clear();
@@ -562,7 +599,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         );
         expect(defaultButtons).toHaveLength(DEFAULT_SETTING_BUTTON_COUNT);
         expect(new Set(defaultButtons.map(button => button.dataset.defaultSetting)).size).toBe(DEFAULT_SETTING_BUTTON_COUNT);
-        expect(defaultButtons.every(button => button.textContent === 'Default')).toBe(true);
+        // Each is an icon, named by its label and tooltip
+        expect(defaultButtons.every(button => (
+            button.getAttribute('aria-label')?.startsWith('Restore ') === true && button.title === button.getAttribute('aria-label')
+        ))).toBe(true);
         expect(requirePanelElement<HTMLInputElement>(
             panel,
             '[data-setting-slider="centerLevel"]'
@@ -1900,7 +1940,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const presentationMethods = createPresentationPlayerMethods();
         const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
-        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-presentation-status]');
+        const presentationStatus = requirePanelElement<HTMLElement>(panel, '[data-hdr-output-status]');
         expect(HDROutputCheckbox.checked).toBe(false);
 
         HDROutputCheckbox.checked = true;
@@ -2021,6 +2061,87 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         ));
         // The page still uses the file, so its source stays
         expect(readStoredSources()).toEqual(new Map([ [ FIRST_SOURCE_KEY, INVERT_PASS_SOURCE ] ]));
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('offers the server\'s passes the preset does not hold, and downloads one when the user adds it', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        serverModuleMockState.catalog = { decoderPackages: [], passes: [ SERVER_SATURATION_PASS ] };
+        serverModuleMockState.passSources.set(SATURATION_PASS_FILE_NAME, SATURATION_PASS_SOURCE);
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const serverPassSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-server-passes]');
+        expect(Array.from(serverPassSelect.options, (option: HTMLOptionElement): string => option.value)).toEqual([ SATURATION_PASS_FILE_NAME ]);
+        expect(serverPassSelect.disabled).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsAddServerPass').click();
+        await flushMicrotasks();
+
+        expect(readSavedPresentation().files).toEqual([ {
+            parameters: {},
+            server: { contentHash: FIRST_SERVER_CONTENT_HASH, fileName: SATURATION_PASS_FILE_NAME },
+            sourceKey: FIRST_SOURCE_KEY
+        } ]);
+        expect(readStoredSources()).toEqual(new Map([ [ FIRST_SOURCE_KEY, SATURATION_PASS_SOURCE ] ]));
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([ { parameters: {}, source: SATURATION_PASS_SOURCE } ]);
+        expect(readPassRows(panel)[0].states).toContain(translateSourceString('WebGPUShaderPassFromServer', SATURATION_PASS_FILE_NAME));
+        // The preset holds the server's only pass now
+        expect(serverPassSelect.options[0].textContent).toBe(translateSourceString('WebGPUServerPassesNone'));
+        expect(serverPassSelect.disabled).toBe(true);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('replaces the source of a server file the server has a newer version of, keeping its key and parameters', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const sourceKey = await addPassSource(INVERT_PASS_SOURCE);
+        storePresentation({
+            files: [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, server: { contentHash: FIRST_SERVER_CONTENT_HASH, fileName: SATURATION_PASS_FILE_NAME }, sourceKey } ],
+            hdrOutput: false
+        });
+        serverModuleMockState.catalog = { decoderPackages: [], passes: [ { ...SERVER_SATURATION_PASS, contentHash: SECOND_SERVER_CONTENT_HASH } ] };
+        serverModuleMockState.passSources.set(SATURATION_PASS_FILE_NAME, SATURATION_PASS_SOURCE);
+
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        await vi.waitFor(() => expect(readStoredSources()).toEqual(new Map([ [ sourceKey, SATURATION_PASS_SOURCE ] ])));
+        await flushMicrotasks();
+
+        expect(readSavedPresentation().files).toEqual([ {
+            parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION },
+            server: { contentHash: SECOND_SERVER_CONTENT_HASH, fileName: SATURATION_PASS_FILE_NAME },
+            sourceKey
+        } ]);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([
+            { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE }
+        ]);
+        expect(requirePanelElement<HTMLElement>(panel, '[data-presentation-status]').textContent)
+            .toContain(translateSourceString('WebGPUServerPassesUpdated', SATURATION_PASS_FILE_NAME));
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('names the decoders the server offers', async () => {
+        serverModuleMockState.catalog = { decoderPackages: [ SERVER_HEVC_PACKAGE, SERVER_TRUEHD_PACKAGE ], passes: [] };
+
+        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+
+        expect(requirePanelElement<HTMLElement>(panel, '[data-server-decoders]').textContent)
+            .toBe(translateSourceString('WebGPUServerDecoders', `${SERVER_HEVC_PACKAGE.name}, ${SERVER_TRUEHD_PACKAGE.name}`));
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('says why the server offers nothing when it cannot be reached', async () => {
+        serverModuleMockState.catalogFailure = SERVER_UNAVAILABLE_FAILURE;
+
+        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        await flushMicrotasks();
+        const serverPassSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-server-passes]');
+
+        expect(requirePanelElement<HTMLElement>(panel, '[data-server-decoders]').textContent)
+            .toBe(translateSourceString('WebGPUServerDecodersUnavailable', SERVER_UNAVAILABLE_FAILURE));
+        expect(serverPassSelect.options[0].textContent).toBe(translateSourceString('WebGPUServerPassesUnavailable', SERVER_UNAVAILABLE_FAILURE));
+        expect(serverPassSelect.disabled).toBe(true);
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
     });

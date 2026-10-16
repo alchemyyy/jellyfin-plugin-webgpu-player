@@ -14,6 +14,13 @@ import {
     getStoredFileSourceKeys,
     readPassSources
 } from '../PresentationPassStore';
+import type { ServerModuleCatalog, ServerPassFile } from '../ServerModules';
+import {
+    addServerPassFile,
+    getAddableServerPassFiles,
+    isServerPassFileOffered,
+    updateServerPassFiles
+} from '../ServerPresentationPasses';
 import type WebGPUPlayer from '../WebGPUPlayer';
 import {
     createDefaultWebGPUUserSettings,
@@ -27,7 +34,8 @@ import {
 } from '../WebGPUUserSettings';
 import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
-// The presentation section of the playback settings panel: HDR output, and the user's WGSL shader files in this browser
+// The presentation and shader pass sections of the playback settings panel: HDR output, and the user's WGSL shader files in this browser.
+// A file comes from this device or from the passes the server offers, which download when the user adds one.
 // The files' sources live in the pass source store in IndexedDB, and the settings hold each file's key
 
 const HDR_OUTPUT_SETTING_KEY = 'hdrOutput';
@@ -37,6 +45,7 @@ const PASS_FILE_TYPES = `${PASS_FILE_EXTENSION},text/plain`;
 const FLOAT_PARAMETER_STEP = 'any';
 const INTEGER_PARAMETER_STEP = '1';
 const DUPLICATE_NAME_REASON = 'duplicate-name';
+const LIST_SEPARATOR = ', ';
 
 export type PresentationSectionContext = Readonly<{
     cleanupCallbacks: Array<() => void>
@@ -46,6 +55,8 @@ export type PresentationSectionContext = Readonly<{
     player: WebGPUPlayer
     /** Persists settings and synchronizes every control of the panel; returns what failed when the browser refused the write, else null */
     saveSettings: (settings: WebGPUUserSettings) => string | null
+    /** What the server offers, read once as the panel opens; it rejects when the server cannot be reached */
+    serverCatalog: Promise<ServerModuleCatalog>
 }>;
 
 export type PresentationSectionController = Readonly<{
@@ -194,7 +205,14 @@ function createFileEntryHTML(title: string, index: number, contentHTML: string):
         </div>`;
 }
 
-function createFileHTML(file: StoredPresentationFile, views: readonly PassView[], stateLines: readonly PassStateLine[], index: number): string {
+/** Returns a file's entry: its passes' states, where it came from when that was the server, and its parameters. */
+function createFileHTML(
+    file: StoredPresentationFile,
+    views: readonly PassView[],
+    stateLines: readonly PassStateLine[],
+    index: number,
+    originLine: string | null
+): string {
     const title = getPassFileTitle(views);
     const parametersHTML = getPassFileParameters(views)
         .map((parameter: PassParameter): string => createParameterHTML(file, title, parameter, index))
@@ -202,7 +220,13 @@ function createFileHTML(file: StoredPresentationFile, views: readonly PassView[]
     const statesHTML = stateLines
         .map((line: PassStateLine): string => createPassStateHTML(views.length === 1 ? line.state : `${line.name}: ${line.state}`))
         .join('');
-    return createFileEntryHTML(title, index, `${statesHTML}${parametersHTML}`);
+    const originHTML = originLine === null ? '' : createPassStateHTML(originLine);
+    return createFileEntryHTML(title, index, `${statesHTML}${originHTML}${parametersHTML}`);
+}
+
+/** Returns the option of a pass file the server offers: its name, and its passes'. */
+function createServerPassOptionHTML(entry: ServerPassFile): string {
+    return `<option value="${escapeHtml(entry.fileName)}">${translateToHTML('WebGPUServerPassOption', entry.fileName, entry.passNames.join(LIST_SEPARATOR))}</option>`;
 }
 
 /** Returns the entry of a file whose source the pass source store does not hold, which the player leaves out, so it can be removed. */
@@ -214,7 +238,7 @@ function createMissingSourceFileHTML(file: StoredPresentationFile, index: number
     );
 }
 
-/** Returns the presentation section's HTML: the HDR output switch, the file list, and the file buttons. */
+/** Returns the presentation section's HTML, the HDR output switch, then the shader pass section's: the file list, the server's passes, and the file buttons. */
 export function createPresentationSectionHTML(): string {
     return `
         <section class="webgpuSettingsSection" aria-labelledby="webgpu-presentation-title">
@@ -235,8 +259,30 @@ export function createPresentationSectionHTML(): string {
             <div class="fieldDescription webgpuSettingsCheckboxDescription">
                 ${translateToHTML('WebGPUHDROutputHelp')}
             </div>
+            <div aria-live="polite" class="webgpuSettingsStatus" data-hdr-output-status role="status"></div>
+        </section>
+
+        <section class="webgpuSettingsSection" aria-labelledby="webgpu-shader-passes-title">
+            <h3 class="webgpuSettingsSectionTitle" id="webgpu-shader-passes-title">
+                ${translateToHTML('WebGPUShaderPasses')}
+            </h3>
             <div class="fieldDescription">${translateToHTML('WebGPUShaderPassesHelp')}</div>
             <div class="webgpuSettingsPasses" data-presentation-passes></div>
+            <div class="webgpuSettingsSelectRow">
+                <div class="selectContainer webgpuSettingsSelectContainer">
+                    <select
+                        data-server-passes
+                        id="webgpu-server-passes"
+                        is="emby-select"
+                        label="${translateToHTML('WebGPUServerPasses')}"
+                    ></select>
+                </div>
+                <button
+                    class="raised webgpuSettingsAddServerPass"
+                    is="emby-button"
+                    type="button"
+                >${translateToHTML('WebGPUAddServerPass')}</button>
+            </div>
             <input
                 accept="${PASS_FILE_TYPES}"
                 class="${HIDDEN_CLASS}"
@@ -264,11 +310,14 @@ export function createPresentationSectionHTML(): string {
 export function bindPresentationSection(context: PresentationSectionContext): PresentationSectionController {
     const { panel, player } = context;
     const HDROutputCheckbox = requireSectionElement<HTMLInputElement>(panel, `[data-setting-checkbox="${HDR_OUTPUT_SETTING_KEY}"]`);
+    const HDROutputStatusElement = requireSectionElement<HTMLElement>(panel, '[data-hdr-output-status]');
     const fileList = requireSectionElement<HTMLElement>(panel, '[data-presentation-passes]');
     const passFileInput = requireSectionElement<HTMLInputElement>(panel, '[data-presentation-pass-files]');
     const statusElement = requireSectionElement<HTMLElement>(panel, '[data-presentation-status]');
     const addFilesButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsAddPasses');
     const removeFilesButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsRemovePasses');
+    const serverPassSelect = requireSectionElement<HTMLSelectElement>(panel, '[data-server-passes]');
+    const addServerPassButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsAddServerPass');
     const HDROutputDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${HDR_OUTPUT_SETTING_KEY}"]`);
     let report = player.getPresentationPlanReport();
     // A preset result arriving after a newer change must not overwrite it
@@ -276,28 +325,63 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     // What the file list shows; a save that changes neither keeps the list's inputs, and the focused one
     let renderedReport: PlanReport | null = null;
     let renderedSources: readonly (string | null)[] = [];
+    let renderedCatalog: ServerModuleCatalog | null = null;
     // The stored files' sources from the pass source store; null until they are read
     let sources: Map<number, string> | null = null;
+    // What the server offers, read when the panel opens; null until it is read, or when it cannot be
+    let serverCatalog: ServerModuleCatalog | null = null;
+    let serverCatalogFailure: string | null = null;
+    // A server pass downloads one at a time
+    let serverPassPending = false;
     // The store keys the settings held while the panel was open, whose sources go once neither these nor the stored settings hold them
     const knownSourceKeys = new Set<number>(getStoredFileSourceKeys(context.getSettings().presentation.files));
+
+    /** Returns where a file came from when that was the server, and whether the server still offers it once its catalog is read. */
+    const describeOrigin = (file: StoredPresentationFile): string | null => {
+        if (!file.server) {
+            return null;
+        }
+        return serverCatalog !== null && !isServerPassFileOffered(serverCatalog, file) ?
+            globalize.translate('WebGPUShaderPassWithdrawn', file.server.fileName) :
+            globalize.translate('WebGPUShaderPassFromServer', file.server.fileName);
+    };
+
+    /** Lists the server's passes the preset does not hold; the picker waits for the sources and the catalog, and one download at a time. */
+    const renderServerPasses = (): void => {
+        const addable = serverCatalog === null || sources === null ?
+            [] :
+            getAddableServerPassFiles(serverCatalog, context.getSettings().presentation.files);
+        const selectedFileName = serverPassSelect.value;
+        serverPassSelect.innerHTML = addable.length === 0 ?
+            `<option value="">${escapeHtml(serverCatalogFailure ?? globalize.translate('WebGPUServerPassesNone'))}</option>` :
+            addable.map(createServerPassOptionHTML).join('');
+        if (addable.some((entry: ServerPassFile): boolean => entry.fileName === selectedFileName)) {
+            serverPassSelect.value = selectedFileName;
+        }
+        serverPassSelect.disabled = addable.length === 0 || serverPassPending;
+        addServerPassButton.disabled = addable.length === 0 || serverPassPending;
+    };
 
     const renderFiles = (): void => {
         const files = context.getSettings().presentation.files;
         // The buttons and the list wait for the sources
         addFilesButton.disabled = sources === null;
         removeFilesButton.disabled = sources === null || files.length === 0;
+        renderServerPasses();
         if (sources === null) {
             return;
         }
         const loadedSources = sources;
         const fileSources = files.map((file: StoredPresentationFile): string | null => getStoredFileSource(file, loadedSources));
         if (report === renderedReport
+            && serverCatalog === renderedCatalog
             && fileSources.length === renderedSources.length
             && fileSources.every((source: string | null, index: number): boolean => source === renderedSources[index])) {
             return;
         }
         renderedReport = report;
         renderedSources = fileSources;
+        renderedCatalog = serverCatalog;
         const seenNames = new Set<string>();
         const filesHTML: string[] = [];
         // The player receives only the files with sources, so an unnamed pass's preset position counts only those
@@ -315,7 +399,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
                 stateLines.push({ name: view.name, state: getPassState(view, report, seenNames.has(view.name)) });
                 seenNames.add(view.name);
             }
-            filesHTML.push(createFileHTML(file, views, stateLines, index));
+            filesHTML.push(createFileHTML(file, views, stateLines, index, describeOrigin(file)));
         }
         fileList.innerHTML = filesHTML.join('');
     };
@@ -405,11 +489,11 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         void player.setHDROutputEnabled(context.getSettings().presentation.hdrOutput).then((): void => {
             if (context.isActive()) {
                 const applied = globalize.translate('WebGPUHDROutputApplied');
-                setStatus(statusElement, joinSentences(applied, notice) ?? applied);
+                setStatus(HDROutputStatusElement, joinSentences(applied, notice) ?? applied);
             }
         }, (error: unknown): void => {
             if (context.isActive()) {
-                setStatus(statusElement, globalize.translate('WebGPUHDROutputFailed', getErrorMessage(error)));
+                setStatus(HDROutputStatusElement, globalize.translate('WebGPUHDROutputFailed', getErrorMessage(error)));
             }
         });
     };
@@ -417,6 +501,86 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const updateFiles = (files: readonly StoredPresentationFile[], notice: string | null): void => {
         const saveFailure = savePresentation({ ...context.getSettings().presentation, files });
         applyPreset(joinSentences(notice, describeSaveFailure(saveFailure)));
+    };
+
+    /**
+     * Reads what the server offers once the sources are read, then replaces the sources of the preset's server files the server now has newer versions of.
+     * A server that cannot be reached leaves every file as stored, and the picker says why it offers nothing.
+     */
+    const loadServerPasses = async (): Promise<void> => {
+        await sourcesLoaded;
+        let catalog: ServerModuleCatalog;
+        try {
+            catalog = await context.serverCatalog;
+        } catch (error) {
+            serverCatalogFailure = globalize.translate('WebGPUServerPassesUnavailable', getErrorMessage(error));
+            if (context.isActive()) {
+                renderServerPasses();
+            }
+            return;
+        }
+        if (!context.isActive()) {
+            return;
+        }
+        serverCatalog = catalog;
+        renderFiles();
+        const update = await updateServerPassFiles(context.getSettings().presentation.files, catalog);
+        if (!context.isActive() || (update.updatedFileNames.length === 0 && update.failures.length === 0)) {
+            return;
+        }
+        for (const [ sourceKey, source ] of update.sources) {
+            sources?.set(sourceKey, source);
+        }
+        const failureNotice = update.failures.length === 0 ?
+            null :
+            globalize.translate('WebGPUServerPassesNotUpdated', update.failures.join(LIST_SEPARATOR));
+        if (update.updatedFileNames.length === 0) {
+            setStatus(statusElement, failureNotice ?? '');
+            return;
+        }
+        // Each updated file keeps its key, place, and parameters; only its version changes
+        const updatedOrigins = new Map<number, StoredPresentationFile>(update.files.map((file: StoredPresentationFile): [ number, StoredPresentationFile ] => [ file.sourceKey, file ]));
+        const files = context.getSettings().presentation.files.map((file: StoredPresentationFile): StoredPresentationFile => {
+            const updatedFile = updatedOrigins.get(file.sourceKey);
+            return updatedFile?.server ? { ...file, server: updatedFile.server } : file;
+        });
+        updateFiles(files, joinSentences(globalize.translate('WebGPUServerPassesUpdated', update.updatedFileNames.join(LIST_SEPARATOR)), failureNotice));
+    };
+
+    /** Downloads the chosen server pass and adds it after the preset's files; a failure, or a full preset, is named in the status. */
+    const addServerPass = async (entry: ServerPassFile): Promise<void> => {
+        if (context.getSettings().presentation.files.length >= MAXIMUM_PRESENTATION_FILE_COUNT) {
+            setStatus(statusElement, globalize.translate(
+                'WebGPUShaderPassFilesSkipped',
+                entry.fileName,
+                MAXIMUM_PRESENTATION_FILE_COUNT,
+                MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH
+            ));
+            return;
+        }
+        serverPassPending = true;
+        renderServerPasses();
+        try {
+            const added = await addServerPassFile(entry);
+            if (!context.isActive()) {
+                // The panel closed meanwhile, so the file is not added, and its stored source goes
+                void deletePassSources([ added.file.sourceKey ]);
+                return;
+            }
+            sources?.set(added.file.sourceKey, added.source);
+            knownSourceKeys.add(added.file.sourceKey);
+            updateFiles([ ...context.getSettings().presentation.files, added.file ], globalize.translate('WebGPUServerPassAdded', entry.fileName));
+        } catch (error) {
+            console.warn(`WebGPU shader files: server-pass-unavailable: ${entry.fileName} ${getErrorMessage(error)}`);
+            if (context.isActive()) {
+                setStatus(statusElement, globalize.translate('WebGPUServerPassNotAdded', entry.fileName, getErrorMessage(error)));
+            }
+        } finally {
+            serverPassPending = false;
+            if (context.isActive()) {
+                renderServerPasses();
+            }
+        }
     };
 
     /** Stores each chosen file's source and adds the files in order; a file past the limits, or one the store refused, is named in the notice. */
@@ -488,6 +652,13 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         updateFiles([], null);
     };
 
+    const onAddServerPass = (): void => {
+        const entry = serverCatalog?.passes.find((candidate: ServerPassFile): boolean => candidate.fileName === serverPassSelect.value);
+        if (entry && !serverPassPending) {
+            void addServerPass(entry);
+        }
+    };
+
     const onFileListClick = (event: Event): void => {
         const target = event.target;
         const removeButton = target instanceof Element ? target.closest<HTMLElement>('[data-remove-file]') : null;
@@ -545,6 +716,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         [ addFilesButton, 'click', onAddFiles ],
         [ passFileInput, 'change', onPassFilesChosen ],
         [ removeFilesButton, 'click', onRemoveFiles ],
+        [ addServerPassButton, 'click', onAddServerPass ],
         [ fileList, 'click', onFileListClick ],
         [ fileList, 'change', onFileListChange ]
     ];
@@ -556,6 +728,8 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             target.removeEventListener(type, listener);
         }
     });
+
+    void loadServerPasses();
 
     return {
         apply: (): void => {

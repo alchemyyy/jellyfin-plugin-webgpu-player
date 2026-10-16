@@ -122,15 +122,15 @@ Open items left after the Dolby Vision and playback-limit work, each with what c
 
 ## Jellyfin integration
 
-24. The device profile advertises only what native routes decode.
-    The add-on stores the decoder packages a user adds in its settings and offers them to each playback, but `CustomDeviceProfile.ts` still lists AV1's Main profile alone and no 4:0:0 HEVC.
-    Jellyfin therefore transcodes High and Professional AV1 (4:2:2, 4:4:4, 12-bit) and monochrome HEVC before the engine's package fallback ever sees them.
-    Closing it needs the profile built from the stored packages as well: the codecs, profiles, pixel formats, and bit depths their `accepts`, `output`, and `monochrome` lines take.
+24. The device profile advertises a decoder package's codecs, profiles, and depths, but not the rest of its header.
+    Since 10-16 the profile is built from the user's packages and the server's catalog as well, so Jellyfin direct-plays MPEG-2, VC-1, JPEG 2000, AV1 High and Professional, HEVC range extensions, and package-decoded audio.
+    A package's `accepts` size conditions and its `monochrome` support are not advertised, so a stream past them, or a 4:0:0 stream for a package without `monochrome`, negotiates and then renegotiates after a failed start.
+    Closing it needs the server's catalog to carry the `accepts` conditions, and Width, Height, and pixel format conditions in the package routes.
 25. The add-on's tests do not build.
-    `jellyfin-webgpu-client.tests` has 54 typecheck errors from the engine's removals and moves, and `WebGPUPlayer.test.ts` fails 14 tests: its mock of `src/DecoderPackages.ts` lacks `getVideoDecoderPackages`, and some tests still expect the removed `bundled-hevc` backend.
+    `jellyfin-webgpu-client.tests` has 54 typecheck errors from the engine's removals and moves.
+    `WebGPUPlayer.test.ts` fails 30 tests: some still expect the removed `bundled-hevc` backend and `loadGPUVideoDecoderSources`, and its controller mock lacks `getPresentationTargetTime` and expects color pipeline configurations without `videoFields`.
+    `custom/CustomDeviceProfile.test.ts` fails 92 tests, because its capability builder reads the removed `CUSTOM_BUNDLED_AUDIO_CODECS`.
     Closing it needs the tests rewritten against the package-based engine.
-26. The plugin's last build predates the decoder packages.
-    The add-on output in `bin/` still embeds the removed CPU decoders, so deploying it without `./build.sh` ships the old player.
 
 ## Settled decisions
 

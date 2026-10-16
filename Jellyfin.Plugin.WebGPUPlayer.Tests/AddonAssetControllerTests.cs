@@ -89,6 +89,18 @@ public sealed class AddonAssetControllerTests
         Assert.All(AddonCatalog.Resources.Values, resourceName => Assert.StartsWith(AssetFunctions.ResourcePrefix, resourceName, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void EmbeddedAddon_ListsTheEngineModulesThePluginOffers()
+    {
+        // The add-on build fails without the decoder packages, and its asset build always writes the pass files
+        AddonModules modules = AddonCatalog.Modules;
+
+        Assert.Null(modules.Problem);
+        Assert.NotNull(modules.DecoderPackageSection);
+        Assert.NotEmpty(modules.DecoderPackagePaths);
+        Assert.NotEmpty(modules.PassPaths);
+    }
+
     private static async Task<WebApplication> StartServerAsync(CancellationToken cancellationToken)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();

@@ -73,6 +73,10 @@ public static class AssetFunctions
     private const string SourceMapExtension = ".map";
     private const string SourceMapContentType = "application/json";
     private const string ManifestEntryProperty = "entry";
+    private const string ManifestDecoderPackageSectionProperty = "decoderPackageSection";
+    private const string ManifestDecoderPackagesProperty = "decoderPackages";
+    private const string ManifestPassesProperty = "passes";
+    private const string ProblemSeparator = "; ";
     private const char PathSeparator = '/';
     private const char WindowsPathSeparator = '\\';
 
@@ -247,6 +251,90 @@ public static class AssetFunctions
         return resourceLookup.ContainsKey(entryPath)
             ? (entryPath, null)
             : (null, ManifestFileName + " entry is not embedded: " + entryPath);
+    }
+
+    /// <summary>
+    /// Reads the engine modules the add-on manifest lists: the decoder package section name, the decoder packages, and the pass files.
+    /// A listed path that is not a relative embedded asset is left out and named in the problem.
+    /// </summary>
+    /// <param name="manifestText">The manifest JSON, or <c>null</c> when it is not embedded.</param>
+    /// <param name="resourceLookup">The embedded asset lookup.</param>
+    /// <returns>The modules the manifest lists, with what it lacked or listed wrongly.</returns>
+    public static AddonModules ParseAddonModules(string? manifestText, IReadOnlyDictionary<string, string> resourceLookup)
+    {
+        if (manifestText is null)
+        {
+            return new AddonModules(null, [], [], ManifestFileName + " is not embedded");
+        }
+
+        JsonNode? manifest;
+        try
+        {
+            manifest = JsonNode.Parse(manifestText, documentOptions: StrictDocumentOptions);
+        }
+        catch (JsonException exception)
+        {
+            return new AddonModules(null, [], [], ManifestFileName + " is not valid JSON: " + exception.Message);
+        }
+
+        if (manifest is not JsonObject manifestObject)
+        {
+            return new AddonModules(null, [], [], ManifestFileName + " is not an object");
+        }
+
+        List<string> problems = [];
+        string? section = null;
+        if (manifestObject.TryGetPropertyValue(ManifestDecoderPackageSectionProperty, out JsonNode? sectionNode)
+            && sectionNode is JsonValue sectionValue
+            && sectionValue.TryGetValue(out string? sectionText)
+            && !string.IsNullOrEmpty(sectionText))
+        {
+            section = sectionText;
+        }
+        else
+        {
+            problems.Add(ManifestFileName + " has no string " + ManifestDecoderPackageSectionProperty);
+        }
+
+        List<string> decoderPackagePaths = ReadManifestPaths(manifestObject, ManifestDecoderPackagesProperty, resourceLookup, problems);
+        List<string> passPaths = ReadManifestPaths(manifestObject, ManifestPassesProperty, resourceLookup, problems);
+        return new AddonModules(section, decoderPackagePaths, passPaths, problems.Count == 0 ? null : string.Join(ProblemSeparator, problems));
+    }
+
+    /// <summary>
+    /// Reads one manifest list of asset paths, keeping each relative path that is embedded and naming every other entry in the problems.
+    /// </summary>
+    private static List<string> ReadManifestPaths(
+        JsonObject manifest,
+        string propertyName,
+        IReadOnlyDictionary<string, string> resourceLookup,
+        List<string> problems)
+    {
+        List<string> paths = [];
+        if (!manifest.TryGetPropertyValue(propertyName, out JsonNode? listNode) || listNode is not JsonArray list)
+        {
+            problems.Add(ManifestFileName + " has no array " + propertyName);
+            return paths;
+        }
+
+        foreach (JsonNode? item in list)
+        {
+            if (item is not JsonValue itemValue || !itemValue.TryGetValue(out string? path))
+            {
+                problems.Add(ManifestFileName + " " + propertyName + " holds a non-string entry");
+                continue;
+            }
+
+            if (!TryNormalizePath(path, out string normalizedPath) || !resourceLookup.ContainsKey(normalizedPath))
+            {
+                problems.Add(ManifestFileName + " " + propertyName + " entry is not embedded: " + path);
+                continue;
+            }
+
+            paths.Add(normalizedPath);
+        }
+
+        return paths;
     }
 
     private static FileExtensionContentTypeProvider CreateContentTypeProvider()

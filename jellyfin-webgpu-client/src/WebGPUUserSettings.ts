@@ -23,11 +23,23 @@ export const MAXIMUM_PRESENTATION_FILE_COUNT = 16;
 export const MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH = 16_777_216;
 /** The characters a stored parameter name holds at most; a longer name is no identifier a pass would declare, so it is dropped. */
 export const MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH = 256;
+/** The characters a server pass file name holds at most, the server plugin's own limit. */
+export const MAXIMUM_SERVER_PASS_FILE_NAME_LENGTH = 128;
 const NULL_CHARACTER = '\0';
+// A content hash: the lowercase hexadecimal SHA-256 the server names each file version by
+const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
-/** One shader file of the user's preset as the settings keep it: its parameter values, and its source's key in the pass source store. */
+/** The server pass file a stored source came from: its name, which identifies it on the server, and the content hash of the version the source is. */
+export type StoredPresentationFileOrigin = Readonly<{
+    contentHash: string
+    fileName: string
+}>;
+
+/** One shader file of the user's preset as the settings keep it: its parameter values, its source's key in the pass source store, and the server file it came from. */
 export type StoredPresentationFile = Readonly<{
     parameters: Readonly<Record<string, number>>
+    /** The server pass file the source came from, whose newer versions replace it; absent for a file the user added from this device */
+    server?: StoredPresentationFileOrigin
     sourceKey: number
 }>;
 
@@ -133,7 +145,20 @@ function normalizePresentationParameters(value: unknown): Readonly<Record<string
     return Object.fromEntries(parameterEntries);
 }
 
-/** Keeps the stored files with a valid source key, in order, up to the files a preset holds at most. */
+/** Returns a stored file's server origin, or null for a value that names no server file version. */
+function normalizePresentationFileOrigin(value: unknown): StoredPresentationFileOrigin | null {
+    if (!isRecord(value)
+        || typeof value.fileName !== 'string'
+        || value.fileName.trim().length === 0
+        || value.fileName.length > MAXIMUM_SERVER_PASS_FILE_NAME_LENGTH
+        || typeof value.contentHash !== 'string'
+        || !CONTENT_HASH_PATTERN.test(value.contentHash)) {
+        return null;
+    }
+    return { contentHash: value.contentHash, fileName: value.fileName };
+}
+
+/** Keeps the stored files with a valid source key, in order, up to the files a preset holds at most; an origin that names no server file version is dropped. */
 function normalizePresentationFiles(value: unknown): StoredPresentationFile[] {
     const files: StoredPresentationFile[] = [];
     if (!Array.isArray(value)) {
@@ -144,7 +169,12 @@ function normalizePresentationFiles(value: unknown): StoredPresentationFile[] {
             break;
         }
         if (isRecord(candidate) && isPresentationPassSourceKey(candidate.sourceKey)) {
-            files.push({ parameters: normalizePresentationParameters(candidate.parameters), sourceKey: candidate.sourceKey });
+            const server = normalizePresentationFileOrigin(candidate.server);
+            files.push({
+                parameters: normalizePresentationParameters(candidate.parameters),
+                ...(server ? { server } : {}),
+                sourceKey: candidate.sourceKey
+            });
         }
     }
     return files;

@@ -63,7 +63,14 @@ function createObjectStore(name: string, queue: (operation: TransactionOperation
             requireStore(stores, name).records.delete(key);
             return undefined;
         }, true),
-        get: (key: number): FakeRequest => queue((stores: Map<string, FakeStore>): unknown => requireStore(stores, name).records.get(key), false)
+        get: (key: number): FakeRequest => queue((stores: Map<string, FakeStore>): unknown => requireStore(stores, name).records.get(key), false),
+        // A key past the counter moves it on, as an autoIncrement store's generator follows explicit keys
+        put: (value: unknown, key: number): FakeRequest => queue((stores: Map<string, FakeStore>): number => {
+            const store = requireStore(stores, name);
+            store.records.set(key, value);
+            store.nextKey = Math.max(store.nextKey, key + 1);
+            return key;
+        }, true)
     };
 }
 
@@ -116,6 +123,13 @@ export function installIndexedDBFake(): IndexedDBFake {
             },
             createObjectStore: (name: string): void => {
                 database.stores.set(name, { nextKey: FIRST_KEY, records: new Map<number, unknown>() });
+            },
+            deleteObjectStore: (name: string): void => {
+                database.stores.delete(name);
+            },
+            // Upgrades check for a store an earlier version left, as the decoder package store does
+            objectStoreNames: {
+                contains: (name: string): boolean => database.stores.has(name)
             },
             onversionchange: null,
             transaction: (storeName: string, mode: IDBTransactionMode): unknown => {

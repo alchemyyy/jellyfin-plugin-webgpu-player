@@ -47,7 +47,19 @@ import {
     type RenderSettings
 } from 'webgpu-player/presentation/RenderSettings';
 import { loadStoredPresentationPreset, type StoredPresentationPreset } from './PresentationPassStore';
-import { getAudioDecoderPackages, getVideoDecoderPackages, loadPlaybackDecoderPackages } from './DecoderPackages';
+import { loadUpdatedStoredPresentationFiles } from './ServerPresentationPasses';
+import {
+    getAudioDecoderPackages,
+    getDecoderPackageRouteSummaries,
+    getStoredDecoderPackageIds,
+    getVideoDecoderPackages,
+    loadPlaybackDecoderPackages
+} from './DecoderPackages';
+import {
+    loadServerAudioDecoderPackages,
+    loadServerDecoderPackageSummaries,
+    loadServerVideoDecoderPackages
+} from './ServerModules';
 import {
     createConfiguredHDRRenderSettings,
     loadWebGPUUserSettings,
@@ -73,6 +85,8 @@ import type { CustomAudioDownmixAlgorithm } from 'webgpu-player/audio/processing
 import { isSupportedCustomAudioSampleRate } from 'webgpu-player/audio/CustomAudioSampleRate';
 import {
     getCustomPlaybackEligibility,
+    getGPUVideoDecodeTarget,
+    getPlaybackAudioCodec,
     hasPotentialCustomPlaybackVideoRoute,
     type CustomPlaybackEligibility,
     type CustomPlaybackEligibilityOptions,
@@ -117,7 +131,8 @@ import {
     createBitrateIndependentDeviceProfile,
     type CustomDeviceProfileOptions,
     type CustomDeviceProfileTelemetry,
-    type CustomSubtitleCapabilities
+    type CustomSubtitleCapabilities,
+    type DecoderPackageRouteSummary
 } from './custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlayCompatibility';
 import {
@@ -370,6 +385,21 @@ function getPlaybackItemKey(options: unknown): string | null {
         return null;
     }
     return getItemKey((options as PlaybackOptionsRecord).item);
+}
+
+/** Returns the server an item belongs to, or null for an item that names none, which belongs to the page's current server. */
+function getItemServerId(item: unknown): string | null {
+    if (!item || typeof item !== 'object') {
+        return null;
+    }
+    const serverId = (item as PlaybackOptionsRecord).ServerId;
+    return typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null;
+}
+
+/** Returns whether an ineligible playback was refused for its audio track alone, which a decoder package may decode. */
+function isAudioCodecRefusal(eligibility: CustomPlaybackEligibility): boolean {
+    return !eligibility.eligible
+        && (eligibility.reason === 'audio-codec-unsupported' || eligibility.reason === 'audio-layout-unsupported');
 }
 
 function hasExactSeparateProfile7Source(item: unknown): boolean {
@@ -1014,9 +1044,10 @@ export default class WebGPUPlayer {
             null;
 
         // The item scopes the video probes to its streams; every audio probe runs
-        const [ capabilities, nativeMediaAudioCapabilities ] = await Promise.all([
+        const [ capabilities, nativeMediaAudioCapabilities, decoderPackages ] = await Promise.all([
             probeCustomDecodeCapabilities(item),
-            isRetry ? Promise.resolve(null) : probeCachedNativeMediaAudioCapabilities()
+            isRetry ? Promise.resolve(null) : probeCachedNativeMediaAudioCapabilities(),
+            isRetry ? Promise.resolve([]) : this.getDeviceProfileDecoderPackages(item)
         ]);
         const HDRDeviceProfileOptions = await this.getHDRDeviceProfileOptions(item, isRetry);
         const profileResult = augmentDeviceProfileForCustomDecode(
@@ -1024,6 +1055,7 @@ export default class WebGPUPlayer {
             capabilities,
             {
                 ...HDRDeviceProfileOptions,
+                decoderPackages,
                 isRetry,
                 nativeMediaAudioCapabilities,
                 ...(subtitleCapabilities ? { subtitleCapabilities } : {})
@@ -1736,6 +1768,7 @@ export default class WebGPUPlayer {
 
     /**
      * Hands the stored shader files to the presenter once, at the first play that presents through WebGPU, since their sources load from IndexedDB.
+     * A file from the server takes the server's newer version first, which that play's negotiation already read the catalog for.
      * A preset the settings panel applies first is newer, so the stored one yields to it; a failed load is tried again at the next play.
      */
     private loadStoredPresentationPreset(): void {
@@ -1744,7 +1777,7 @@ export default class WebGPUPlayer {
         }
         this.storedPresentationPresetRequested = true;
         const revision = this.presentationPresetRevision;
-        void loadStoredPresentationPreset(loadWebGPUUserSettings().presentation.files).then((preset: StoredPresentationPreset): Promise<PlanReport> | undefined => {
+        void loadUpdatedStoredPresentationFiles().then(loadStoredPresentationPreset).then((preset: StoredPresentationPreset): Promise<PlanReport> | undefined => {
             if (preset.missingSourceKeys.length > 0) {
                 console.warn(`WebGPU shader files: source-missing: keys ${preset.missingSourceKeys.join(', ')}`);
             }
@@ -2516,7 +2549,9 @@ export default class WebGPUPlayer {
             return null;
         }
         const playbackOptions = withStreamURLSource(options);
-        const eligibilityOptions: CustomPlaybackEligibilityOptions = {
+        const serverId = getItemServerId(getOptionalRecord(options).item);
+        const storedPackageIds = getStoredDecoderPackageIds(decoderPackages);
+        let eligibilityOptions: CustomPlaybackEligibilityOptions = {
             ...presentationOptions,
             audioDecoders: getAudioDecoderPackages(decoderPackages),
             nativeMediaAudioCapabilities,
@@ -2524,29 +2559,95 @@ export default class WebGPUPlayer {
         };
         let eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, eligibilityOptions);
         // A native video route comes before every GPU decoder, and only direct play decodes in the page,
-        // so the GPU decoders are offered only to a direct play without a native route
+        // so the GPU decoders are offered only to a direct play without a native route.
+        // An audio refusal comes after the video found its route, so it needs an audio package, never a video one
         if (this.isDirectPlayOptions(options)
+            && !isAudioCodecRefusal(eligibility)
             && (!eligibility.eligible || eligibility.videoDecoderBackend !== NATIVE_VIDEO_DECODER_BACKEND)) {
-            const gpuVideoDecoders = await this.getGPUVideoDecoderOffers(decoderPackages, playbackOptions);
+            const gpuVideoDecoders = await this.getGPUVideoDecoderOffers(decoderPackages, playbackOptions, serverId, storedPackageIds);
             if (!this.isRequestedSessionCurrent(backendGeneration)) {
                 return null;
             }
             if (gpuVideoDecoders.length > 0) {
-                eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, { ...eligibilityOptions, gpuVideoDecoders });
+                eligibilityOptions = { ...eligibilityOptions, gpuVideoDecoders };
+                eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, eligibilityOptions);
             }
+        }
+        if (isAudioCodecRefusal(eligibility)) {
+            const audioEligibility = await this.getServerAudioPackageEligibility(playbackOptions, capabilities, eligibilityOptions, serverId, storedPackageIds);
+            if (!this.isRequestedSessionCurrent(backendGeneration)) {
+                return null;
+            }
+            eligibility = audioEligibility ?? eligibility;
         }
         this.lastCustomPlaybackEligibility = eligibility;
         return eligibility;
     }
 
-    /** Returns the GPU decoders a playback may choose on the presenter's device; a failed check offers none, and playback continues without them. */
-    private async getGPUVideoDecoderOffers(decoderPackages: StoredDecoderPackages, playbackOptions: unknown): Promise<readonly GPUVideoDecoderOffer[]> {
+    /**
+     * Returns the eligibility with the server's audio packages of the track's codec, which download only when no engine decoder, native route, or user package took the track.
+     * Null when the server has no package of the codec.
+     */
+    private async getServerAudioPackageEligibility(
+        playbackOptions: unknown,
+        capabilities: CustomDecodeCapabilities,
+        eligibilityOptions: CustomPlaybackEligibilityOptions,
+        serverId: string | null,
+        storedPackageIds: ReadonlySet<string>
+    ): Promise<CustomPlaybackEligibility | null> {
+        const audioCodec = getPlaybackAudioCodec(playbackOptions);
+        const serverAudioDecoders = audioCodec === null ? [] : await loadServerAudioDecoderPackages(serverId, audioCodec, storedPackageIds);
+        if (serverAudioDecoders.length === 0) {
+            return null;
+        }
+        return getCustomPlaybackEligibility(playbackOptions, capabilities, {
+            ...eligibilityOptions,
+            audioDecoders: [ ...(eligibilityOptions.audioDecoders ?? []), ...serverAudioDecoders ]
+        });
+    }
+
+    /**
+     * Returns the GPU decoders a playback may choose on the presenter's device: the user's packages, then the server's packages of other ids that decode its video, downloaded now.
+     * A failed check offers none, and playback continues without them.
+     */
+    private async getGPUVideoDecoderOffers(
+        decoderPackages: StoredDecoderPackages,
+        playbackOptions: unknown,
+        serverId: string | null,
+        storedPackageIds: ReadonlySet<string>
+    ): Promise<readonly GPUVideoDecoderOffer[]> {
         try {
-            return await getGPUVideoDecoderOffers(this.presenter, getVideoDecoderPackages(decoderPackages), playbackOptions);
+            const target = getGPUVideoDecodeTarget(playbackOptions);
+            const serverPackages = target === null ? [] : await loadServerVideoDecoderPackages(serverId, target, storedPackageIds);
+            return await getGPUVideoDecoderOffers(this.presenter, [ ...getVideoDecoderPackages(decoderPackages), ...serverPackages ], playbackOptions);
         } catch (error) {
             console.warn('WebGPU decoder packages: offers-failed:', error);
             return [];
         }
+    }
+
+    /**
+     * Returns what the decoder packages a playback can use decode, for negotiation: the user's packages, and the server's, which are downloaded only when a playback needs one.
+     * A video package decodes only into a frame pool, so a device without one advertises none.
+     */
+    private async getDeviceProfileDecoderPackages(item: unknown): Promise<DecoderPackageRouteSummary[]> {
+        const [ storedPackages, serverPackages ] = await Promise.all([
+            loadPlaybackDecoderPackages(),
+            loadServerDecoderPackageSummaries(getItemServerId(item))
+        ]);
+        const summaries = [ ...getDecoderPackageRouteSummaries(storedPackages), ...serverPackages ];
+        if (!summaries.some((summary: DecoderPackageRouteSummary): boolean => summary.kind === 'video')) {
+            return summaries;
+        }
+        let framePoolByteLimit: number | null = null;
+        try {
+            framePoolByteLimit = await this.presenter.getGPUFramePoolByteLimit();
+        } catch (error) {
+            console.warn(`WebGPU decoder packages: frame-pool-unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return framePoolByteLimit === null ?
+            summaries.filter((summary: DecoderPackageRouteSummary): boolean => summary.kind === 'audio') :
+            summaries;
     }
 
     private getCustomPresentationEligibilityOptions(backendGeneration: number): Promise<CustomPresentationEligibilityOptions | null> {
@@ -3550,6 +3651,8 @@ export default class WebGPUPlayer {
             ...(rawDolbyVisionRouteFlags.allowDolbyVisionProfile7 && hasExactSeparateProfile7Source(item) ? {
                 allowDolbyVisionProfile7HDR10Base: true
             } : {}),
+            // A GPU decoder's vector stands in for an authorization, so its frame pool presents HDR with the tone mapping alone
+            allowFramePoolHDR: HDRToneMappingEnabled,
             allowNativeDolbyVision: HDRToneMappingEnabled && DolbyVisionProbed && this.presenter.isExternalDolbyVisionPresentationAuthorized(),
             ...(allowNativeDolbyVisionProfile7HDR10Base ? {
                 allowNativeDolbyVisionProfile7HDR10Base: true

@@ -10,10 +10,11 @@ import type {
 } from 'webgpu-player/decode/packages/DecoderPackageStore';
 
 import { addDecoderPackage, loadStoredDecoderPackages, removeDecoderPackage } from '../DecoderPackages';
+import type { ServerDecoderPackage, ServerModuleCatalog } from '../ServerModules';
 import { HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
-// The decoders section of the playback settings panel: the decoder packages the user adds in this browser
-// The packages live in IndexedDB apart from the settings, and a playback reads them when it starts
+// The decoders section of the playback settings panel: the decoder packages the user adds in this browser, and the ones the server offers.
+// The user's packages live in IndexedDB apart from the settings, and a playback reads them when it starts; a server package downloads when a playback needs it
 
 // The package files the picker offers: WebAssembly modules
 const PACKAGE_FILE_TYPES = `${DECODER_PACKAGE_FILE_EXTENSION},application/wasm`;
@@ -25,6 +26,8 @@ export type DecoderPackageSectionContext = Readonly<{
     cleanupCallbacks: Array<() => void>
     isActive: () => boolean
     panel: HTMLElement
+    /** What the server offers, read once as the panel opens; it rejects when the server cannot be reached */
+    serverCatalog: Promise<ServerModuleCatalog>
 }>;
 
 function getErrorMessage(error: unknown): string {
@@ -92,6 +95,7 @@ export function createDecoderPackageSectionHTML(): string {
                 ${translateToHTML('WebGPUDecoders')}
             </h3>
             <div class="fieldDescription">${translateToHTML('WebGPUDecoderPackagesHelp')}</div>
+            <div class="fieldDescription" data-server-decoders></div>
             <div class="webgpuSettingsDecoders" data-decoder-packages></div>
             <input
                 accept="${PACKAGE_FILE_TYPES}"
@@ -114,6 +118,7 @@ export function createDecoderPackageSectionHTML(): string {
 /** Binds the decoders section's controls; each change stores at once and applies from the next playback. */
 export function bindDecoderPackageSection(context: DecoderPackageSectionContext): void {
     const { panel } = context;
+    const serverDecoders = requireSectionElement<HTMLElement>(panel, '[data-server-decoders]');
     const packageList = requireSectionElement<HTMLElement>(panel, '[data-decoder-packages]');
     const packageFileInput = requireSectionElement<HTMLInputElement>(panel, '[data-decoder-package-files]');
     const statusElement = requireSectionElement<HTMLElement>(panel, '[data-decoder-status]');
@@ -234,4 +239,19 @@ export function bindDecoderPackageSection(context: DecoderPackageSectionContext)
     });
 
     runOperation((): Promise<void> => refresh(null));
+
+    // The server's packages are named only; a playback downloads the one it needs
+    void context.serverCatalog.then((catalog: ServerModuleCatalog): void => {
+        if (!context.isActive()) {
+            return;
+        }
+        const names = catalog.decoderPackages.map((entry: ServerDecoderPackage): string => entry.name);
+        setStatus(serverDecoders, names.length === 0 ?
+            globalize.translate('WebGPUServerDecodersNone') :
+            globalize.translate('WebGPUServerDecoders', names.join(LIST_SEPARATOR)));
+    }, (error: unknown): void => {
+        if (context.isActive()) {
+            setStatus(serverDecoders, globalize.translate('WebGPUServerDecodersUnavailable', getErrorMessage(error)));
+        }
+    });
 }

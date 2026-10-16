@@ -16,6 +16,16 @@ Each assumes a checkout built as in [The client add-on](add-on.md#build-and-chec
 
 Check: the engine's checks from its root, and the add-on checks from [The client add-on](add-on.md#build-and-check).
 
+## Offer another decoder or pass
+
+1. To bundle it with the plugin, add a decoder project to `wgpud/` (engine) or a pass project to `wgpup/` (engine), following the engine's [Decoder packages](https://alchemyyy.github.io/WebGPU-Player/decoder-packages.html) or [Bundled passes](https://alchemyyy.github.io/WebGPU-Player/bundled-passes.html) chapter, and build its file into `bin/wgpud/` or `bin/wgpup/` (engine).
+   The add-on build carries every file there, and `addon-manifest.json` lists it.
+2. To offer it from a running server instead, open the plugin's settings page on the dashboard and upload the `.wasm` package or the `.wgsl` pass file.
+   An upload of a bundled package's id, or a bundled pass file's name, replaces the bundled file until the upload is deleted.
+
+Check: the settings page lists the file as offered, and `GET WebGPUPlayer/Catalog` returns it to a signed-in user.
+A client downloads a package at the next playback that needs its codec, and a pass when its user adds it.
+
 ## Capture a timing trace
 
 1. In the browser console, run `localStorage.setItem('webgpuPlayerTimingTrace', '1')` and reload, so the trace runs from the first play.

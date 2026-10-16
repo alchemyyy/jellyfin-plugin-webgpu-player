@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
@@ -40,6 +43,20 @@ public sealed class PluginTests
         {
             loadContext.Unload();
         }
+    }
+
+    [Fact]
+    public void GetPages_SettingsPageFirst_AndEveryPageIsEmbedded()
+    {
+        Assembly testedAssembly = typeof(Plugin).Assembly;
+        Plugin plugin = (Plugin)RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
+
+        List<PluginPageInfo> pages = [.. plugin.GetPages()];
+
+        Assert.Equal([Plugin.ConfigurationPageName, Plugin.ConfigurationScriptName], pages.Select(page => page.Name));
+        Assert.All(pages, page => Assert.NotNull(testedAssembly.GetManifestResourceStream(page.EmbeddedResourcePath)));
+        using StreamReader pageReader = new StreamReader(testedAssembly.GetManifestResourceStream(pages[0].EmbeddedResourcePath)!);
+        Assert.Contains("data-controller=\"__plugin/" + Plugin.ConfigurationScriptName + "\"", pageReader.ReadToEnd(), StringComparison.Ordinal);
     }
 
     // Every directory resolves to one folder; creating the plugin only reads PluginsPath

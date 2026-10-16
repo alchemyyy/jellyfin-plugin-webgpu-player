@@ -17,6 +17,13 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - libbitsub replaces libpgs (10-02).
   This follows upstream and adds VobSub support.
   The custom path drives it through `timeOffset`, measured against the source-less video.
+- The server offers the engine's decoder packages and passes, and a client fetches each when it needs it (10-16).
+  The add-on build carries every package `bin/wgpud/` (engine) holds and every pass file of `bin/wgpup/` (engine), and an administrator uploads, deletes, enables, and disables them on the plugin's settings page.
+  A client downloads a package only for a playback that needs its codec and keeps it in IndexedDB by id, so a page loads a stored version again until the server offers another; a pass file downloads when the user adds it.
+  An upload replaces the bundled file of its package id or file name, as a package's new version replaces its old one, so an administrator can ship a newer decoder without a plugin release.
+- The settings page's state lives in the plugin's data folder, not in the plugin configuration (10-16).
+  The uploads are files there already, and the disabled keys beside them in `state.json` make the store one folder, which the tests open without a server.
+  The plugin still configures nothing else, so `BasePluginConfiguration` stays empty.
 
 ## Negotiation
 
@@ -39,6 +46,10 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - An identical play request joins the pending start (10-08).
   A second click on the same item while its start is pending used to supersede a healthy session and repeat the item fetch, PlaybackInfo, and worker setup.
   The PlaybackManager hook returns the pending request's promise for a request with the same items and options, and any other request still supersedes it.
+- The device profile advertises what decoder packages decode before any is downloaded (10-16).
+  Before, only native routes were advertised, so Jellyfin transcoded every codec and variant a package alone decodes, such as MPEG-2, VC-1, AV1 High, and E-AC-3 without a native decoder, before the package fallback ever saw it.
+  The user's packages and the server's catalog give each package's codecs and output formats, from which the profile builds per-profile routes and widens the stock AV1 and HEVC ceilings; downloading a package for negotiation alone would cost every negotiation a download.
+  A package's size limits and monochrome support are left out, so a stream past them negotiates and then renegotiates, which costs one failed start.
 - Every raw HDR route that advertises HDR10 also advertises HDR10Plus (10-09).
   HDR10+ always carries a static HDR10 base, which raw PQ presents, so AV1 and VP9 advertise the label as HEVC does.
   Jellyfin labels a stream HDR10Plus whenever it carries HDR10+ metadata, so a route without the label never direct-plays such a stream.
