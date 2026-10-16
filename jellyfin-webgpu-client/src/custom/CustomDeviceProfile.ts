@@ -58,7 +58,7 @@ import {
 import {
     hasEligibleCustomVideoRoute,
     presentsInterlacedVideo,
-    type CustomPlaybackEligibilityOptions
+    type CustomVideoRouteOptions
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import { getDolbyVisionPresentationSelection } from 'webgpu-player/presentation/PresentationInput';
 import {
@@ -394,13 +394,15 @@ function getCanonicalRouteProfile(codec: 'av1' | 'hevc', profile: string): strin
     )) ?? normalizedProfile;
 }
 
+/** Returns the options of the engine's item route check: the profile's route flags and keys, and the video decoder packages a playback could use. */
 function getItemEligibilityOptions(
     options: CustomDeviceProfileOptions
-): Omit<CustomPlaybackEligibilityOptions, 'runtimeAvailability'> {
+): CustomVideoRouteOptions {
     return {
         allowDolbyVision: options.allowDolbyVision,
         allowDolbyVisionProfile4: options.allowDolbyVisionProfile4,
         allowDolbyVisionProfile7: options.allowDolbyVisionProfile7,
+        allowFramePoolHDR: options.allowFramePoolHDR,
         allowNativeDolbyVision: options.allowNativeDolbyVision,
         allowNativeDolbyVisionProfile7HDR10Base: options.allowNativeDolbyVisionProfile7HDR10Base,
         allowNativeDolbyVisionProfile8HDR10Base: options.allowNativeDolbyVisionProfile8HDR10Base,
@@ -409,7 +411,10 @@ function getItemEligibilityOptions(
         allowRawHDR: options.allowRawHDR === true,
         allowRawSDR: options.allowRawSDR,
         authorizedExternalHDRRouteKeys: options.authorizedExternalHDRRouteKeys,
-        authorizedRawHDRRouteKeys: options.authorizedRawHDRRouteKeys
+        authorizedRawHDRRouteKeys: options.authorizedRawHDRRouteKeys,
+        gpuVideoDecoderSummaries: (options.decoderPackages ?? []).filter((decoderPackage: DecoderPackageRouteSummary): boolean => (
+            decoderPackage.kind === 'video'
+        ))
     };
 }
 
