@@ -126,16 +126,21 @@ function describePassFile(source: string, presetIndex: number): PassView[] {
     });
 }
 
+/** Returns a pass's parameters and constants, which the engine takes values for alike; a constant's change plans again. */
+function getTunableParameters(view: PassView): readonly PassParameter[] {
+    return view.manifest === null ? [] : [ ...view.manifest.parameters, ...view.manifest.constants ];
+}
+
 /** Returns a file's title: its only pass's name, or its first pass's name with its pass count. */
 function getPassFileTitle(views: readonly PassView[]): string {
     return views.length === 1 ? views[0].name : globalize.translate('WebGPUShaderPassFile', views[0].name, views.length);
 }
 
-/** Returns each parameter the file's passes declare, once, since the passes share its value. */
+/** Returns each parameter or constant the file's passes declare, once, since the passes share its value; a constant tunes as a parameter does. */
 function getPassFileParameters(views: readonly PassView[]): PassParameter[] {
     const parameters: PassParameter[] = [];
     for (const view of views) {
-        for (const parameter of view.manifest?.parameters ?? []) {
+        for (const parameter of getTunableParameters(view)) {
             if (!parameters.some((declared: PassParameter): boolean => declared.name === parameter.name)) {
                 parameters.push(parameter);
             }
@@ -690,10 +695,10 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
                 index === fileIndex ? { ...file, parameters: { ...file.parameters, [parameterName]: value } } : file
             ))
         });
-        // The file's passes share the value, so each pass that declares the parameter takes it; only names matter here, so any preset position does
+        // The file's passes share the value, so each pass that declares the parameter or constant takes it; only names matter here, so any preset position does
         const source = sources === null ? null : getStoredFileSource(changedFile, sources);
         const declaringViews = (source === null ? [] : describePassFile(source, fileIndex)).filter((view: PassView): boolean => (
-            view.manifest?.parameters.some((parameter: PassParameter): boolean => parameter.name === parameterName) ?? false
+            getTunableParameters(view).some((parameter: PassParameter): boolean => parameter.name === parameterName)
         ));
         let failure: string | null = declaringViews.length === 0 ? `parameter-unknown: '${parameterName}'` : null;
         for (const view of declaringViews) {
