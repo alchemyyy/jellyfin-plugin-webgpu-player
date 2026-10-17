@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { GPUVideoDecodeTarget } from 'webgpu-player/capability/CustomPlaybackEligibility';
 
@@ -83,7 +83,7 @@ vi.mock('webgpu-player/decode/packages/DecoderPackageStore', () => {
     return { DecoderPackageStoreError, default: FakeDecoderPackageStore };
 });
 
-let fetchMock: ReturnType<typeof vi.fn>;
+let fetchMock: Mock;
 // The responses the server gives, by URL
 let responses: Map<string, () => Response>;
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { PLAYBACK_SUPERSEDED } from 'addons/webGPUPlayer/constants/playbackResult';
 
@@ -79,8 +79,8 @@ vi.mock('addons/webGPUPlayer/WebGPUPlayer', () => {
 import HostCompatibleWebGPUPlayer from 'addons/webGPUPlayer/HostCompatibleWebGPUPlayer';
 
 type FakeBase = {
-    baseDestroy: ReturnType<typeof vi.fn>
-    baseStop: ReturnType<typeof vi.fn>
+    baseDestroy: Mock
+    baseStop: Mock
     canPlayItemResult: boolean
     cancelPendingPlayCount: number
     pendingPlay: boolean

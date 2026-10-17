@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { PLAYBACK_SUPERSEDED } from 'addons/webGPUPlayer/constants/playbackResult';
 import { MediaError } from 'types/mediaError';
@@ -148,7 +148,7 @@ const audioPrewarmMockState = vi.hoisted(() => ({
             destination: { maxChannelCount: number }
             sampleRate: number
         }
-        close: ReturnType<typeof vi.fn>
+        close: Mock
         resumePromise: Promise<void>
     }>,
     nextClosePromise: null as Promise<void> | null,
@@ -905,7 +905,7 @@ import {
     type CustomDecodeProbeState
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 
-type MockFunction = ReturnType<typeof vi.fn>;
+type MockFunction = Mock;
 
 type MockHTMLPlayer = {
     isFetching: boolean

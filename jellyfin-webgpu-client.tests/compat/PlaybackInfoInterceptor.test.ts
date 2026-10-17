@@ -1,5 +1,5 @@
 import axios, { type AxiosAdapter, type AxiosInstance, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { PlaybackBitrateRequest } from 'addons/webGPUPlayer/compat/PlaybackBitratePolicy';
 import type { PlaybackInfoRequestBody } from 'addons/webGPUPlayer/compat/PlaybackInfoPolicy';
@@ -37,7 +37,7 @@ type CapturedRequest = {
 type ApiClientMock = {
     getCurrentUserId: () => string
     getEndpointInfo: () => Promise<{ IsInNetwork: boolean, IsLocal: boolean }>
-    getItem: ReturnType<typeof vi.fn>
+    getItem: Mock
 };
 
 function hasDolbyVision(mediaStreams: unknown): boolean {

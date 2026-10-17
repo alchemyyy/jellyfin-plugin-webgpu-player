@@ -1,5 +1,5 @@
 import type { VideoVobSubOptions } from 'libbitsub';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { PLAYBACK_SUPERSEDED } from 'addons/webGPUPlayer/constants/playbackResult';
 import browser from 'scripts/browser';
@@ -28,16 +28,16 @@ type AssSubtitleRendererOptions = Record<string, unknown> & {
 };
 
 type BitmapSubtitleRendererMock = {
-    dispose: ReturnType<typeof vi.fn>
+    dispose: Mock
     format: 'pgs' | 'vobsub'
     getSubtitleTime: () => number
     options: VideoVobSubOptions
-    setDebandEnabled?: ReturnType<typeof vi.fn>
-    setDebandRange?: ReturnType<typeof vi.fn>
-    setDebandThreshold?: ReturnType<typeof vi.fn>
-    setDisplaySettings: ReturnType<typeof vi.fn>
+    setDebandEnabled?: Mock
+    setDebandRange?: Mock
+    setDebandThreshold?: Mock
+    setDisplaySettings: Mock
     timeOffset: number
-    updateCanvasSize: ReturnType<typeof vi.fn>
+    updateCanvasSize: Mock
 };
 
 type TestMediaStream = {
@@ -194,12 +194,12 @@ const serverConnectionsMock = vi.hoisted(() => {
 
 const specializedSubtitleRendererMock = vi.hoisted(() => {
     const assInstances: Array<{
-        dispose: ReturnType<typeof vi.fn>
+        dispose: Mock
         options: AssSubtitleRendererOptions
-        resetRenderAheadCache: ReturnType<typeof vi.fn>
-        resize: ReturnType<typeof vi.fn>
-        setCurrentTime: ReturnType<typeof vi.fn>
-        setIsPaused: ReturnType<typeof vi.fn>
+        resetRenderAheadCache: Mock
+        resize: Mock
+        setCurrentTime: Mock
+        setIsPaused: Mock
         timeOffset: number
     }> = [];
     const bitmapInstances: BitmapSubtitleRendererMock[] = [];
@@ -1196,7 +1196,7 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
 });
 
 describe('HtmlVideoPlayer subtitle generations', () => {
-    let fetchMock: ReturnType<typeof vi.fn>;
+    let fetchMock: Mock;
     let pendingResponses: Map<string, Deferred<Response>>;
 
     beforeEach(() => {
