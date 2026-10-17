@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { MediaError } from 'types/mediaError';
 import Events from 'utils/events';
@@ -15,8 +15,8 @@ type HLSEventListener = (eventName: string, data: HLSEventData) => void;
 
 type BoundTestPlayer = {
     instance: { _hlsPlayer: MockHLSPlayer | null }
-    reject: ReturnType<typeof vi.fn>
-    resolve: ReturnType<typeof vi.fn>
+    reject: Mock
+    resolve: Mock
 };
 
 const hlsEventValues: Record<string, string> = {};

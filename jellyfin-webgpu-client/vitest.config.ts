@@ -1,4 +1,4 @@
-/// <reference types="vitest" />
+/// <reference types="vitest/config" />
 import path from 'path';
 import { defineConfig, type Plugin } from 'vite';
 import constants from './scripts/constants';
@@ -64,6 +64,8 @@ export default defineConfig({
         dir: TESTS_DIRECTORY,
         environment: 'jsdom',
         exclude: [ '**/node_modules/**', '**/dist/**' ],
+        // Every test starts from fresh mocks: restoreMocks restores vi.spyOn spies, and mockReset clears each mock's calls and resets its implementation
+        mockReset: true,
         restoreMocks: true
     }
 });

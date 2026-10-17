@@ -22,5 +22,12 @@ export default [
                 tsconfigRootDir: CLIENT_DIRECTORY
             }
         }
+    },
+    // Tests check exact floating-point results, such as unit conversions, on purpose
+    {
+        files: [ '**/*.ts' ],
+        rules: {
+            'sonarjs/no-floating-point-equality': 'off'
+        }
     }
 ];

@@ -18,7 +18,6 @@ function runInHLSDirectory(commandLine) {
         Object.entries(process.env).filter(([ variableName ]) => !NPM_VARIABLE_PATTERN.test(variableName))
     );
     // Fixed command lines only
-    // eslint-disable-next-line sonarjs/os-command
     const result = spawnSync(commandLine, { cwd: HLS_DIRECTORY, env: environment, shell: true, stdio: 'inherit' });
     if (result.status !== 0) {
         throw new Error(`${commandLine} failed in ${HLS_DIRECTORY} (exit code ${result.status})`);

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import { appHost } from 'addons/webGPUPlayer/host/appHost';
 import { appRouter } from 'addons/webGPUPlayer/host/appRouter';
@@ -118,9 +118,9 @@ describe('bindHostBridge', () => {
         off(document, handler);
         handleCommand('play', {});
 
-        const hostLoading = bag.loading as { hide: ReturnType<typeof vi.fn>, show: ReturnType<typeof vi.fn> };
-        const hostDashboard = bag.dashboard as { pageClassOn: ReturnType<typeof vi.fn>, pageIdOn: ReturnType<typeof vi.fn> };
-        const hostInputManager = bag.inputManager as Record<string, ReturnType<typeof vi.fn>>;
+        const hostLoading = bag.loading as { hide: Mock, show: Mock };
+        const hostDashboard = bag.dashboard as { pageClassOn: Mock, pageIdOn: Mock };
+        const hostInputManager = bag.inputManager as Record<string, Mock>;
         expect(hostLoading.show).toHaveBeenCalledTimes(1);
         expect(hostLoading.hide).toHaveBeenCalledTimes(1);
         expect(hostDashboard.pageIdOn).toHaveBeenCalledWith('viewshow', 'videoOsdPage', handler);
@@ -139,7 +139,7 @@ describe('globalize bridge', () => {
 
         expect(translate('WebGPUPreferredVideoPlayer')).toBe('Preferred video player');
         expect(globalize.translate('WebGPUChooseAudioOutput')).toBe('Choose output');
-        expect((bag.globalize as { translate: ReturnType<typeof vi.fn> }).translate).not.toHaveBeenCalled();
+        expect((bag.globalize as { translate: Mock }).translate).not.toHaveBeenCalled();
     });
 
     it('loads nothing for the source locale', async () => {
@@ -218,7 +218,7 @@ describe('globalize bridge', () => {
         bind(bag);
 
         expect(translate('Auto', 'argument')).toBe('host:Auto');
-        expect((bag.globalize as { translate: ReturnType<typeof vi.fn> }).translate)
+        expect((bag.globalize as { translate: Mock }).translate)
             .toHaveBeenCalledWith('Auto', 'argument');
     });
 
@@ -228,7 +228,7 @@ describe('globalize bridge', () => {
 
         expect(translateHtml('<label>${WebGPUAudioOutput}</label><span>${Auto}</span>', 'core'))
             .toBe('host:<label>Audio output</label><span>${Auto}</span>');
-        expect((bag.globalize as { translateHtml: ReturnType<typeof vi.fn> }).translateHtml)
+        expect((bag.globalize as { translateHtml: Mock }).translateHtml)
             .toHaveBeenCalledWith('<label>Audio output</label><span>${Auto}</span>', 'core');
     });
 });
