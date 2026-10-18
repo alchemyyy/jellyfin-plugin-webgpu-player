@@ -33,6 +33,8 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - The frame loop takes the controller's current frame each animation frame and presents it.
 - No animation frame runs while the page is hidden, so the frame loop's 25 ms timer takes and discards due frames against the clock instead.
   Credits keep flowing and audio stays the master.
+- A screen wake lock is held while the controller is playing, because the source-less `<video>` never earns the browser's own video wake lock.
+  It is kept across seeks, released on pause, end, stop, and fallback, and requested again when the page becomes visible.
 - Before eligibility, `WebGPUPlayer` resolves the user's speaker layout against the destination's channel count with the engine's `selectCustomAudioSpeakerLayout`, stereo when the user forces stereo, and hands it with the binaural choice to the engine's eligibility as `audioRenderTarget`.
   At startup the count is the audio prewarm's `destination.maxChannelCount`; at a track switch it is the live output's, else the prewarm's; without either the layout is stereo.
 - Each decoded PCM track then plays to the engine's `selectCustomAudioOutputLayout` of that layout, the whole layout when the eligibility reports `audioRendersObjects`, and the binaural choice goes with it to `play`, `setAudioStreamIndex`, and `reconfigureAudioOutput`.
