@@ -112,6 +112,7 @@ What they do:
 - `./build.sh` in the plugin root builds the WebAssembly modules (when `bin/wasm/` (engine) is missing), the decoder packages (when `bin/wgpud/` (engine) is missing), the add-on, and the plugin that embeds it.
   Only the add-on build reads them, so they build in the background while `npm ci` and the hls.js fork build run; the packages start once `npm ci` installed the esbuild their check needs.
   Before either starts, without `EMSDK`, a failed Emscripten check installs the pinned Emscripten into `bin/emsdk/` (engine) with `make -C wasm emsdk` (engine).
+  Then `cargo --version` in `wasm/libdovi/` (engine) installs the Rust every engine crate pins, since two rustup installs side by side are not safe.
 
 Engine changes must also pass the engine's own checks, from its root.
 
