@@ -8,6 +8,7 @@
 # The engine's decoder packages, which the plugin offers to every client, build in the background once npm ci is done,
 # when they are missing; their build fetches the engine's codec source submodules itself.
 # Before either of those builds starts, without EMSDK, a failed Emscripten check installs the engine's own emsdk.
+# It also installs the Rust the engine's crates pin before them, since rustup installs are not safe side by side.
 # Once both builds are done, it runs `npm run build` there against a read-only Jellyfin Web source tree.
 # Then it runs dotnet build or dotnet publish, which embeds the add-on build in bin/jellyfin-webgpu-client/ in the plugin.
 # Works in Git Bash on Windows and in bash on Linux and macOS.
@@ -23,8 +24,10 @@ engine_directory="$client_directory/vendor/webgpu-player"
 addon_output_directory="$script_directory/bin/jellyfin-webgpu-client"
 submodule_paths=('jellyfin-webgpu-client/vendor/webgpu-player' 'jellyfin-webgpu-client/vendor/webgpu-player-hls')
 jellyfin_web_submodule_path='jellyfin-webgpu-client/vendor/jellyfin-web'
+# The engine crate whose cargo run installs the Rust every engine crate pins, relative to the engine's WebAssembly folder
+rust_toolchain_crate='libdovi'
 readonly script_directory project_directory project_file manifest_file_name client_directory engine_directory \
-    addon_output_directory jellyfin_web_submodule_path
+    addon_output_directory jellyfin_web_submodule_path rust_toolchain_crate
 
 # Empty for the pinned Jellyfin Web submodule
 jellyfin_web_path=''
@@ -169,10 +172,10 @@ if [ "$skip_npm" = false ]; then
     decoder_package_directory="$engine_directory/$(engine_layout decoderOutputDirectory)" \
         || fail 'Cannot read the engine layout (Node.js is required)'
 
-    # Emscripten, which both builds need
-    # Without EMSDK, the engine's Makefiles use the engine's own emsdk,
-    # so a failed check installs it at the pinned version before either build starts
+    # The toolchains both builds need, readied before either starts
     if [ ! -d "$wasm_output_directory" ] || [ ! -d "$decoder_package_directory" ]; then
+        # Without EMSDK, the engine's Makefiles use the engine's own emsdk,
+        # so a failed Emscripten check installs it at the pinned version
         if [ -z "${EMSDK:-}" ] && ! check_emscripten 2>/dev/null; then
             command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 \
                 || fail 'Python 3 is required to install the engine emsdk'
@@ -185,6 +188,11 @@ if [ "$skip_npm" = false ]; then
                 || fail "The Emscripten check failed for EMSDK=$EMSDK; name an emsdk with the pinned version active, or unset EMSDK to use the engine's own"
             fail "The Emscripten check failed for the engine emsdk; make -C $(native_path "$engine_directory/$wasm_path") emsdk reinstalls it"
         fi
+
+        # Every engine crate pins one Rust, which rustup installs on first use;
+        # rustup installs are not safe side by side, so this one runs before both builds
+        (cd "$engine_directory/$wasm_path/$rust_toolchain_crate" && "${CARGO:-cargo}" --version >/dev/null) \
+            || fail "The engine's pinned Rust toolchain is not available; see the engine's docs/src/decoders.md"
     fi
 
     # Only npm run build reads the WebAssembly modules, so they build in the background while npm ci and the hls.js fork build run
