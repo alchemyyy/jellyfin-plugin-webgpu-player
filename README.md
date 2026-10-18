@@ -63,7 +63,7 @@ Please oh please have your LLM generate and run tests on what it produces. This 
 - bash (Git Bash on Windows) and git.
 - The .NET 10 SDK, for the server plugin.
 - Node.js 24 or later and npm 11 or later, for the client add-on and the engine.
-- For the engine's WebAssembly modules and decoder packages, which the first build of a checkout compiles: GNU Make, Emscripten 4.0.13 (activated with `emsdk_env` or named by `EMSDK`), rustup, CMake, Perl, and GNU patch. The engine pins Rust 1.96.1 with the `wasm32-unknown-unknown` target.
+- For the engine's WebAssembly modules and decoder packages, which the first build of a checkout compiles: GNU Make, Emscripten 4.0.13, rustup, CMake, Perl, and GNU patch. Emscripten comes from the emsdk that `EMSDK` names, which `emsdk_env` sets; without `EMSDK`, `./build.sh` installs the pinned version into the engine's own emsdk when its Emscripten check fails (it needs Python 3 and about 2 GB), and the engine's Makefiles use that emsdk from then on. The engine pins Rust 1.96.1 with the `wasm32-unknown-unknown` target.
 - On Windows, long path support. The engine's decoder build creates paths over 260 characters, so enable `LongPathsEnabled` and Git's `core.longpaths`. GNU Make and the MSVC linker that cargo uses must accept long paths too.
 
 Only for specific tasks:

@@ -7,6 +7,7 @@
 # Meanwhile it runs `npm ci` in jellyfin-webgpu-client/ when its node_modules is missing, and builds the hls.js fork.
 # The engine's decoder packages, which the plugin offers to every client, build in the background once npm ci is done,
 # when they are missing; their build fetches the engine's codec source submodules itself.
+# Before either of those builds starts, without EMSDK, a failed Emscripten check installs the engine's own emsdk.
 # Once both builds are done, it runs `npm run build` there against a read-only Jellyfin Web source tree.
 # Then it runs dotnet build or dotnet publish, which embeds the add-on build in bin/jellyfin-webgpu-client/ in the plugin.
 # Works in Git Bash on Windows and in bash on Linux and macOS.
@@ -46,8 +47,11 @@ Options:
   -h, --help                  Show this help.
 
 The first build of a checkout also builds the engine's WebAssembly modules and decoder packages. That needs GNU Make,
-Emscripten 4.0.13 (activated with emsdk_env, or EMSDK naming the emsdk directory), rustup, CMake, Perl, and GNU patch;
-see the engine's docs/src/decoders.md and docs/src/decoder-packages.md.
+Emscripten 4.0.13, rustup, CMake, Perl, and GNU patch; see the engine's docs/src/decoders.md and
+docs/src/decoder-packages.md.
+Emscripten comes from the emsdk that EMSDK names, as emsdk_env sets it. Without EMSDK, a build whose Emscripten check
+fails installs the pinned version into the engine's own emsdk first, about 2 GB with Python 3 to run the installer,
+and the engine's Makefiles use it from then on.
 
 Examples:
   ./build.sh
@@ -75,6 +79,14 @@ native_path() {
 # Reads a folder of the engine from its tools/constants.json, the one place that names them
 engine_layout() {
     node -p 'require(process.argv[1])[process.argv[2]]' "$(native_path "$engine_directory/tools/constants.json")" "$1"
+}
+
+# Runs the Emscripten check each engine Makefile pins; a failed check prints the version it needs
+check_emscripten() {
+    local makefile_path
+    for makefile_path in "$wasm_path" "$decoders_path"; do
+        make --no-print-directory -C "$(native_path "$engine_directory/$makefile_path")" toolchain || return 1
+    done
 }
 
 # Options
@@ -148,16 +160,39 @@ if [ "$skip_npm" = false ]; then
     [ -d "$jellyfin_web_directory/src" ] \
         || fail "No Jellyfin Web source tree at $jellyfin_web_directory (src is missing)"
 
-    # The engine's WebAssembly modules are build outputs of their own toolchain, so only a checkout without them builds them.
-    # Only npm run build reads them, so they build in the background while npm ci and the hls.js fork build run
+    # The engine's WebAssembly modules and decoder packages are build outputs of their own toolchains,
+    # so only a checkout without them builds them
+    wasm_path="$(engine_layout wasmDirectory)" || fail 'Cannot read the engine layout (Node.js is required)'
+    decoders_path="$(engine_layout decodersDirectory)" || fail 'Cannot read the engine layout (Node.js is required)'
     wasm_output_directory="$engine_directory/$(engine_layout wasmOutputDirectory)" \
         || fail 'Cannot read the engine layout (Node.js is required)'
+    decoder_package_directory="$engine_directory/$(engine_layout decoderOutputDirectory)" \
+        || fail 'Cannot read the engine layout (Node.js is required)'
+
+    # Emscripten, which both builds need
+    # Without EMSDK, the engine's Makefiles use the engine's own emsdk,
+    # so a failed check installs it at the pinned version before either build starts
+    if [ ! -d "$wasm_output_directory" ] || [ ! -d "$decoder_package_directory" ]; then
+        if [ -z "${EMSDK:-}" ] && ! check_emscripten 2>/dev/null; then
+            command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 \
+                || fail 'Python 3 is required to install the engine emsdk'
+            printf 'Installing the pinned Emscripten into the engine emsdk\n'
+            make --no-print-directory -C "$(native_path "$engine_directory/$wasm_path")" emsdk \
+                || fail 'The engine emsdk install failed'
+        fi
+        if ! check_emscripten; then
+            [ -z "${EMSDK:-}" ] \
+                || fail "The Emscripten check failed for EMSDK=$EMSDK; name an emsdk with the pinned version active, or unset EMSDK to use the engine's own"
+            fail "The Emscripten check failed for the engine emsdk; make -C $(native_path "$engine_directory/$wasm_path") emsdk reinstalls it"
+        fi
+    fi
+
+    # Only npm run build reads the WebAssembly modules, so they build in the background while npm ci and the hls.js fork build run
     wasm_build_process_id=''
     if [ ! -d "$wasm_output_directory" ]; then
         printf 'Building the engine WebAssembly modules into %s\n' "$wasm_output_directory"
-        wasm_directory="$(native_path "$engine_directory/wasm")"
         # One job per module
-        make -C "$wasm_directory" -j2 all &
+        make -C "$(native_path "$engine_directory/$wasm_path")" -j2 all &
         wasm_build_process_id=$!
     fi
 
@@ -167,12 +202,10 @@ if [ "$skip_npm" = false ]; then
 
     # The decoder packages are build outputs of the same toolchains, and the add-on build carries them.
     # Their build checks each package with the engine's own loader through esbuild, which npm ci installed
-    decoder_package_directory="$engine_directory/$(engine_layout decoderOutputDirectory)" \
-        || fail 'Cannot read the engine layout (Node.js is required)'
     decoder_package_build_process_id=''
     if [ ! -d "$decoder_package_directory" ]; then
         printf 'Building the engine decoder packages into %s\n' "$decoder_package_directory"
-        decoders_directory="$(native_path "$engine_directory/$(engine_layout decodersDirectory)")"
+        decoders_directory="$(native_path "$engine_directory/$decoders_path")"
         decoder_package_script="$(native_path "$engine_directory/$(engine_layout scriptsDirectory)/decoder-packages.mjs")"
         { make -C "$decoders_directory" sources && node "$decoder_package_script"; } &
         decoder_package_build_process_id=$!
