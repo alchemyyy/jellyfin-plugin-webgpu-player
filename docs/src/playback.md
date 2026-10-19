@@ -47,6 +47,8 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
   Chromium moves a default output to a new device without telling the page, which leaves a stale channel count until a rebuild.
 - The deinterlacing choice in the WebGPU settings reaches the presenter live through `WebGPUPlayer.setDeinterlaceMode`.
   Double rate and single rate share one plan, so a switch between them shows at the next draw; a switch to or from off builds a new plan, and the frame loop's lookahead follows it (see the engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html)).
+- `WebGPUPlayer.isFetching` mirrors actual backend file-loading state, not custom decoder startup or seeking.
+  This keeps "Fetching additional data" paired with `beginFetch`/`endFetch`; normal playback waiting does not leave a phantom subtitle-loading message.
 
 ## Transitions
 
