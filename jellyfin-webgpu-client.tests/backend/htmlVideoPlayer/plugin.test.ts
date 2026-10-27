@@ -46,6 +46,7 @@ type TestMediaStream = {
     DeliveryUrl?: string
     Index: number
     IsExternal?: boolean
+    IsExternalUrl?: boolean
     Path?: string
     Type: string
 };
@@ -863,6 +864,50 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         expect(secondRenderer.dispose).toHaveBeenCalledOnce();
     });
 
+    it('drives libbitsub VobSub on the custom path from the server Matroska subtitle file', async () => {
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            createSpecializedTrack(
+                2,
+                'DVDSUB',
+                'https://example.test/Videos/item/source/Subtitles/2/0/Stream.vobsub?ApiKey=test-token'
+            )
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+
+        player.setSubtitleStreamIndex(2);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.bitmapInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.bitmapInstances[0];
+
+        // Every supported server serves the extracted track raw only as Stream.mks, and libbitsub reads Matroska by that name
+        expect(renderer.format).toBe('vobsub');
+        expect(renderer.options).toMatchObject({
+            displaySettings: { aspectMode: 'contain' },
+            fileName: 'Stream.mks',
+            subUrl: 'https://example.test/Videos/item/source/Subtitles/2/0/Stream.mks?ApiKey=test-token',
+            video: surface.video
+        });
+        expect(renderer.options).not.toHaveProperty('idxUrl');
+
+        renderer.options.onLoaded?.();
+        expect(renderer.setDebandEnabled).toHaveBeenCalledWith(true);
+        expect(player.notifyCustomPlaybackTimeUpdate(3_000)).toBe(true);
+        expect(renderer.getSubtitleTime()).toBeCloseTo(3);
+        player.currentTime(12_500);
+        expect(renderer.getSubtitleTime()).toBeCloseTo(12.5);
+
+        await player.stop(false);
+        expect(renderer.dispose).toHaveBeenCalledOnce();
+    });
+
     it('does not install an ASS renderer after its track generation is retired', async () => {
         const configuration = createDeferred<{ EnableFallbackFont: boolean }>();
         serverConnectionsMock.apiClient.getNamedConfiguration.mockReturnValueOnce(configuration.promise);
@@ -961,7 +1006,7 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         expect(pgsRenderer.dispose).toHaveBeenCalledOnce();
     });
 
-    it('renders native VobSub through libbitsub with an MKS file name hint and deband settings', async () => {
+    it('renders native VobSub from the server Matroska subtitle file with deband settings', async () => {
         const fetchMock = vi.fn(() => Promise.reject(new Error('VobSub must not use the text subtitle path')));
         vi.stubGlobal('fetch', fetchMock);
         document.getElementById('htmlvideoplayer-cuestyle')?.remove();
@@ -971,7 +1016,7 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
             createSpecializedTrack(
                 0,
                 'dvdsub',
-                'https://example.test/Videos/item/source/Subtitles/0/0/Stream.mks?ApiKey=test-token'
+                'https://example.test/Videos/item/source/Subtitles/0/0/Stream.vobsub?ApiKey=test-token'
             )
         ];
         await player.play(options);
@@ -1025,6 +1070,35 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         });
 
         expect(specializedSubtitleRendererMock.bitmapInstances[0].options.fileName).toBe('subtitle.mks');
+        player.destroy();
+    });
+
+    it('keeps a VobSub URL that is not a server subtitle stream', async () => {
+        const player = new HtmlVideoPlayer(undefined, false) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/native.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            { ...createSpecializedTrack(0, 'dvdsub', 'https://cdn.example.test/Stream.sub'), IsExternalUrl: true },
+            createSpecializedTrack(1, 'dvdsub', 'https://cdn.example.test/movie.mks')
+        ];
+        await player.play(options);
+
+        player.setSubtitleStreamIndex(0);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.bitmapInstances).toHaveLength(1);
+        });
+        expect(specializedSubtitleRendererMock.bitmapInstances[0].options).toMatchObject({
+            fileName: 'Stream.sub',
+            subUrl: 'https://cdn.example.test/Stream.sub'
+        });
+
+        player.setSubtitleStreamIndex(1);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.bitmapInstances).toHaveLength(2);
+        });
+        expect(specializedSubtitleRendererMock.bitmapInstances[1].options).toMatchObject({
+            fileName: 'movie.mks',
+            subUrl: 'https://cdn.example.test/movie.mks'
+        });
         player.destroy();
     });
 

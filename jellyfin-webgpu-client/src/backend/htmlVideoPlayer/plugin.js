@@ -50,6 +50,9 @@ import { isHls } from 'utils/mediaSource';
 const NATIVE_UNSUPPORTED_SUBTITLE_CODECS = ['ssa', 'ass', 'pgssub', 'dvdsub', 'vobsub'];
 const ASS_SUBTITLE_CODECS = ['ssa', 'ass'];
 const VOBSUB_SUBTITLE_CODECS = ['dvdsub', 'vobsub'];
+const VOBSUB_FILE_NAME_PATTERN = /\.(?:mks|sub|idx)$/i;
+const VOBSUB_MKS_FILE_NAME = 'subtitle.mks';
+const SERVER_SUBTITLE_STREAM_EXTENSION_PATTERN = /(\/Stream\.)[^/?#]+(?=[?#]|$)/i;
 const BITMAP_SUBTITLE_ASPECT_MODES = ['stretch', 'contain', 'cover'];
 
 const HLS_MINIMUM_BUFFER_LENGTH_SECONDS = 6;
@@ -208,26 +211,32 @@ function getTextTrackUrl(track, item, format) {
     return url;
 }
 
-function getSubtitleFileNameHint(track) {
-    const candidates = [track?.Path, track?.DeliveryUrl];
-    for (const candidate of candidates) {
-        if (!candidate) {
-            continue;
-        }
-
-        const sanitized = candidate.split(/[?#]/)[0];
-        const fileName = sanitized.split(/[\\/]/).pop();
-        if (fileName) {
-            return fileName;
-        }
+/**
+ * Jellyfin delivers a VobSub track extracted to a Matroska subtitle file.
+ * Every supported server serves that file raw under the `mks` extension; before 12.2 the profile's own extension (`vobsub`) reaches the text converter and fails.
+ *
+ * @param {object} track - Subtitle stream.
+ * @param {object} item - Playing item.
+ * @returns {string} URL of the track's Matroska subtitle file.
+ */
+function getVobSubTrackUrl(track, item) {
+    const url = getTextTrackUrl(track, item);
+    if (!url || track.IsExternalUrl || url === track.Path) {
+        return url;
     }
 
-    const codec = (track?.Codec || '').toLowerCase();
-    if (VOBSUB_SUBTITLE_CODECS.includes(codec)) {
-        return 'subtitle.mks';
-    }
+    return url.replace(SERVER_SUBTITLE_STREAM_EXTENSION_PATTERN, '$1mks');
+}
 
-    return undefined;
+/**
+ * Names the file a VobSub URL fetches, since libbitsub reads a source as Matroska only by an `.mks` name and as an `.idx`/`.sub` pair otherwise.
+ *
+ * @param {string} subUrl - URL the renderer fetches.
+ * @returns {string} File name hint for libbitsub.
+ */
+function getVobSubFileNameHint(subUrl) {
+    const fileName = (subUrl || '').split(/[?#]/)[0].split(/[\\/]/).pop();
+    return fileName && VOBSUB_FILE_NAME_PATTERN.test(fileName) ? fileName : VOBSUB_MKS_FILE_NAME;
 }
 
 function getBitmapSubtitleDisplaySettings() {
@@ -2466,9 +2475,11 @@ export class HtmlVideoPlayer {
      * @private
      */
     renderVobSub(videoElement, track, item, targetTextTrackIndex, subtitleRender) {
+        const subUrl = getVobSubTrackUrl(track, item);
         const options = {
             ...this.createBitmapSubtitleRendererOptions(videoElement, track, item, targetTextTrackIndex),
-            fileName: getSubtitleFileNameHint(track)
+            subUrl,
+            fileName: getVobSubFileNameHint(subUrl)
         };
         const onLoaded = options.onLoaded;
         const onError = options.onError;

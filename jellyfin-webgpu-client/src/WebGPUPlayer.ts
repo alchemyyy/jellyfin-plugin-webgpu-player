@@ -708,6 +708,7 @@ function getCustomSubtitleCapabilities(
     return {
         externalASS: specializedRendererRuntimeAvailable,
         externalPGS: specializedRendererRuntimeAvailable,
+        externalVobSub: specializedRendererRuntimeAvailable,
         externalText: externalFormats.has('VTT')
     };
 }
