@@ -16,17 +16,16 @@ describe('the direct-play containers of the custom path', () => {
             AudioCodec: 'aac,mp3,ac3,flac,vorbis,pcm_s16le,pcm_s24le,pcm_f32le,pcm_alaw',
             Container: AVI_CONTAINER,
             Type: 'Video',
-            VideoCodec: 'h264,vp8,vp9,av1'
+            VideoCodec: 'h264,hevc,vp8,vp9,av1'
         });
     });
 
-    it('keeps HEVC, MPEG-2, and E-AC-3 out of AVI', () => {
+    it('keeps MPEG-2 and E-AC-3 out of AVI', () => {
         const aviProfiles = createCompatibleProfiles(SUPPORTED_VIDEO_CODECS, SUPPORTED_AUDIO_CODECS)
             .filter(profile => profile.Container === AVI_CONTAINER);
 
         expect(aviProfiles).toHaveLength(1);
         const [ aviProfile ] = aviProfiles;
-        expect(aviProfile.VideoCodec?.split(',')).not.toContain('hevc');
         expect(aviProfile.VideoCodec?.split(',')).not.toContain('mpeg2video');
         expect(aviProfile.AudioCodec?.split(',')).not.toContain('eac3');
     });
