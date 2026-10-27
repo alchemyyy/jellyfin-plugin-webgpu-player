@@ -33,6 +33,8 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - The rAF loop in `WebGPUPlayer` takes the controller's current frame and presents it.
 - No rAF runs while the page is hidden, so a 25 ms timer in `WebGPUPlayer` takes and discards due frames against the clock.
   Credits keep flowing and audio stays the master.
+- A screen wake lock is held while the controller is playing, because the source-less `<video>` never earns the browser's own video wake lock.
+  It is kept across seeks, released on pause, end, stop, and fallback, and requested again when the page becomes visible.
 - `WebGPUPlayer.selectDecodedAudioOutputChannelCount` returns 2 when the user forces stereo, and otherwise defers to the engine's `selectCustomAudioOutputChannelCountForMaximum`.
 - The add-on triggers a live audio layout switch when the output reports `sinkchange` with a different channel count, and when force stereo or the downmix algorithm changes.
 - Re-detect output, in the WebGPU settings, rebuilds every AudioContext sink so the browser re-reads the device.
