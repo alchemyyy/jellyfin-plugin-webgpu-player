@@ -1825,24 +1825,6 @@ describe('WebGPUPlayer HTML delegation', () => {
             Index: 1,
             SampleRate: 48_000,
             Type: 'Audio'
-        }]) ],
-        // 10-bit AV1 SDR presents only through raw planes, whose SDR keys are BT.709 only
-        [ '10-bit BT.601 SDR AV1 with Opus 5.1', createPlaybackSelectionItem('av1-10bit-bt601-sdr', {
-            AverageFrameRate: 24,
-            BitDepth: 10,
-            Codec: 'AV1',
-            ColorPrimaries: 'smpte170m',
-            ColorSpace: 'smpte170m',
-            ColorTransfer: 'smpte170m',
-            Height: 1_632,
-            Profile: 'Main',
-            Width: 3_840
-        }, [{
-            Channels: 6,
-            Codec: 'OPUS',
-            Index: 1,
-            SampleRate: 48_000,
-            Type: 'Audio'
         }]) ]
     ])('declines exact unsupported %s item metadata only when custom decode is enabled', (
         _label,
@@ -1862,19 +1844,24 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(canPlayItem).toHaveBeenLastCalledWith(item, playOptions);
     });
 
-    it('keeps 10-bit BT.709 SDR AV1 for the raw I420P10 route', () => {
+    it.each([
+        // Unspecified color is BT.709 for SDR
+        [ 'BT.709', {} ],
+        // Each matrix and primaries set has its own raw SDR key
+        [ 'BT.601', { ColorPrimaries: 'smpte170m', ColorSpace: 'smpte170m', ColorTransfer: 'smpte170m' } ]
+    ])('keeps 10-bit %s SDR AV1 for the raw I420P10 route', (_label, colors) => {
         const player = new WebGPUPlayer();
         const canPlayItem = vi.fn(() => true);
         getBackend().canPlayItem = canPlayItem;
         const playOptions = { fullscreen: true };
-        // Unspecified color is BT.709 for SDR
         const item = createPlaybackSelectionItem('av1-10bit-sdr', {
             AverageFrameRate: 24,
             BitDepth: 10,
             Codec: 'AV1',
             Height: 1_632,
             Profile: 'Main',
-            Width: 3_840
+            Width: 3_840,
+            ...colors
         }, [{
             Channels: 6,
             Codec: 'OPUS',

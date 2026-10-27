@@ -376,11 +376,11 @@ const AV1_VIDEO_RANGE_MATRIX: readonly AV1DirectPlayMatrixRow[] = [
     },
     {
         deviceProfileAdvertised: true,
-        directPlaySupported: false,
-        // A profile condition cannot express primaries, and the raw SDR keys are BT.709 only
-        expectedIneligibilityReason: 'codec-unsupported',
+        directPlaySupported: true,
+        // A profile condition cannot express primaries, and the stream's own raw SDR key presents BT.601, converted to BT.709
+        expectedRoute: RAW_SDR_ROUTE,
         label: 'BT.601 SDR Main 10-bit',
-        runtimeEligible: false,
+        runtimeEligible: true,
         videoStream: createTenBitSDRAV1Stream('SDR', {
             ColorPrimaries: 'smpte170m',
             ColorSpace: 'smpte170m',
