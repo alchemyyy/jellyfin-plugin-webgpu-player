@@ -23,6 +23,8 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    - It stops there when custom decode is off or the engine's `getCustomPlaybackRuntimeAvailability` fails (secure context, Worker, `navigator.gpu`, `VideoFrame`).
    - It awaits the engine's `probeCustomDecodeCapabilities(item)` and the native-media audio probe.
      PlaybackInfo waits until the probes the item selects settle; a probe an earlier item ran is not repeated.
+     The warm-up the add-on starts at load has usually run them already, and a probe it is still running is promoted to full speed rather than started twice.
+     A verdict the engine stored on an earlier page load answers at once and is measured again in the background after the playback ends; see the engine's [Probes and caching](https://alchemyyy.github.io/WebGPU-Player/routes.html#probes-and-caching).
    - In parallel, `getDeviceProfileDecoderPackages` lists what the user's decoder packages and the server's catalog decode, with each video package's header, the video ones only when the presenter's device holds a frame pool, each with that device's buffer limit (see [Decoders and passes from the server](server-modules.md)).
    - `getHDRDeviceProfileOptions` waits for the GPU authorizations the item's HDR scope needs (5 s each; see [Probe scopes](#probe-scopes)) and returns the flags and route keys.
    - `CustomDeviceProfile.augmentDeviceProfileForCustomDecode` builds the profile, and `HostCompatibleWebGPUPlayer` marks it so the PlaybackInfo interceptor recognizes the request.

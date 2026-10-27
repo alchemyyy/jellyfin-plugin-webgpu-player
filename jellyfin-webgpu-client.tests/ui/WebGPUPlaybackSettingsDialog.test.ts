@@ -243,6 +243,11 @@ import {
     showWebGPUPlaybackSettingsPanel,
     toggleWebGPUPlaybackSettingsPanel
 } from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
+import {
+    configureCapabilityProbeStore,
+    getDefaultCapabilityProbeStore,
+    readStoredCapabilityProbeVerdictState
+} from 'webgpu-player/capability/CapabilityProbeStore';
 
 type AnimationFrameHarness = {
     callbacks: Map<number, FrameRequestCallback>
@@ -810,6 +815,35 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
+    });
+
+    it('clears the stored decoder test results, so the next negotiation probes again', async () => {
+        const player = {
+            applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),
+            getDetectedInputPeakNits: vi.fn(() => null),
+            getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
+            updateAudioDownmixSettings: vi.fn(() => true),
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
+        } as unknown as WebGPUPlayer;
+        configureCapabilityProbeStore({ buildKey: 'asset-key-webpack-hash' });
+        await getDefaultCapabilityProbeStore().write('native-sdr:hevc', {
+            codec: 'hevc',
+            codecString: 'hvc1.1.6.L120.90',
+            reason: 'decode-output-verified',
+            status: 'supported'
+        });
+        expect(readStoredCapabilityProbeVerdictState()?.probes).toEqual([ 'native-sdr:hevc' ]);
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache').click();
+
+        expect(readStoredCapabilityProbeVerdictState()).toBeNull();
+        expect(requirePanelElement<HTMLElement>(panel, '[data-playback-status]').textContent).toContain('tests this browser');
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+        configureCapabilityProbeStore({ buildKey: '' });
     });
 
     it('focuses the first opened panel and restores its invoking element on close', async () => {

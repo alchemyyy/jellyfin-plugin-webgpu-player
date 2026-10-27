@@ -26,7 +26,10 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
    `config.json` gets `WebGPUPlayer` appended to its `plugins` list.
 2. Jellyfin Web's plugin manager loads `WebGPUPlayer` through its window plugin path and constructs it with its dependency bag.
 3. `jellyfin-webgpu-client/src/index.ts` configures the engine: the asset base is the add-on route plus `libraries/`, the cache key is the engine build's asset key, and `isHDRToneMappingEnabled` reads the user's preference.
-   It then binds the host bridge, installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
+   It names the build whose capability probe verdicts the engine stores, the engine's asset key joined with webpack's `__webpack_hash__`, which also changes with the add-on's own probe code and profile rules.
+   It then binds the host bridge, starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
+   The warm-up runs only with custom decode on and the runtime available, and the engine skips it on a client that asks to save data or has fewer than four threads.
+   It tells the engine that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
 4. The plugin serves the add-on build at `<BaseUrl>/WebGPUPlayer/assets/<path>`, the engine's served folder included.
 
 ## The player
@@ -73,6 +76,8 @@ Every setting is local to the browser profile; the server's decoders and passes 
   Every change in the settings panel applies live, and the presenter keeps the preset, HDR output, and deinterlacing across sessions; a stored preset that loads after a panel change yields to it.
 - The settings panel's sections are playback, tone mapping and display, presentation (HDR output and deinterlacing), shader passes, audio, and decoders.
   Each setting restores its default from an icon button beside it.
+- The playback section's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again.
+  The engine keeps those verdicts in localStorage under its own key, apart from these settings.
 - The shader pass section adds files from this device, or from the passes the server offers, which download when added.
   The decoder section lists the user's own packages and names the server's.
 - The settings panel shows each file with the state of each of its passes from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.

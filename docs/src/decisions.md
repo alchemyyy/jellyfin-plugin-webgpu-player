@@ -63,6 +63,11 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - Deinterlacing is a presentation setting, not a negotiation one (10-27).
   The engine deinterlaces in the presenter, so every mode plays the same direct-play source and the choice applies live, as HDR output does; the profile never depends on it.
   Double rate stays the default, the engine's own, so a user who never opens the settings keeps the motion of broadcast video.
+- The capability probes warm at add-on load, and their stored verdicts are keyed by the add-on build (10-27).
+  The first `getDeviceProfile` of a page ran every probe it selected, about 2.6 s cold on some clients, and held PlaybackInfo until they settled.
+  The add-on starts the engine's warm-up when Jellyfin Web constructs the player, which is when the host's PlaybackManager is bound, so the engine can hold its background probes while `isPlaying()` reports a playback, paused ones included.
+  The store's build key is the engine's asset key with webpack's `__webpack_hash__`, because the add-on's profile rules and its copy of the probe code change without the engine's assets; a commit hash would not do, since every uncommitted build of a commit reads the same `<sha>-dirty`.
+  The settings dialog offers the engine's clear, for a change no fingerprint shows that has not yet failed a start.
 
 ## Playback robustness
 
