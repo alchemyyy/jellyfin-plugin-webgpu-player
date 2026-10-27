@@ -22,6 +22,7 @@ import type {
     NativeMediaAudioLayoutCapability
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
+import type { CustomPlaybackStartResult } from 'webgpu-player/pipeline/CustomPlaybackControllerTypes';
 
 type MockAudioEligibilityOverride = {
     audioOutputMode?: 'native-media'
@@ -97,6 +98,8 @@ const customDecodeMockState = vi.hoisted(() => ({
     hdr: false,
     // A held play() never settles, as when the controller is still starting
     holdPlay: false,
+    // A controlled initial start lets tests replace it with seeks before decoding is ready.
+    pendingPlay: null as Promise<CustomPlaybackStartResult> | null,
     instances: [] as object[],
     maximumCodedHeight: 1_080,
     maximumCodedWidth: 1_920,
@@ -355,6 +358,10 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
 
         play = vi.fn((options: { startTimeMicroseconds: number }) => {
             this.currentTimeMicroseconds = options.startTimeMicroseconds;
+            if (customDecodeMockState.pendingPlay) {
+                this.playbackState = 'starting';
+                return customDecodeMockState.pendingPlay;
+            }
             if (customDecodeMockState.holdPlay) {
                 return new Promise<never>(() => undefined);
             }
@@ -1515,6 +1522,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         customDecodeMockState.audioEligibilityOverride = null;
         customDecodeMockState.eligible = false;
         customDecodeMockState.holdPlay = false;
+        customDecodeMockState.pendingPlay = null;
         customDecodeMockState.discardDolbyVisionEnhancementLayer = false;
         customDecodeMockState.dolbyVision = false;
         customDecodeMockState.dolbyVisionProfile7HDR10Base = false;
@@ -4325,6 +4333,47 @@ describe('WebGPUPlayer HTML delegation', () => {
         });
     });
 
+    it.each([
+        ['DirectPlay', false],
+        ['DirectPlay', true],
+        ['Transcode', false],
+        ['Transcode', true]
+    ] as const)('forwards seeks after custom playback declines a DVD-subtitle source (%s, native startup pending: %s)', async (playMethod, nativePending) => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = false;
+        const options = createKnownSDRPlayOptions({
+            playMethod,
+            mediaSource: {
+                MediaStreams: [
+                    { Type: 'Video', VideoRangeType: 'SDR' },
+                    { Type: 'Subtitle', Codec: 'dvdsub', Index: 2 }
+                ]
+            }
+        });
+        const started = createDeferred<unknown>();
+        if (nativePending) {
+            backend.play.mockReturnValueOnce(started.promise);
+        }
+        const playPromise = player.play(options);
+        await vi.waitFor(() => expect(backend.play).toHaveBeenCalledOnce());
+        if (!nativePending) {
+            await playPromise;
+        }
+        try {
+            player.currentTime(8_000);
+            player.currentTime(9_000);
+            expect(backend.currentTime).toHaveBeenCalledWith(8_000);
+            expect(backend.currentTime).toHaveBeenCalledWith(9_000);
+            expect(customDecodeMockState.instances).toHaveLength(0);
+        } finally {
+            started.resolve(undefined);
+            await playPromise;
+            await player.stop(false);
+        }
+    });
+
     it('closes an unused audio prewarm before native playback', async () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
@@ -4598,6 +4647,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         );
 
         player.currentTime(8_000);
+        await vi.waitFor(() => expect(customPlaybackController.seek).toHaveBeenCalledOnce());
         player.currentTime(9_000);
         await vi.waitFor(() => (
             expect(customPlaybackController.seek).toHaveBeenCalledTimes(2)
@@ -4608,6 +4658,160 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         expect(backend.play).not.toHaveBeenCalled();
         expect(player.currentTime()).toBe(9_000);
+    });
+
+    it.each([true, false])('keeps the latest seek during surface setup (custom surface available: %s)', async available => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const presenter = getPresenter();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        const surface = { container, video };
+        const prepared = createDeferred<typeof surface | null>();
+        backend.presentationSurface = surface;
+        backend.prepareCustomPlayback.mockReturnValueOnce(prepared.promise);
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        await vi.waitFor(() => expect(backend.prepareCustomPlayback).toHaveBeenCalledOnce());
+
+        player.currentTime(8_000);
+        player.currentTime(9_000);
+        expect(player.currentTime()).toBe(9_000);
+        expect(backend.currentTime).not.toHaveBeenCalledWith(8_000);
+        expect(backend.currentTime).not.toHaveBeenCalledWith(9_000);
+        expect(presenter.seek).not.toHaveBeenCalled();
+        prepared.resolve(available ? surface : null);
+        await playPromise;
+
+        if (available) {
+            expect(getCustomPlaybackController().play).toHaveBeenCalledWith(expect.objectContaining({
+                startTimeMicroseconds: 9_000_000
+            }));
+            expect(backend.play).not.toHaveBeenCalled();
+        } else {
+            expect(backend.play).toHaveBeenCalledWith(expect.objectContaining({
+                playerStartPositionTicks: 90_000_000
+            }));
+        }
+        await player.stop(false);
+    });
+
+    it('starts only the latest seek queued before the controller can run', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        const controller = getCustomPlaybackController();
+
+        player.currentTime(8_000);
+        player.currentTime(9_000);
+        await vi.waitFor(() => expect(controller.seek).toHaveBeenCalled());
+
+        expect(controller.seek).toHaveBeenCalledExactlyOnceWith(9_000_000);
+        expect(controller.playbackState).toBe('playing');
+        expect(player.currentTime()).toBe(9_000);
+        await player.stop(false);
+    });
+
+    it('does not run a queued custom seek after playback has been stopped', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        const controller = getCustomPlaybackController();
+
+        player.currentTime(8_000);
+        await player.stop(false);
+
+        expect(controller.seek).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('keeps the original play pending until the latest overlapping seek finishes startup (stale failure: %s)', async staleFailure => {
+        const initial = createDeferred<CustomPlaybackStartResult>();
+        const firstSeek = createDeferred<CustomPlaybackStartResult>();
+        const secondSeek = createDeferred<CustomPlaybackStartResult>();
+        customDecodeMockState.pendingPlay = initial.promise;
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        const completed = vi.fn();
+        const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' })).then(completed);
+        await vi.waitFor(() => expect(customDecodeMockState.instances).toHaveLength(1));
+        const controller = getCustomPlaybackController();
+        controller.seek.mockImplementationOnce(() => {
+            initial.resolve({ generation: 1, status: 'superseded', fallbackReason: null });
+            controller.playbackState = 'seeking';
+            return firstSeek.promise;
+        }).mockImplementationOnce(() => {
+            if (staleFailure) {
+                firstSeek.reject(new Error('The superseded seek failed'));
+            } else {
+                firstSeek.resolve({ generation: 2, status: 'superseded', fallbackReason: null });
+            }
+            controller.currentTimeMicroseconds = 9_000_000;
+            return secondSeek.promise;
+        });
+
+        player.currentTime(8_000);
+        await vi.waitFor(() => expect(controller.seek).toHaveBeenCalledOnce());
+        player.currentTime(9_000);
+        await vi.waitFor(() => expect(controller.seek).toHaveBeenCalledTimes(2));
+        expect(completed).not.toHaveBeenCalled();
+        expect(player.hasPendingPlay()).toBe(true);
+
+        controller.playbackState = 'playing';
+        controller.eventHandler({ generation: 3, previousState: 'seeking', state: 'playing', type: 'statechange' });
+        secondSeek.resolve({ generation: 3, status: 'started', fallbackReason: null });
+        await playPromise;
+        expect(completed).toHaveBeenCalledExactlyOnceWith(undefined);
+        expect(player.hasPendingPlay()).toBe(false);
+        expect(player.currentTime()).toBe(9_000);
+        expect(backend.play).not.toHaveBeenCalled();
+        await player.stop(false);
+    });
+
+    it('falls back once if the latest seek fails while the original play is still starting', async () => {
+        const initial = createDeferred<CustomPlaybackStartResult>();
+        customDecodeMockState.pendingPlay = initial.promise;
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        await vi.waitFor(() => expect(customDecodeMockState.instances).toHaveLength(1));
+        const controller = getCustomPlaybackController();
+        controller.seek.mockImplementationOnce(() => {
+            initial.resolve({ generation: 1, status: 'superseded', fallbackReason: null });
+            controller.currentTimeMicroseconds = 8_000_000;
+            return Promise.reject(new Error('Latest seek failed'));
+        });
+        player.currentTime(8_000);
+        await playPromise;
+        await vi.waitFor(() => expect(backend.play).toHaveBeenCalledOnce());
+        expect(backend.play).toHaveBeenCalledWith(expect.objectContaining({ playerStartPositionTicks: 80_000_000 }));
+        expect(controller.destroy).toHaveBeenCalledOnce();
+        await player.stop(false);
     });
 
     it('requests source renegotiation without replaying a custom-only URL natively', async () => {

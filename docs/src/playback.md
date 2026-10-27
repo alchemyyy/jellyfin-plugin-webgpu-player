@@ -44,6 +44,11 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 
 - Seek: a new presentation generation, then `controller.seek`.
   Stale results are dropped by `customPlaybackSeekRevision`.
+  Queued seeks check that revision before starting work, not only when completing.
+  A seek during custom surface setup is retained as the startup position rather than sent to the idle HTML backend.
+  When a seek replaces pending decoder startup, the original `play()` follows the newest seek; superseding a decode generation does not cancel the playback session.
+  Superseded seek failures are ignored and a failed latest seek shares the existing fallback instead of starting HTML playback twice.
+  The custom-starting flag ends with the whole setup attempt, including eligibility rejection, so HTML/HLS fallback receives subsequent seeks instead of leaving them queued for a nonexistent custom controller.
 - Audio track switch: eligibility runs again.
   If the source is no longer eligible, the session renegotiates; otherwise it restarts as a seek at the current time.
 - Stop: the delegate stops the backend synchronously, so `stopped` stays in order.
