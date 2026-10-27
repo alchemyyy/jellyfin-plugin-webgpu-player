@@ -250,7 +250,7 @@ describe('ServerModules', () => {
         const { loadServerDecoderPackageSummaries } = await importServerModules();
 
         await expect(loadServerDecoderPackageSummaries(SERVER_ID)).resolves.toEqual([ { codecs: EAC3_ENTRY.codecs, kind: 'audio', outputFormats: [] } ]);
-        expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/^WebGPU server modules: package-header-invalid: hevc packet-syntax: /));
+        expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/^WebGPU server modules: package-header-invalid: hevc packet-identifier: /));
     });
 
     it('downloads a pass file\'s source', async () => {
