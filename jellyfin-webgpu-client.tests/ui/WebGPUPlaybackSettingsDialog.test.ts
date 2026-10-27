@@ -362,8 +362,8 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-// One default button per setting the panel offers, HDR output and GPU decode slicing included
-const DEFAULT_SETTING_BUTTON_COUNT = 19;
+// One default button per setting the panel offers, HDR output, deinterlacing, and GPU decode slicing included
+const DEFAULT_SETTING_BUTTON_COUNT = 20;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -378,6 +378,7 @@ const DUPLICATE_REJECTION_DETAIL = 'pass 3';
 const MISSING_SHAPE_HEADER_FAILURE = "header-invalid: line 1: Missing required directive 'shape'";
 const PARAMETER_PENDING_ERROR = `pass-unknown: '${SATURATION_PASS_NAME}'`;
 const HDR_OUTPUT_FAILURE = 'no HDR display';
+const DEINTERLACE_FAILURE = 'device-lost';
 const SATURATION_PASS_FILE_NAME = 'saturation.wgsl';
 const INVERT_PASS_FILE_NAME = 'invert.wgsl';
 const BLANK_PASS_FILE_NAME = 'blank.wgsl';
@@ -409,7 +410,7 @@ const SERVER_UNAVAILABLE_FAILURE = 'server-request-failed: WebGPUPlayer/Catalog 
 
 type PresentationPlayerMethods = Pick<
     WebGPUPlayer,
-    'getPresentationPlanReport' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
+    'getPresentationPlanReport' | 'setDeinterlaceMode' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
 >;
 
 /** A file the panel lists, as its title and the state text of each of its passes. */
@@ -422,6 +423,7 @@ type PassRow = Readonly<{
 function createPresentationPlayerMethods(): PresentationPlayerMethods {
     return {
         getPresentationPlanReport: vi.fn((): PlanReport => EMPTY_PLAN_REPORT),
+        setDeinterlaceMode: vi.fn((): Promise<void> => Promise.resolve()),
         setHDROutputEnabled: vi.fn((): Promise<void> => Promise.resolve()),
         setPresentationParameter: vi.fn(),
         setPresentationPreset: vi.fn((): Promise<PlanReport> => Promise.resolve(EMPTY_PLAN_REPORT))
@@ -445,9 +447,12 @@ function createPlacementTestPlayer(): WebGPUPlayer {
     return createPresentationTestPlayer(createPresentationPlayerMethods());
 }
 
-/** Stores the presentation settings the panel loads, beside the stored settings the suite starts from. */
-function storePresentation(presentation: WebGPUUserSettings['presentation']): void {
-    storageMockState.value = JSON.stringify({ ...JSON.parse(storageMockState.value ?? '{}') as object, presentation });
+/** Stores the presentation settings the panel loads, the defaults for those not given, beside the stored settings the suite starts from. */
+function storePresentation(presentation: Partial<WebGPUUserSettings['presentation']>): void {
+    storageMockState.value = JSON.stringify({
+        ...JSON.parse(storageMockState.value ?? '{}') as object,
+        presentation: { ...createDefaultWebGPUUserSettings().presentation, ...presentation }
+    });
 }
 
 /** Reads the presentation settings the panel saved. */
@@ -1982,9 +1987,41 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         await panelPromise;
     });
 
+    it('shows the stored deinterlacing mode, saves and applies each mode live, and restores its default', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        storePresentation({ deinterlaceMode: 'off' });
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const deinterlaceSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="deinterlaceMode"]');
+        const deinterlaceStatus = requirePanelElement<HTMLElement>(panel, '[data-deinterlace-mode-status]');
+        expect(Array.from(deinterlaceSelect.options, (option: HTMLOptionElement): string => option.value)).toEqual([ 'double-rate', 'single-rate', 'off' ]);
+        expect(deinterlaceSelect.value).toBe('off');
+        // Opening the panel shows the stored mode without applying it again
+        expect(presentationMethods.setDeinterlaceMode).not.toHaveBeenCalled();
+
+        for (const mode of [ 'single-rate', 'double-rate', 'off' ] as const) {
+            deinterlaceSelect.value = mode;
+            deinterlaceSelect.dispatchEvent(new Event('change'));
+            await flushMicrotasks();
+            expect(presentationMethods.setDeinterlaceMode).toHaveBeenLastCalledWith(mode);
+            expect(readSavedPresentation().deinterlaceMode).toBe(mode);
+            expect(deinterlaceStatus.textContent).toBe(translateSourceString('WebGPUDeinterlaceApplied'));
+        }
+
+        vi.mocked(presentationMethods.setDeinterlaceMode).mockRejectedValueOnce(new Error(DEINTERLACE_FAILURE));
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="deinterlaceMode"]').click();
+        await flushMicrotasks();
+        expect(deinterlaceSelect.value).toBe('double-rate');
+        expect(presentationMethods.setDeinterlaceMode).toHaveBeenLastCalledWith('double-rate');
+        expect(readSavedPresentation().deinterlaceMode).toBe('double-rate');
+        expect(deinterlaceStatus.textContent).toBe(translateSourceString('WebGPUDeinterlaceFailed', DEINTERLACE_FAILURE));
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
     it('restores and reapplies the presentation defaults on reset all', async () => {
         const presentationMethods = createPresentationPlayerMethods();
-        storePresentation({ files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ], hdrOutput: true });
+        storePresentation({ deinterlaceMode: 'single-rate', files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ], hdrOutput: true });
         const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
         expect(HDROutputCheckbox.checked).toBe(true);
@@ -1996,6 +2033,8 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const defaultPresentation = createDefaultWebGPUUserSettings().presentation;
         expect(readSavedPresentation()).toEqual(defaultPresentation);
         expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(defaultPresentation.hdrOutput);
+        expect(presentationMethods.setDeinterlaceMode).toHaveBeenLastCalledWith(defaultPresentation.deinterlaceMode);
+        expect(requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="deinterlaceMode"]').value).toBe(defaultPresentation.deinterlaceMode);
         expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(defaultPresentation.files);
         expect(HDROutputCheckbox.checked).toBe(defaultPresentation.hdrOutput);
         expect(readPassRows(panel)).toEqual([]);

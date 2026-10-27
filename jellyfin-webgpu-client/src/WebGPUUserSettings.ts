@@ -13,6 +13,11 @@ import {
     type AudioDownmixSettings
 } from 'webgpu-player/audio/processing/CustomAudioDownmix';
 import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
+import {
+    DEFAULT_DEINTERLACE_MODE,
+    DEINTERLACE_MODES,
+    type DeinterlaceMode
+} from 'webgpu-player/presentation/DeinterlaceTimeline';
 
 export const WEBGPU_USER_SETTINGS_VERSION = 4;
 export const WEBGPU_USER_SETTINGS_STORAGE_KEY = 'webGPUPlaybackSettings';
@@ -56,8 +61,10 @@ export type WebGPUUserSettings = Readonly<{
         enableGPUDecodeSlicing: boolean
         enableHDRToneMapping: boolean
     }>
-    // Both apply live: the presenter replans the active session and keeps them for later ones
+    // Each applies live: the presenter replans the active session and keeps them for later ones
     presentation: Readonly<{
+        /** How interlaced video presents: a frame per field, a frame per frame, or woven frames as decoded */
+        deinterlaceMode: DeinterlaceMode
         files: readonly StoredPresentationFile[]
         hdrOutput: boolean
     }>
@@ -207,6 +214,7 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
             enableHDRToneMapping: true
         },
         presentation: {
+            deinterlaceMode: DEFAULT_DEINTERLACE_MODE,
             files: [],
             hdrOutput: false
         },
@@ -341,6 +349,8 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
             )
         },
         presentation: {
+            deinterlaceMode: DEINTERLACE_MODES.find((mode: DeinterlaceMode): boolean => mode === presentation.deinterlaceMode)
+                ?? defaults.presentation.deinterlaceMode,
             files: normalizePresentationFiles(presentation.files),
             hdrOutput: normalizeBoolean(presentation.hdrOutput, defaults.presentation.hdrOutput)
         },

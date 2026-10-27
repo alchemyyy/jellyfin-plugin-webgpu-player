@@ -2,6 +2,7 @@ import escapeHtml from 'escape-html';
 
 import globalize from 'lib/globalize';
 
+import type { DeinterlaceMode } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { getPresetPassPosition, PASS_FILE_EXTENSION } from 'webgpu-player/presentation/passes/PassLanguage';
 import { parsePassFile, type PassFileEntry } from 'webgpu-player/presentation/passes/PassManifest';
 import type { PassManifest, PassParameter, PassRejection, PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
@@ -34,11 +35,18 @@ import {
 } from '../WebGPUUserSettings';
 import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
-// The presentation and shader pass sections of the playback settings panel: HDR output, and the user's WGSL shader files in this browser.
+// The presentation and shader pass sections of the playback settings panel: HDR output, deinterlacing, and the user's WGSL shader files in this browser.
 // A file comes from this device or from the passes the server offers, which download when the user adds one.
 // The files' sources live in the pass source store in IndexedDB, and the settings hold each file's key
 
 const HDR_OUTPUT_SETTING_KEY = 'hdrOutput';
+const DEINTERLACE_MODE_SETTING_KEY = 'deinterlaceMode';
+// Each deinterlacing mode's option label: Jellyfin Web's own word for off
+const DEINTERLACE_MODE_OPTIONS: ReadonlyArray<readonly [ DeinterlaceMode, string ]> = [
+    [ 'double-rate', 'WebGPUDeinterlaceDoubleRate' ],
+    [ 'single-rate', 'WebGPUDeinterlaceSingleRate' ],
+    [ 'off', 'Off' ]
+];
 // The pass files the picker offers: WGSL sources, which are plain text
 const PASS_FILE_TYPES = `${PASS_FILE_EXTENSION},text/plain`;
 // A float parameter steps freely; integer parameters step by whole numbers
@@ -60,9 +68,9 @@ export type PresentationSectionContext = Readonly<{
 }>;
 
 export type PresentationSectionController = Readonly<{
-    /** Hands the settings' HDR output and shader files to the player */
+    /** Hands the settings' HDR output, deinterlacing, and shader files to the player */
     apply: () => void
-    /** Shows the settings' HDR output and shader files, and deletes the sources of files the settings no longer hold */
+    /** Shows the settings' HDR output, deinterlacing, and shader files, and deletes the sources of files the settings no longer hold */
     synchronize: () => void
 }>;
 
@@ -243,7 +251,7 @@ function createMissingSourceFileHTML(file: StoredPresentationFile, index: number
     );
 }
 
-/** Returns the presentation section's HTML, the HDR output switch, then the shader pass section's: the file list, the server's passes, and the file buttons. */
+/** Returns the presentation section's HTML, the HDR output switch and the deinterlacing choice, then the shader pass section's: the file list, the server's passes, and the file buttons. */
 export function createPresentationSectionHTML(): string {
     return `
         <section class="webgpuSettingsSection" aria-labelledby="webgpu-presentation-title">
@@ -265,6 +273,25 @@ export function createPresentationSectionHTML(): string {
                 ${translateToHTML('WebGPUHDROutputHelp')}
             </div>
             <div aria-live="polite" class="webgpuSettingsStatus" data-hdr-output-status role="status"></div>
+            <div class="webgpuSettingsSelectRow">
+                <div class="selectContainer webgpuSettingsSelectContainer">
+                    <select
+                        aria-describedby="webgpu-deinterlace-mode-description"
+                        data-setting-select="${DEINTERLACE_MODE_SETTING_KEY}"
+                        id="webgpu-deinterlace-mode"
+                        is="emby-select"
+                        label="${translateToHTML('WebGPUDeinterlace')}"
+                    >
+                        ${DEINTERLACE_MODE_OPTIONS.map(([ mode, labelKey ]): string => `<option value="${mode}">${translateToHTML(labelKey)}</option>`).join('')}
+                    </select>
+                </div>
+                ${createDefaultButtonHTML(DEINTERLACE_MODE_SETTING_KEY, globalize.translate('WebGPUSettingNameDeinterlace'))}
+            </div>
+            <div
+                class="fieldDescription"
+                id="webgpu-deinterlace-mode-description"
+            >${translateToHTML('WebGPUDeinterlaceHelp')}</div>
+            <div aria-live="polite" class="webgpuSettingsStatus" data-deinterlace-mode-status role="status"></div>
         </section>
 
         <section class="webgpuSettingsSection" aria-labelledby="webgpu-shader-passes-title">
@@ -324,6 +351,9 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const serverPassSelect = requireSectionElement<HTMLSelectElement>(panel, '[data-server-passes]');
     const addServerPassButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsAddServerPass');
     const HDROutputDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${HDR_OUTPUT_SETTING_KEY}"]`);
+    const deinterlaceModeSelect = requireSectionElement<HTMLSelectElement>(panel, `[data-setting-select="${DEINTERLACE_MODE_SETTING_KEY}"]`);
+    const deinterlaceModeStatusElement = requireSectionElement<HTMLElement>(panel, '[data-deinterlace-mode-status]');
+    const deinterlaceModeDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${DEINTERLACE_MODE_SETTING_KEY}"]`);
     let report = player.getPresentationPlanReport();
     // A preset result arriving after a newer change must not overwrite it
     let presetRevision = 0;
@@ -503,6 +533,19 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         });
     };
 
+    const applyDeinterlaceMode = (notice: string | null): void => {
+        void player.setDeinterlaceMode(context.getSettings().presentation.deinterlaceMode).then((): void => {
+            if (context.isActive()) {
+                const applied = globalize.translate('WebGPUDeinterlaceApplied');
+                setStatus(deinterlaceModeStatusElement, joinSentences(applied, notice) ?? applied);
+            }
+        }, (error: unknown): void => {
+            if (context.isActive()) {
+                setStatus(deinterlaceModeStatusElement, globalize.translate('WebGPUDeinterlaceFailed', getErrorMessage(error)));
+            }
+        });
+    };
+
     const updateFiles = (files: readonly StoredPresentationFile[], notice: string | null): void => {
         const saveFailure = savePresentation({ ...context.getSettings().presentation, files });
         applyPreset(joinSentences(notice, describeSaveFailure(saveFailure)));
@@ -641,6 +684,17 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         onHDROutputChange();
     };
 
+    const onDeinterlaceModeChange = (): void => {
+        // The select offers only the modes; the settings' normalization keeps any other value out of storage
+        const saveFailure = savePresentation({ ...context.getSettings().presentation, deinterlaceMode: deinterlaceModeSelect.value as DeinterlaceMode });
+        applyDeinterlaceMode(describeSaveFailure(saveFailure));
+    };
+
+    const onDeinterlaceModeDefault = (): void => {
+        deinterlaceModeSelect.value = createDefaultWebGPUUserSettings().presentation.deinterlaceMode;
+        onDeinterlaceModeChange();
+    };
+
     const onAddFiles = (): void => {
         passFileInput.value = '';
         passFileInput.click();
@@ -718,6 +772,8 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const listeners: Array<[EventTarget, string, (event: Event) => void]> = [
         [ HDROutputCheckbox, 'change', onHDROutputChange ],
         [ HDROutputDefaultButton, 'click', onHDROutputDefault ],
+        [ deinterlaceModeSelect, 'change', onDeinterlaceModeChange ],
+        [ deinterlaceModeDefaultButton, 'click', onDeinterlaceModeDefault ],
         [ addFilesButton, 'click', onAddFiles ],
         [ passFileInput, 'change', onPassFilesChosen ],
         [ removeFilesButton, 'click', onRemoveFiles ],
@@ -739,10 +795,12 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     return {
         apply: (): void => {
             applyHDROutput(null);
+            applyDeinterlaceMode(null);
             applyPreset(null);
         },
         synchronize: (): void => {
             HDROutputCheckbox.checked = context.getSettings().presentation.hdrOutput;
+            deinterlaceModeSelect.value = context.getSettings().presentation.deinterlaceMode;
             renderFiles();
             releaseDroppedSources();
         }
