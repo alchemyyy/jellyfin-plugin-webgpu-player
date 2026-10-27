@@ -197,7 +197,7 @@ function createRawDolbyVisionRoute(
     };
 }
 
-/** A GPU decoder package's frame-pool route, which presents the stream's own color, never an RPU. */
+/** A GPU decoder package's frame-pool route, which presents the stream's own color. */
 function createFramePoolRoute(
     rawVideoFrameFormat: GPUDecoderOutputFormat,
     hdr: boolean
@@ -211,6 +211,14 @@ function createFramePoolRoute(
         videoDecoderBackend: GPU_VIDEO_DECODER_BACKEND,
         videoOutputMode: 'frame-pool'
     };
+}
+
+/** A GPU decoder package's frame-pool route that reconstructs the stream's RPU, from the BL alone for a dual-layer profile. */
+function createFramePoolDolbyVisionRoute(
+    dolbyVisionProfile: 4 | 5 | 7 | 8,
+    rawVideoFrameFormat: GPUDecoderOutputFormat = 'I420P10'
+): ExpectedHEVCRoute {
+    return { ...createFramePoolRoute(rawVideoFrameFormat, true), dolbyVisionProfile };
 }
 
 function getStaticHEVCRoute(range: JellyfinVideoRangeType): ExpectedHEVCRoute | undefined {
@@ -1250,19 +1258,19 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     {
         // Compatibility ID 0 declares no base, and only the RPU presents the stream
         label: 'Dolby Vision Profile 5',
-        packageDecodeRoute: null,
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(5),
         rawPresentationRoute: createRawDolbyVisionRoute(5),
         videoStream: createDolbyVisionHEVCStream(5, 0, 'DOVI', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 7 with compatibility ID 6',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(7),
         rawPresentationRoute: createRawDolbyVisionRoute(7),
         videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithEL', 'pq', true)
     },
     {
         label: 'Dolby Vision Profile 7 plus HDR10+ metadata',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(7),
         rawPresentationRoute: createRawDolbyVisionRoute(7),
         videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithELHDR10Plus', 'pq', true, {
             Hdr10PlusPresentFlag: true
@@ -1270,13 +1278,13 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 8.1',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 8.1 plus HDR10+ metadata',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10Plus', 'pq', false, {
             Hdr10PlusPresentFlag: true
@@ -1284,7 +1292,7 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 8.2',
-        packageDecodeRoute: createFramePoolRoute('I420P10', false),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
         videoStream: createDolbyVisionHEVCStream(8, 2, 'DOVIWithSDR', 'pq', false, {
             ColorPrimaries: 'bt709',
@@ -1295,25 +1303,25 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 8.4',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
         videoStream: createDolbyVisionHEVCStream(8, 4, 'DOVIWithHLG', 'hlg', false)
     },
     {
         label: 'Dolby Vision Profile 8.1 with an enhancement layer flag',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10', 'pq', true)
     },
     {
         label: 'Dolby Vision Profile 7 without its enhancement layer',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(7),
         rawPresentationRoute: createRawDolbyVisionRoute(7),
         videoStream: createDolbyVisionHEVCStream(7, 6, 'DOVIWithEL', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 4',
-        packageDecodeRoute: createFramePoolRoute('I420P10', false),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(4),
         rawPresentationRoute: createRawDolbyVisionRoute(4),
         videoStream: createDolbyVisionHEVCStream(4, 2, 'SDR', 'pq', true, {
             ColorPrimaries: 'bt709',
@@ -1324,20 +1332,20 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 20 with compatibility ID 0',
-        packageDecodeRoute: null,
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(5),
         rawPresentationRoute: createRawDolbyVisionRoute(5),
         videoStream: createDolbyVisionHEVCStream(20, 0, 'HDR10', 'pq', false)
     },
     {
         label: 'Dolby Vision Profile 20 with compatibility ID 1',
-        packageDecodeRoute: createFramePoolRoute('I420P10', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8),
         rawPresentationRoute: createRawDolbyVisionRoute(8),
         videoStream: createDolbyVisionHEVCStream(20, 1, 'HDR10', 'pq', false)
     },
     {
-        // No raw route decodes 8-bit Main planes, and compatibility ID 0 declares no base, so nothing presents the stream
+        // No native raw route decodes 8-bit Main planes and compatibility ID 0 declares no base, so only the package's frame pool reconstructs it
         label: 'Dolby Vision Profile 8 with compatibility ID 0 over an 8-bit Main base',
-        packageDecodeRoute: null,
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8, 'I420'),
         rawPresentationRoute: null,
         videoStream: createDolbyVisionHEVCStream(8, 0, 'DOVIInvalid', 'pq', false, {
             BitDepth: 8,
@@ -1346,7 +1354,7 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
     },
     {
         label: 'Dolby Vision Profile 7 with compatibility ID 0 over an 8-bit Main base',
-        packageDecodeRoute: null,
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(7, 'I420'),
         rawPresentationRoute: null,
         videoStream: createDolbyVisionHEVCStream(7, 0, 'DOVIWithEL', 'pq', true, {
             BitDepth: 8,
@@ -1354,9 +1362,9 @@ const HEVC_ROUTE_FALLBACK_MATRIX: readonly HEVCRouteFallbackRow[] = [
         })
     },
     {
-        // The package writes the range extension's planes, so the declared base presents
+        // The package writes the range extension's planes, which it reconstructs in
         label: 'Dolby Vision Profile 8.1 over a named Main 12 base',
-        packageDecodeRoute: createFramePoolRoute('I420P12', true),
+        packageDecodeRoute: createFramePoolDolbyVisionRoute(8, 'I420P12'),
         rawPresentationRoute: createRawDolbyVisionRoute(8, 'I420P12'),
         videoStream: createDolbyVisionHEVCStream(8, 1, 'DOVIWithHDR10', 'pq', false, {
             BitDepth: 12,

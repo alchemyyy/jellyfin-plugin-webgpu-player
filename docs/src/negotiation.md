@@ -96,10 +96,10 @@ Jellyfin labels many Dolby Vision streams the engine can present outside the gen
 - a P10 Matroska stream without a CCID, by transfer.
 
 For a non-retry Dolby Vision item, `getHDRDeviceProfileOptions` passes the item's streams as `itemMediaSource`.
-`CustomDeviceProfile` asks the engine's `hasEligibleCustomVideoRoute` whether the runtime would present the item with the measured capabilities and authorizations, the video packages of `decoderPackages`, and `allowFramePoolHDR`.
+`CustomDeviceProfile` asks the engine's `hasEligibleCustomVideoRoute` whether the runtime would present the item with the measured capabilities and authorizations, the video packages of `decoderPackages`, `allowFramePoolHDR`, and the Dolby Vision RPU flags.
 A video package's summary carries its header and the device's buffer limit, so the engine runs the offers' fit check on the item's stream: its `accepts` conditions, `monochrome`, frame pool, `state`, `buffer:`s, and packet ring.
 If it would, `CustomDeviceProfile` advertises the item's exact VideoProfile (as the existing route token), VideoBitDepth, and VideoRangeType as one more HEVC or AV1 route.
-So without native HEVC decode, a stream whose declared base the HEVC decoder package decodes, such as Profile 7 or 8.1, is advertised, and one past the package's bound of 8912896 coded samples, such as 8K, is not.
+So without native HEVC decode the HEVC decoder package's frame pool reconstructs the RPU, Profile 5 included, once the RPU route's key of the BL format authorized, and a stream whose declared base the package decodes, such as Profile 7 or 8.1, is advertised either way; one past the package's bound of 8912896 coded samples, such as 8K, is not.
 
 ## Decoder packages
 
