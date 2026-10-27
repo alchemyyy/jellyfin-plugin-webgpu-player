@@ -39,10 +39,18 @@ import {
 } from 'webgpu-player/capability/CustomContainerCodecSupport';
 import type { H264ProfileCapabilities } from 'webgpu-player/capability/H264ProfileCapabilities';
 import {
+    AV1_RAW_FORMAT_PROBE_DEFINITIONS,
+    AV1_RAW_FORMAT_VARIANTS,
+    type AV1RawFormatCapability,
+    type AV1RawFormatVariant
+} from 'webgpu-player/capability/AV1RawFormatCapabilities';
+import {
     HEVC_RANGE_EXTENSION_VARIANTS,
     type HEVCRangeExtensionCapability,
+    type HEVCRangeExtensionRawFormat,
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
+import type { RawHDRAuthorizationRouteKey } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
 import type {
     NativeMediaAudioCapabilities,
     NativeMediaAudioChannelCount,
@@ -51,6 +59,7 @@ import type {
     NativeMediaAudioLayoutCapability
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import {
+    createAV1RawFormatCapability,
     createConfigCodecCapability,
     createH264ProfileCapabilities,
     createHEVCRangeExtensionCapability,
@@ -4172,5 +4181,155 @@ describe('augmentDeviceProfileForCustomDecode Profile 10 and 10-bit raw routes',
         // No decoder decodes the EL, so Profile 7 reconstructs from its BL's raw Main 10 planes
         expect(isDirectPlayAdvertised(rawResult.profile, stream)).toBe(true);
         expect(isDirectPlayAdvertised(nativeOnlyResult.profile, stream)).toBe(false);
+    });
+});
+
+// The AV1 raw format variants Chrome's software decoder decodes and copies; it refuses 12-bit AV1
+const CHROME_AV1_RAW_FORMAT_VARIANTS = AV1_RAW_FORMAT_VARIANTS.filter((variant: AV1RawFormatVariant): boolean => (
+    AV1_RAW_FORMAT_PROBE_DEFINITIONS[variant].bitDepth < 12
+));
+
+/** Adds AV1 raw-format evidence, unqualified apart from the given variants. */
+function withAV1RawFormats(
+    capabilities: CustomDecodeCapabilities,
+    supportedVariants: readonly AV1RawFormatVariant[]
+): CustomDecodeCapabilities {
+    const av1RawFormats = {} as Record<AV1RawFormatVariant, AV1RawFormatCapability>;
+    for (const variant of AV1_RAW_FORMAT_VARIANTS) {
+        av1RawFormats[variant] = createAV1RawFormatCapability(variant, supportedVariants.includes(variant));
+    }
+    return { ...capabilities, av1RawFormats };
+}
+
+/** Returns the depth condition of a codec's exact route for one profile/range pair. */
+function getMeasuredRoutePairBitDepths(profile: DeviceProfile, codec: string, pair: string): string | undefined {
+    const codecProfile = (profile.CodecProfiles ?? []).find(candidate => {
+        const applyConditions = candidate.ApplyConditions ?? [];
+        const profileValue = applyConditions.find(condition => condition.Property === 'VideoProfile')?.Value;
+        const rangeValue = applyConditions.find(condition => condition.Property === 'VideoRangeType')?.Value;
+        return candidate.Codec === codec && `${profileValue}|${rangeValue}` === pair;
+    });
+    return codecProfile?.Conditions?.find(condition => condition.Property === 'VideoBitDepth')?.Value ?? undefined;
+}
+
+/** Returns both BT.709 raw SDR keys of each format, which stand for the format's every SDR key in a profile. */
+function getBT709RawSDRRouteKeys(formats: readonly HEVCRangeExtensionRawFormat[]): RawHDRAuthorizationRouteKey[] {
+    return formats.flatMap((format: HEVCRangeExtensionRawFormat): RawHDRAuthorizationRouteKey[] => [
+        `${format}:bt709:bt709:limited:sdr`,
+        `${format}:bt709:bt709:full:sdr`
+    ]);
+}
+
+const AV1_RAW_FORMAT_CAPABILITY_OPTIONS = {
+    supportedAudioCodecs: [ 'aac' ],
+    supportedRawHDRVideoCodecs: [ 'av1' ],
+    supportedVideoCodecs: [ 'av1' ]
+} as const;
+
+const EIGHT_BIT_PROFILE_10_STREAM = createProfile10Stream(2, 'DOVIWithSDR', {
+    BitDepth: 8,
+    ColorPrimaries: 'bt709',
+    ColorSpace: 'bt709',
+    ColorTransfer: 'bt709',
+    PixelFormat: 'yuv420p',
+    VideoRange: 'SDR'
+});
+
+/** Returns the base profile with Jellyfin Web's stock AV1 codec profile of an HDR display, which conditions on Main. */
+function createBaseProfileWithStockAV1(): DeviceProfile {
+    const profile = createBaseProfile();
+    const stockProfile = createStockVideoCodecProfile('av1', HDR_DISPLAY_STOCK_VIDEO_RANGE_TYPES);
+    profile.CodecProfiles = [ {
+        ...stockProfile,
+        Conditions: [
+            { Condition: 'EqualsAny', IsRequired: false, Property: 'VideoProfile', Value: 'main' },
+            ...stockProfile.Conditions ?? []
+        ]
+    } ];
+    return profile;
+}
+
+describe('augmentDeviceProfileForCustomDecode AV1 raw formats outside Main 10', () => {
+    it('advertises each qualified raw format under its profile and depth, with the ranges its keys and the RPU route authorize', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockAV1(),
+            withAV1RawFormats(createCapabilities(AV1_RAW_FORMAT_CAPABILITY_OPTIONS), CHROME_AV1_RAW_FORMAT_VARIANTS),
+            {
+                allowDolbyVision: true,
+                allowRawHDR: true,
+                allowRawSDR: true,
+                authorizedRawHDRRouteKeys: [
+                    ...RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys,
+                    ...RAW_SDR_ROUTE_KEYS,
+                    ...getBT709RawSDRRouteKeys([ 'I444', 'I444P10', 'I422', 'I422P10' ]),
+                    'I444P10:bt2020-ncl:bt2020:limited:pq'
+                ]
+            }
+        );
+        const pairBitDepths = (pair: string): string | undefined => getMeasuredRoutePairBitDepths(result.profile, 'av1', pair);
+
+        expect(pairBitDepths('high|SDR')).toBe('8|10');
+        expect(pairBitDepths('professional|SDR')).toBe('8|10');
+        // HDR10+ joins HDR10 on the format's PQ key; its HLG key and the I422P10 HDR keys were not authorized
+        expect(pairBitDepths('high|HDR10')).toBe('10');
+        expect(pairBitDepths('high|HDR10Plus')).toBe('10');
+        expect(pairBitDepths('high|HLG')).toBe('0');
+        expect(pairBitDepths('professional|HDR10')).toBe('0');
+        // Profile 10 reconstructs from every qualified format, and at 8 bits from I420 beside raw Main 10
+        expect(pairBitDepths('main|DOVIWithSDR')).toBe('10|8');
+        expect(pairBitDepths('high|DOVIWithHDR10')).toBe('8|10');
+        expect(pairBitDepths('professional|DOVIInvalid')).toBe('8|10');
+        // 8-bit Main SDR keeps its native route, which raw 10-bit SDR joins
+        expect(pairBitDepths('main|SDR')).toBe('8|10');
+        expect(isDirectPlayAdvertised(result.profile, EIGHT_BIT_PROFILE_10_STREAM)).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'High', 8, 'SDR', { PixelFormat: 'yuv444p' }))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Professional', 10, 'SDR', { PixelFormat: 'yuv422p10le' }))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'High', 10, 'HDR10', { ...PQ_STREAM_COLOR, PixelFormat: 'yuv444p10le' }))).toBe(true);
+        // The 12-bit variants did not qualify
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Professional', 12, 'SDR', { PixelFormat: 'yuv420p12le' }))).toBe(false);
+    });
+
+    it('advertises no raw format outside Main 10 without its qualification', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockAV1(),
+            withAV1RawFormats(createCapabilities(AV1_RAW_FORMAT_CAPABILITY_OPTIONS), []),
+            {
+                allowDolbyVision: true,
+                allowRawHDR: true,
+                allowRawSDR: true,
+                authorizedRawHDRRouteKeys: [
+                    ...RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys,
+                    ...RAW_SDR_ROUTE_KEYS,
+                    ...getBT709RawSDRRouteKeys([ 'I420', 'I444', 'I444P10', 'I422', 'I422P10' ])
+                ]
+            }
+        );
+
+        expect(getMeasuredRoutePairs(result.profile, 'av1').every(pair => pair.startsWith('main|'))).toBe(true);
+        expect(getMeasuredRoutePairBitDepths(result.profile, 'av1', 'main|DOVIWithSDR')).toBe('10');
+        expect(isDirectPlayAdvertised(result.profile, EIGHT_BIT_PROFILE_10_STREAM)).toBe(false);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'High', 8, 'SDR', { PixelFormat: 'yuv444p' }))).toBe(false);
+    });
+
+    it('needs both BT.709 keys of a format for its SDR, its HDR key for HDR, and the RPU route for Profile 10', () => {
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockAV1(),
+            withAV1RawFormats(createCapabilities(AV1_RAW_FORMAT_CAPABILITY_OPTIONS), CHROME_AV1_RAW_FORMAT_VARIANTS),
+            {
+                allowRawHDR: true,
+                allowRawSDR: true,
+                authorizedRawHDRRouteKeys: [
+                    ...RAW_HDR_PROFILE_OPTIONS.authorizedRawHDRRouteKeys,
+                    'I444:bt709:bt709:limited:sdr',
+                    ...getBT709RawSDRRouteKeys([ 'I422' ])
+                ]
+            }
+        );
+
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'High', 8, 'SDR', { PixelFormat: 'yuv444p' }))).toBe(false);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Professional', 8, 'SDR', { PixelFormat: 'yuv422p' }))).toBe(true);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Professional', 10, 'SDR', { PixelFormat: 'yuv422p10le' }))).toBe(false);
+        expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'High', 10, 'HDR10', { ...PQ_STREAM_COLOR, PixelFormat: 'yuv444p10le' }))).toBe(false);
+        expect(isDirectPlayAdvertised(result.profile, EIGHT_BIT_PROFILE_10_STREAM)).toBe(false);
     });
 });

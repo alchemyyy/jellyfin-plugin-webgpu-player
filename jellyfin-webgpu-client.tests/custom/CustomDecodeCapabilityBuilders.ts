@@ -4,6 +4,11 @@ import type {
     CustomVideoCodec
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 import {
+    AV1_RAW_FORMAT_PROBE_DEFINITIONS,
+    type AV1RawFormatCapability,
+    type AV1RawFormatVariant
+} from 'webgpu-player/capability/AV1RawFormatCapabilities';
+import {
     H264_JELLYFIN_PROFILE_NAMES,
     H264_PROFILE_PROBE_CODED_HEIGHT,
     H264_PROFILE_PROBE_CODED_WIDTH,
@@ -16,7 +21,7 @@ import {
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 
-// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension probe results, and the codecs the engine has no decoder of
+// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension and AV1 raw-format probe results, and the codecs the engine has no decoder of
 
 /** Builds a WebCodecs codec capability as the configuration probe alone reports it. */
 export function createConfigCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
@@ -69,6 +74,23 @@ export function createHEVCRangeExtensionCapability(variant: HEVCRangeExtensionVa
         bitDepth: definition.bitDepth,
         chromaFormat: definition.chromaFormat,
         codec: 'hevc',
+        codecString: definition.config.codec,
+        format: definition.format,
+        jellyfinProfile: definition.jellyfinProfile,
+        pixelFormat: definition.pixelFormat,
+        reason: supported ? 'output-copy-supported' : 'output-copy-unsupported',
+        status: supported ? 'supported' : 'unsupported',
+        variant
+    };
+}
+
+/** Builds the output-copy probe result of one AV1 raw-format variant from its probe definition. */
+export function createAV1RawFormatCapability(variant: AV1RawFormatVariant, supported: boolean): AV1RawFormatCapability {
+    const definition = AV1_RAW_FORMAT_PROBE_DEFINITIONS[variant];
+    return {
+        bitDepth: definition.bitDepth,
+        chromaFormat: definition.chromaFormat,
+        codec: 'av1',
         codecString: definition.config.codec,
         format: definition.format,
         jellyfinProfile: definition.jellyfinProfile,

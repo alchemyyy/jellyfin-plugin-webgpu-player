@@ -3,6 +3,12 @@ import type { DeviceProfile } from '@jellyfin/sdk/lib/generated-client/models/de
 import { describe, expect, it } from 'vitest';
 
 import {
+    AV1_RAW_FORMAT_PROBE_DEFINITIONS,
+    AV1_RAW_FORMAT_VARIANTS,
+    type AV1RawFormatCapability,
+    type AV1RawFormatVariant
+} from 'webgpu-player/capability/AV1RawFormatCapabilities';
+import {
     CUSTOM_AUDIO_CODECS,
     CUSTOM_RAW_HDR_VIDEO_CODECS,
     CUSTOM_VIDEO_CODECS,
@@ -15,13 +21,16 @@ import {
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 import {
     augmentDeviceProfileForCustomDecode,
-    type CustomDeviceProfileOptions
+    type CustomDeviceProfileOptions,
+    type DecoderPackageRouteSummary
 } from 'addons/webGPUPlayer/custom/CustomDeviceProfile';
 import {
     getCustomPlaybackEligibility,
+    hasEligibleCustomVideoRoute,
     type CustomPlaybackEligibility,
     type CustomPlaybackEligibilityOptions,
-    type CustomPlaybackIneligibilityReason
+    type CustomPlaybackIneligibilityReason,
+    type CustomVideoRouteOptions
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import type { CustomPlaybackRuntimeAvailability } from 'webgpu-player/capability/CustomPlaybackRuntime';
 import type {
@@ -35,7 +44,7 @@ import {
     RAW_HDR_AUTHORIZATION_ROUTE_KEYS,
     type RawHDRAuthorizationRouteKey
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
-import { createVerifiedCodecCapability } from './CustomDecodeCapabilityBuilders';
+import { createAV1RawFormatCapability, createVerifiedCodecCapability } from './CustomDecodeCapabilityBuilders';
 
 // The labels MediaBrowser.Model/Entities/MediaStream.cs gives Profile 10:
 // 10.0 is DOVI, 10.1 DOVIWithHDR10 or DOVIWithHDR10Plus, 10.2 DOVIWithSDR, and 10.4 DOVIWithHLG.
@@ -121,9 +130,21 @@ const RAW_HDR_ROUTE: ExpectedAV1Route = {
     hdr: true
 };
 
-function createRawDolbyVisionRoute(dolbyVisionProfile: 5 | 8): ExpectedAV1Route {
+/** Returns the raw route of a format, such as I444 for 8-bit High; the transfer comes from the stream's color metadata. */
+function createRawRoute(rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat, hdr: boolean): ExpectedAV1Route {
     return {
-        ...RAW_HDR_ROUTE,
+        ...RAW_SDR_ROUTE,
+        hdr,
+        rawVideoFrameFormat
+    };
+}
+
+function createRawDolbyVisionRoute(
+    dolbyVisionProfile: 5 | 8,
+    rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat = 'I420P10'
+): ExpectedAV1Route {
+    return {
+        ...createRawRoute(rawVideoFrameFormat, true),
         dolbyVisionProfile
     };
 }
@@ -199,7 +220,7 @@ function createRawHDRCapability(codec: CustomRawHDRVideoCodec, supported: boolea
     };
 }
 
-/** Qualifies native 8-bit AV1 decode, and raw AV1 Main 10 planes when requested. */
+/** Qualifies native 8-bit AV1 decode, and when requested raw AV1 Main 10 planes and the raw formats Chrome's software decoder copies: every 8 and 10-bit variant, and no 12-bit one. */
 function createAV1Capabilities(rawAV1Supported: boolean): CustomDecodeCapabilities {
     const audio = {} as Record<CustomAudioCodec, CustomDecodeCodecCapability<CustomAudioCodec>>;
     for (const codec of CUSTOM_AUDIO_CODECS) {
@@ -215,9 +236,14 @@ function createAV1Capabilities(rawAV1Supported: boolean): CustomDecodeCapabiliti
     for (const codec of CUSTOM_RAW_HDR_VIDEO_CODECS) {
         rawHDRVideo[codec] = createRawHDRCapability(codec, rawAV1Supported && codec === 'av1');
     }
+    const av1RawFormats = {} as Record<AV1RawFormatVariant, AV1RawFormatCapability>;
+    for (const variant of AV1_RAW_FORMAT_VARIANTS) {
+        av1RawFormats[variant] = createAV1RawFormatCapability(variant, rawAV1Supported && AV1_RAW_FORMAT_PROBE_DEFINITIONS[variant].bitDepth < 12);
+    }
 
     return {
         audio,
+        av1RawFormats,
         rawHDRVideo,
         telemetry: {
             audioProbeCount: CUSTOM_AUDIO_CODECS.length,
@@ -289,6 +315,30 @@ function createHDRAV1Stream(
         ColorSpace: 'bt2020nc',
         ColorTransfer: transfer === 'pq' ? 'smpte2084' : 'arib-std-b67',
         VideoRange: 'HDR',
+        ...overrides
+    });
+}
+
+// The color of a static HDR10 stream, which Jellyfin labels HDR10
+const HDR10_COLOR = {
+    ColorPrimaries: 'bt2020',
+    ColorSpace: 'bt2020nc',
+    ColorTransfer: 'smpte2084',
+    VideoRange: 'HDR',
+    VideoRangeType: 'HDR10'
+} as const;
+
+/** Creates an SDR AV1 stream of a raw format variant, which Jellyfin names by profile, depth, and pixel format. */
+function createRawFormatAV1Stream(
+    profile: 'High' | 'Professional',
+    bitDepth: 8 | 10 | 12,
+    pixelFormat: string,
+    overrides: Readonly<Record<string, unknown>> = {}
+): Readonly<Record<string, unknown>> {
+    return createSDRAV1Stream({
+        BitDepth: bitDepth,
+        PixelFormat: pixelFormat,
+        Profile: profile,
         ...overrides
     });
 }
@@ -506,12 +556,77 @@ const AV1_VIDEO_RANGE_MATRIX: readonly AV1DirectPlayMatrixRow[] = [
     {
         deviceProfileAdvertised: true,
         directPlaySupported: true,
-        // The RPU route is 10-bit, so the declared SDR base presents through native 8-bit decode
-        expectedRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
-        itemRouteRequired: true,
+        // The 8-bit Main raw format qualifies, so the RPU reconstructs from I420 planes
+        expectedRoute: createRawDolbyVisionRoute(8, 'I420'),
         label: 'Dolby Vision 10.2 over an 8-bit base, labeled DOVIWithSDR',
         runtimeEligible: true,
+        videoStream: createProfile10Stream(2, 'DOVIWithSDR', 'sdr', { BitDepth: 8, PixelFormat: 'yuv420p' })
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        // Without a pixel format no raw format variant names the base, so the declared SDR base presents through native 8-bit decode
+        expectedRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
+        label: 'Dolby Vision 10.2 over an 8-bit base without a pixel format, labeled DOVIWithSDR',
+        runtimeEligible: true,
         videoStream: createProfile10Stream(2, 'DOVIWithSDR', 'sdr', { BitDepth: 8 })
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        expectedRoute: createRawDolbyVisionRoute(8, 'I444P10'),
+        label: 'Dolby Vision 10.1 over a High 4:4:4 10-bit base, labeled DOVIWithHDR10',
+        runtimeEligible: true,
+        videoStream: createProfile10Stream(1, 'DOVIWithHDR10', 'pq', { PixelFormat: 'yuv444p10le', Profile: 'High' })
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        expectedRoute: createRawRoute('I444', false),
+        label: 'SDR High 4:4:4 8-bit',
+        runtimeEligible: true,
+        videoStream: createRawFormatAV1Stream('High', 8, 'yuv444p')
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        expectedRoute: createRawRoute('I444P10', false),
+        label: 'SDR High 4:4:4 10-bit',
+        runtimeEligible: true,
+        videoStream: createRawFormatAV1Stream('High', 10, 'yuv444p10le')
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        expectedRoute: createRawRoute('I444P10', true),
+        label: 'HDR10 High 4:4:4 10-bit',
+        runtimeEligible: true,
+        videoStream: createRawFormatAV1Stream('High', 10, 'yuv444p10le', HDR10_COLOR)
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        expectedRoute: createRawRoute('I422', false),
+        label: 'SDR Professional 4:2:2 8-bit',
+        runtimeEligible: true,
+        videoStream: createRawFormatAV1Stream('Professional', 8, 'yuv422p')
+    },
+    {
+        deviceProfileAdvertised: true,
+        directPlaySupported: true,
+        expectedRoute: createRawRoute('I422P10', false),
+        label: 'SDR Professional 4:2:2 10-bit',
+        runtimeEligible: true,
+        videoStream: createRawFormatAV1Stream('Professional', 10, 'yuv422p10le')
+    },
+    {
+        // Chrome's software decoder refuses 12-bit AV1, so only a decoder package plays it
+        deviceProfileAdvertised: false,
+        directPlaySupported: false,
+        expectedIneligibilityReason: 'codec-unsupported',
+        label: 'SDR Professional 4:2:0 12-bit',
+        runtimeEligible: false,
+        videoStream: createRawFormatAV1Stream('Professional', 12, 'yuv420p12le')
     },
     {
         deviceProfileAdvertised: true,
@@ -637,7 +752,83 @@ const AV1_ROUTE_FALLBACK_MATRIX: readonly AV1RouteFallbackRow[] = [
         declaredBaseRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
         label: 'Dolby Vision 10.2 over an 8-bit base, labeled DOVIWithSDR',
         nativeDecodeRoute: NATIVE_SDR_VIDEO_FRAME_ROUTE,
-        videoStream: createProfile10Stream(2, 'DOVIWithSDR', 'sdr', { BitDepth: 8 })
+        videoStream: createProfile10Stream(2, 'DOVIWithSDR', 'sdr', { BitDepth: 8, PixelFormat: 'yuv420p' })
+    },
+    {
+        declaredBaseRoute: createRawRoute('I444P10', true),
+        label: 'Dolby Vision 10.1 over a High 4:4:4 10-bit base, labeled DOVIWithHDR10',
+        nativeDecodeRoute: null,
+        videoStream: createProfile10Stream(1, 'DOVIWithHDR10', 'pq', { PixelFormat: 'yuv444p10le', Profile: 'High' })
+    },
+    {
+        declaredBaseRoute: createRawRoute('I444', false),
+        label: 'SDR High 4:4:4 8-bit',
+        nativeDecodeRoute: null,
+        videoStream: createRawFormatAV1Stream('High', 8, 'yuv444p')
+    },
+    {
+        declaredBaseRoute: createRawRoute('I444P10', true),
+        label: 'HDR10 High 4:4:4 10-bit',
+        nativeDecodeRoute: null,
+        videoStream: createRawFormatAV1Stream('High', 10, 'yuv444p10le', HDR10_COLOR)
+    },
+    {
+        declaredBaseRoute: createRawRoute('I422P10', false),
+        label: 'SDR Professional 4:2:2 10-bit',
+        nativeDecodeRoute: null,
+        videoStream: createRawFormatAV1Stream('Professional', 10, 'yuv422p10le')
+    }
+];
+
+// The AV1 package the engine's decoder project builds, as the server's catalog describes it
+const AV1_PACKAGE: DecoderPackageRouteSummary = {
+    codecs: [ 'av1' ],
+    kind: 'video',
+    outputFormats: [ 'I420', 'I420P10', 'I420P12', 'I422', 'I422P10', 'I422P12', 'I444', 'I444P10', 'I444P12' ]
+};
+
+const PACKAGE_ROUTE_OPTIONS: CustomDeviceProfileOptions = {
+    ...FULL_ROUTE_OPTIONS,
+    decoderPackages: [ AV1_PACKAGE ]
+};
+
+// Negotiation judges a package by its summary; a playback takes it only from an offer, which carries the package itself
+const PACKAGE_VIDEO_ROUTE_OPTIONS: CustomVideoRouteOptions = {
+    allowDolbyVision: true,
+    allowRawHDR: true,
+    allowRawSDR: true,
+    authorizedRawHDRRouteKeys: RAW_ROUTE_KEYS,
+    gpuVideoDecoderSummaries: [ AV1_PACKAGE ]
+};
+
+// A null raw route means only the package plays the variant
+type AV1PackageRouteRow = Readonly<{
+    label: string
+    rawRoute: ExpectedAV1Route | null
+    videoStream: Readonly<Record<string, unknown>>
+}>;
+
+// With an AV1 decoder package offered, a raw format that qualifies keeps its raw route, and 12-bit AV1, which Chrome's software decoder refuses, takes the package
+const AV1_PACKAGE_ROUTE_MATRIX: readonly AV1PackageRouteRow[] = [
+    {
+        label: 'SDR Professional 4:2:0 12-bit',
+        rawRoute: null,
+        videoStream: createRawFormatAV1Stream('Professional', 12, 'yuv420p12le')
+    },
+    {
+        label: 'SDR Professional 4:2:2 12-bit',
+        rawRoute: null,
+        videoStream: createRawFormatAV1Stream('Professional', 12, 'yuv422p12le')
+    },
+    {
+        label: 'SDR High 4:4:4 8-bit',
+        rawRoute: createRawRoute('I444', false),
+        videoStream: createRawFormatAV1Stream('High', 8, 'yuv444p')
+    },
+    {
+        label: 'SDR Professional 4:2:2 10-bit',
+        rawRoute: createRawRoute('I422P10', false),
+        videoStream: createRawFormatAV1Stream('Professional', 10, 'yuv422p10le')
     }
 ];
 
@@ -689,6 +880,7 @@ const nativeDecodeCapabilities = createAV1Capabilities(false);
 const fullyQualifiedProfile: DeviceProfile = createMatrixProfile(fullyQualifiedCapabilities, FULL_ROUTE_OPTIONS);
 const declaredBaseProfile: DeviceProfile = createMatrixProfile(fullyQualifiedCapabilities, DECLARED_BASE_ROUTE_OPTIONS);
 const nativeDecodeProfile: DeviceProfile = createMatrixProfile(nativeDecodeCapabilities, FULL_ROUTE_OPTIONS);
+const packageProfile: DeviceProfile = createMatrixProfile(fullyQualifiedCapabilities, PACKAGE_ROUTE_OPTIONS);
 
 /** Mirrors the host, which also advertises a Dolby Vision item's own exact route when the item has one. */
 function getItemProfile(
@@ -844,6 +1036,28 @@ describe('AV1 DirectPlay route fallbacks', () => {
                 FULL_ELIGIBILITY_OPTIONS,
                 row.nativeDecodeRoute
             );
+        }
+    );
+});
+
+describe('AV1 DirectPlay outside Main 10 with a decoder package', () => {
+    it.each(AV1_PACKAGE_ROUTE_MATRIX)(
+        '$label: takes its raw route where its format qualifies, else the package',
+        row => {
+            const playbackOptions = createPlaybackOptions(row.videoStream);
+            const mediaSource = playbackOptions.mediaSource;
+            const packageOnly = row.rawRoute === null;
+
+            expect(isSameSessionNativePlaybackCompatible(playbackOptions, packageProfile)).toBe(true);
+            expect(hasEligibleCustomVideoRoute(mediaSource, fullyQualifiedCapabilities, PACKAGE_VIDEO_ROUTE_OPTIONS)).toBe(true);
+            // Without the package only a qualified raw format is advertised and has a route
+            expect(isSameSessionNativePlaybackCompatible(playbackOptions, fullyQualifiedProfile)).toBe(!packageOnly);
+            expect(hasEligibleCustomVideoRoute(
+                mediaSource,
+                fullyQualifiedCapabilities,
+                { ...PACKAGE_VIDEO_ROUTE_OPTIONS, gpuVideoDecoderSummaries: [] }
+            )).toBe(!packageOnly);
+            expect(getEligibleRoute(getCustomPlaybackEligibility(playbackOptions, fullyQualifiedCapabilities, FULL_ELIGIBILITY_OPTIONS))).toEqual(row.rawRoute);
         }
     );
 });

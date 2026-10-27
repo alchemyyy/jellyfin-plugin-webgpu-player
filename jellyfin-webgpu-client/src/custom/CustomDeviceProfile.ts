@@ -57,6 +57,11 @@ import {
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 import {
+    AV1_RAW_FORMAT_PROBE_DEFINITIONS,
+    AV1_RAW_FORMAT_VARIANTS,
+    type AV1RawFormatVariant
+} from 'webgpu-player/capability/AV1RawFormatCapabilities';
+import {
     hasEligibleCustomVideoRoute,
     presentsInterlacedVideo,
     type CustomVideoRouteOptions
@@ -161,6 +166,8 @@ type AuthorizedHDRRoutes = {
 type MeasuredVideoRouteOptions = {
     allowNativeDolbyVision: boolean
     allowNativeHDR: boolean
+    /** Whether Profile 10 reconstruction is allowed for the item's raw format; it presents only from raw AV1 planes of a qualified format */
+    allowRawAV1DolbyVision: boolean
     dolbyVisionItemVideoRoute: MeasuredVideoRoute | null
     nativeDolbyVisionVideoRangeTypes: readonly string[]
     nativeHDRVideoRangeTypes: readonly string[]
@@ -168,7 +175,6 @@ type MeasuredVideoRouteOptions = {
     packageVideoRoutes: readonly MeasuredVideoRoute[]
     /** The decoder packages' route scopes, each of one profile and depth, whose size steps bound the streams a scope takes where no other route takes them */
     packageVideoScopes: readonly PackageVideoScope[]
-    rawAV1DolbyVisionVideoRangeTypes: readonly string[]
     rawDolbyVisionVideoRangeTypes: readonly string[]
     rawHDRRouteVideoRangeTypes: readonly string[]
     rawAuthorizationRouteKeys: readonly RawHDRAuthorizationRouteKey[]
@@ -305,9 +311,9 @@ function getDolbyVisionVideoRangeTypes(
     return rangeTypes;
 }
 
-/** Returns the AV1 Dolby Vision ranges, which Profile 10 reconstruction presents only from raw AV1 planes. */
-function getAV1DolbyVisionVideoRangeTypes(capabilities: CustomDecodeCapabilities, allowRawDolbyVision: boolean): readonly string[] {
-    return allowRawDolbyVision && capabilities.rawHDRVideo.av1.status === 'supported' ? AV1_DOLBY_VISION_VIDEO_RANGE_TYPES : [];
+/** Returns the AV1 Dolby Vision ranges of a raw AV1 format, which Profile 10 reconstruction presents only from qualified raw AV1 planes. */
+function getAV1DolbyVisionVideoRangeTypes(rawFormatQualified: boolean, allowRawDolbyVision: boolean): readonly string[] {
+    return allowRawDolbyVision && rawFormatQualified ? AV1_DOLBY_VISION_VIDEO_RANGE_TYPES : [];
 }
 
 function getAuthorizedRawHDRVideoRangeTypes(routeKeys: readonly RawHDRAuthorizationRouteKey[]): string[] {
@@ -550,18 +556,19 @@ const FRAME_POOL_HDR_VIDEO_RANGE_TYPES = [ 'HDR10', HDR10_PLUS_VIDEO_RANGE_TYPE,
 // The profile Jellyfin names a stream of each frame pool format by, for the codecs whose stock and route profiles condition on profile.
 // AV1 Main is 4:2:0 at 8 or 10 bits, High adds 4:4:4, and Professional takes 4:2:2 and 12 bits; VP9 profiles 0 and 1 are 8-bit, 2 and 3 deeper, and 1 and 3 hold 4:2:2 and 4:4:4.
 // HEVC takes its names from the range extension definitions instead
+const AV1_VIDEO_PROFILE_BY_FORMAT: Readonly<Record<GPUDecoderOutputFormat, string>> = {
+    I420: 'main',
+    I420P10: 'main',
+    I420P12: 'professional',
+    I422: 'professional',
+    I422P10: 'professional',
+    I422P12: 'professional',
+    I444: 'high',
+    I444P10: 'high',
+    I444P12: 'professional'
+};
 const PACKAGE_VIDEO_PROFILE_BY_FORMAT: Readonly<Partial<Record<CustomVideoCodec, Readonly<Record<GPUDecoderOutputFormat, string>>>>> = {
-    av1: {
-        I420: 'main',
-        I420P10: 'main',
-        I420P12: 'professional',
-        I422: 'professional',
-        I422P10: 'professional',
-        I422P12: 'professional',
-        I444: 'high',
-        I444P10: 'high',
-        I444P12: 'professional'
-    },
+    av1: AV1_VIDEO_PROFILE_BY_FORMAT,
     vp9: {
         I420: 'profile 0',
         I420P10: 'profile 2',
@@ -1906,6 +1913,7 @@ function createRawHDRMeasuredVideoRoute(
 /** Returns the ranges of a codec's raw HDR route: the static ranges with HDR10+, then HEVC's Dolby Vision ranges or AV1 Profile 10's. */
 function getRawVideoRangeTypes(
     codec: CustomVideoCodec,
+    capabilities: CustomDecodeCapabilities,
     options: MeasuredVideoRouteOptions
 ): readonly string[] {
     switch (codec) {
@@ -1917,7 +1925,7 @@ function getRawVideoRangeTypes(
         case 'av1':
             return [ ...new Set([
                 ...options.rawHDRRouteVideoRangeTypes,
-                ...options.rawAV1DolbyVisionVideoRangeTypes
+                ...getAV1DolbyVisionVideoRangeTypes(capabilities.rawHDRVideo.av1.status === 'supported', options.allowRawAV1DolbyVision)
             ]) ];
         default:
             return options.rawHDRRouteVideoRangeTypes;
@@ -1951,7 +1959,50 @@ function createRawSDRMeasuredVideoRoute(
     };
 }
 
-/** Returns a codec's raw-plane routes: HDR with Dolby Vision, then 10-bit SDR. */
+/** Returns whether an AV1 raw format variant decoded and copied its exact format, as the runtime requires. */
+function isQualifiedAV1RawFormatVariant(capabilities: CustomDecodeCapabilities, variant: AV1RawFormatVariant): boolean {
+    const capability = capabilities.av1RawFormats?.[variant];
+    const definition = AV1_RAW_FORMAT_PROBE_DEFINITIONS[variant];
+    return capability?.status === 'supported'
+        && capability.format === definition.format
+        && capability.bitDepth === definition.bitDepth;
+}
+
+/**
+ * Returns the raw routes of AV1 outside Main 10: one per qualified raw format variant, under Jellyfin's AV1 profile of its format at its depth.
+ * High and Professional present SDR when both BT.709 keys of the format pass, and HDR10 with HDR10+ or HLG when the format's raw HDR key does; 8-bit Main SDR keeps its native route.
+ * Profile 10 reconstructs from every qualified variant's format, 8-bit Main included, when its RPU route is allowed.
+ */
+function createAV1RawFormatMeasuredVideoRoutes(
+    capabilities: CustomDecodeCapabilities,
+    options: MeasuredVideoRouteOptions
+): MeasuredVideoRoute[] {
+    const routes: MeasuredVideoRoute[] = [];
+    for (const variant of AV1_RAW_FORMAT_VARIANTS) {
+        if (!isQualifiedAV1RawFormatVariant(capabilities, variant)) {
+            continue;
+        }
+        const definition = AV1_RAW_FORMAT_PROBE_DEFINITIONS[variant];
+        // The range-extension ranges are the static ranges any raw format presents
+        const rangeTypes: string[] = definition.jellyfinProfile === 'Main' ?
+            [] :
+            HEVC_RANGE_EXTENSION_RANGE_TYPES.filter((rangeType: HEVCRangeExtensionRangeType): boolean => (
+                isRawFormatPresentationAuthorized(definition.format, getRangeExtensionTransfer(rangeType), options.rawAuthorizationRouteKeys)
+            ));
+        rangeTypes.push(...getAV1DolbyVisionVideoRangeTypes(true, options.allowRawAV1DolbyVision));
+        if (rangeTypes.length > 0) {
+            routes.push({
+                bitDepths: [ definition.bitDepth ],
+                codec: 'av1',
+                profiles: [ AV1_VIDEO_PROFILE_BY_FORMAT[definition.format] ],
+                rangeTypes
+            });
+        }
+    }
+    return routes;
+}
+
+/** Returns a codec's raw-plane routes: HDR with Dolby Vision, then 10-bit SDR, then AV1's raw format variants. */
 function getRawMeasuredVideoRoutes(
     codec: CustomVideoCodec,
     capabilities: CustomDecodeCapabilities,
@@ -1961,7 +2012,7 @@ function getRawMeasuredVideoRoutes(
     const rawRoute = createRawHDRMeasuredVideoRoute(
         codec,
         capabilities,
-        getRawVideoRangeTypes(codec, options)
+        getRawVideoRangeTypes(codec, capabilities, options)
     );
     if (rawRoute) {
         routes.push(rawRoute);
@@ -1973,6 +2024,9 @@ function getRawMeasuredVideoRoutes(
     );
     if (rawSDRRoute) {
         routes.push(rawSDRRoute);
+    }
+    if (codec === 'av1') {
+        routes.push(...createAV1RawFormatMeasuredVideoRoutes(capabilities, options));
     }
     return routes;
 }
@@ -3301,15 +3355,12 @@ export function augmentDeviceProfileForCustomDecode(
     const measuredVideoRouteOptions: MeasuredVideoRouteOptions = {
         allowNativeDolbyVision,
         allowNativeHDR,
+        allowRawAV1DolbyVision: options.allowDolbyVision === true,
         dolbyVisionItemVideoRoute,
         nativeDolbyVisionVideoRangeTypes,
         nativeHDRVideoRangeTypes,
         packageVideoRoutes,
         packageVideoScopes,
-        rawAV1DolbyVisionVideoRangeTypes: getAV1DolbyVisionVideoRangeTypes(
-            capabilities,
-            options.allowDolbyVision === true
-        ),
         rawDolbyVisionVideoRangeTypes,
         rawHDRRouteVideoRangeTypes,
         rawAuthorizationRouteKeys
