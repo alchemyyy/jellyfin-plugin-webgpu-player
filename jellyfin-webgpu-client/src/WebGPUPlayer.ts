@@ -98,6 +98,7 @@ import type {
     CustomPlaybackControllerEvent,
     CustomPlaybackFallbackRequest,
     CustomPlaybackStartResult,
+    CustomPlaybackState,
     CustomPlaybackTelemetry
 } from 'webgpu-player/pipeline/CustomPlaybackControllerTypes';
 import type {
@@ -129,6 +130,7 @@ import {
     type CustomSubtitleCapabilities
 } from './custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlayCompatibility';
+import ScreenWakeLock from './ScreenWakeLock';
 import { getHEVCRangeExtensionStreamDefinitionFromMetadata } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 import {
     getCustomPlaybackRuntimeAvailability,
@@ -921,6 +923,7 @@ export default class WebGPUPlayer {
     private readonly pendingAudioPrewarmClosePromises = new Set<Promise<void>>();
     private readonly pendingBackendStopPromises = new Set<Promise<unknown>>();
     private readonly pendingStopCounts = new Map<number, number>();
+    private readonly screenWakeLock = new ScreenWakeLock();
 
     private backendOperationTail: Promise<void> | null = null;
     private backendStopCallBarrier: Promise<void> | null = null;
@@ -1309,6 +1312,7 @@ export default class WebGPUPlayer {
         if (typeof document !== 'undefined') {
             document.removeEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
+        this.screenWakeLock.release();
         this.stopCustomPlaybackBackgroundDrain();
         const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(this.backendSessionGeneration);
         if (audioPrewarmClose) {
@@ -2993,6 +2997,7 @@ export default class WebGPUPlayer {
                 this.applyStaticHDRMetadata(event.metadata);
                 break;
             case 'statechange':
+                this.synchronizeScreenWakeLock(event.state);
                 if (event.state === 'paused') {
                     this.cancelCustomPlaybackFrameCallback();
                     const pausedRefresh = this.getCurrentPausedPresentationRefresh(customPlaybackController, backendGeneration);
@@ -3047,6 +3052,21 @@ export default class WebGPUPlayer {
                 break;
             case 'telemetry':
                 this.lastCustomPlaybackTelemetry = event.telemetry;
+                break;
+        }
+    }
+
+    /** Holds the screen wake lock while playing, keeps it across a seek or restart, and releases it in any other state. */
+    private synchronizeScreenWakeLock(state: CustomPlaybackState): void {
+        switch (state) {
+            case 'playing':
+                this.screenWakeLock.acquire();
+                break;
+            case 'seeking':
+            case 'starting':
+                break;
+            default:
+                this.screenWakeLock.release();
                 break;
         }
     }
@@ -3189,6 +3209,7 @@ export default class WebGPUPlayer {
     }
 
     private readonly handleDocumentVisibilityChange = (): void => {
+        this.screenWakeLock.handleVisibilityChange();
         this.synchronizeCustomPlaybackPageVisibility();
     };
 
@@ -3565,6 +3586,7 @@ export default class WebGPUPlayer {
             return;
         }
 
+        this.screenWakeLock.release();
         this.cancelPendingPausedPresentationRefresh();
         this.cancelCustomPlaybackFrameCallback();
         this.stopCustomPlaybackBackgroundDrain();
