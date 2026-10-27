@@ -715,6 +715,7 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         prewarmExternalHDRPresentationAuthorization = vi.fn(() => Promise.resolve());
         waitForExternalHDRAuthorizationPrewarm = vi.fn(() => Promise.resolve());
         waitForExternalHDRRouteAuthorization = vi.fn(() => Promise.resolve());
+        waitForExternalDolbyVisionProfile8Authorization = vi.fn(() => Promise.resolve());
         prewarmDolbyVisionPresentationAuthorization = vi.fn(() => Promise.resolve());
         waitForDolbyVisionAuthorizationPrewarm = vi.fn(() => Promise.resolve());
         isRawDolbyVisionPresentationAuthorized = vi.fn(() => (
@@ -730,6 +731,9 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
             presenterMockState.dolbyVisionAuthorized
         ));
         getGPUFramePoolByteLimit = vi.fn(() => Promise.resolve(decoderPackageMockState.presenterFramePoolByteLimit));
+        isExternalDolbyVisionProfile8PresentationAuthorized = vi.fn(() => (
+            presenterMockState.dolbyVisionAuthorized
+        ));
         getAuthorizedExternalHDRRouteKeys = vi.fn(() => (
             [ ...presenterMockState.authorizedExternalHDRRouteKeys ]
         ));
