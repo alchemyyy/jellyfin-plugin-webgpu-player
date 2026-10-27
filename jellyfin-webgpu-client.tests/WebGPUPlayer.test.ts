@@ -23,6 +23,7 @@ import type {
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import { DEINTERLACE_MODES } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { UNKNOWN_VIDEO_STREAM_FIELDS, type VideoStreamFields } from 'webgpu-player/decode/video/VideoFields';
 import { addPassSource } from 'addons/webGPUPlayer/PresentationPassStore';
 import { installIndexedDBFake } from './indexedDBFake';
@@ -698,6 +699,7 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         }));
         updateRenderSettings = vi.fn(() => true);
         setHDROutputEnabled = vi.fn((): Promise<void> => Promise.resolve());
+        setDeinterlaceMode = vi.fn((): Promise<void> => Promise.resolve());
         setPresentationPreset = vi.fn((): Promise<PlanReport> => Promise.resolve({ activePasses: [], inactivePasses: [] }));
         setPresentationParameter = vi.fn();
         getPresentationPlanReport = vi.fn((): PlanReport => ({ activePasses: [], inactivePasses: [] }));
@@ -979,6 +981,7 @@ type MockPresenter = {
     prewarmDolbyVisionPresentationAuthorization: MockFunction
     prewarmExternalHDRPresentationAuthorization: MockFunction
     setDecodedFramePushMode: MockFunction
+    setDeinterlaceMode: MockFunction
     setHDROutputEnabled: MockFunction
     setPresentationParameter: MockFunction
     setPresentationPreset: MockFunction
@@ -1748,6 +1751,25 @@ describe('WebGPUPlayer HTML delegation', () => {
         // Later plays reuse what the presenter keeps
         await player.play(createKnownSDRPlayOptions());
         expect(presenter.setPresentationPreset).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(DEINTERLACE_MODES)('hands the stored deinterlacing mode %s to its presenter before the first play, and a live change during playback', async (storedMode) => {
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({
+            ...createDefaultWebGPUUserSettings(),
+            presentation: { ...createDefaultWebGPUUserSettings().presentation, deinterlaceMode: storedMode }
+        });
+
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ storedMode ] ]);
+
+        await player.play(createKnownSDRPlayOptions());
+        expect(presenter.startSession).toHaveBeenCalled();
+        const liveModes = DEINTERLACE_MODES.filter(mode => mode !== storedMode);
+        for (const liveMode of liveModes) {
+            await player.setDeinterlaceMode(liveMode);
+        }
+        expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ storedMode ], ...liveModes.map(mode => [ mode ]) ]);
     });
 
     it('lets a preset the settings panel applies before the stored one loads stand', async () => {

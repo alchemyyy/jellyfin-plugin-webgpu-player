@@ -60,7 +60,8 @@ Every setting is local to the browser profile; the server's decoders and passes 
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
 - GPU decode slicing defaults to off, and a playback keeps the value it started with.
   `WebGPUPlayer` hands it to the engine's `createGPUVideoDecodeSessionFactory` with each playback's controller, and with it on, a picture a decoder package decodes on the GPU submits its work in slices, so a presented frame waits behind less decode; the engine book's decisions weigh what it costs.
-- The presentation settings are HDR output, off by default, and the user's WGSL shader files in order, each with its parameter values and its source's key.
+- The presentation settings are HDR output, off by default, deinterlacing, double rate by default, and the user's WGSL shader files in order, each with its parameter values and its source's key.
+  Deinterlacing takes the engine's modes, `double-rate`, `single-rate`, and `off`, and a stored value outside them loads as double rate.
   A file holds one or more passes, as an mpv user shader does, and its passes run in file order and share its parameter values.
   The panel offers a field for each parameter and each constant the file's passes declare, since the engine takes values for both; a constant's change plans the passes again, as a DEFINE's does in mpv.
   A file added from the server's passes also keeps its origin, the server's file name and SHA-256, so a newer version on the server replaces its source.
@@ -68,9 +69,9 @@ Every setting is local to the browser profile; the server's decoders and passes 
 - The sources live in IndexedDB, in the `passSources` store of the `webGPUPlayerPresentation` database (`PresentationPassStore.ts`), since localStorage holds about 5 MB for everything on the origin.
   Each added file's source gets a key that counts up from 1, and a source goes once neither the panel's settings nor the stored settings hold its key.
 - Settings of any other version are not read, so a stored value from another version loads as the defaults.
-- HDR output applies when `WebGPUPlayer` is constructed, at plugin load, while the stored files load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
-  Every change in the settings panel applies live, and the presenter keeps the preset across sessions; a stored preset that loads after a panel change yields to it.
-- The settings panel's sections are playback, tone mapping and display, presentation (HDR output), shader passes, audio, and decoders.
+- HDR output and deinterlacing apply when `WebGPUPlayer` is constructed, at plugin load, through the presenter's `setHDROutputEnabled` and `setDeinterlaceMode`, so every playback starts with them; the stored files load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
+  Every change in the settings panel applies live, and the presenter keeps the preset, HDR output, and deinterlacing across sessions; a stored preset that loads after a panel change yields to it.
+- The settings panel's sections are playback, tone mapping and display, presentation (HDR output and deinterlacing), shader passes, audio, and decoders.
   Each setting restores its default from an icon button beside it.
 - The shader pass section adds files from this device, or from the passes the server offers, which download when added.
   The decoder section lists the user's own packages and names the server's.

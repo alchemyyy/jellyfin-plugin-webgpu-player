@@ -168,6 +168,7 @@ import {
     type PresentationInput,
     type RawDolbyVisionRouteFlags
 } from 'webgpu-player/presentation/PresentationSetup';
+import type { DeinterlaceMode } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import WebGPUPresenter, {
     type DolbyVisionReconstructionTarget,
     type PresentationFallbackReason,
@@ -1770,10 +1771,13 @@ export default class WebGPUPlayer {
         return this.presenter.getExternalHDRAuthorizationTelemetry();
     }
 
-    /** Hands the user's HDR output choice to the presenter, which keeps it across sessions; the shader files follow at the first WebGPU play. */
+    /** Hands the user's HDR output and deinterlacing choices to the presenter, which keeps them across sessions; the shader files follow at the first WebGPU play. */
     private applyPresentationSettings(settings: WebGPUUserSettings): void {
         void this.setHDROutputEnabled(settings.presentation.hdrOutput).catch((error: unknown): void => {
             console.warn(`WebGPU HDR output failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        void this.setDeinterlaceMode(settings.presentation.deinterlaceMode).catch((error: unknown): void => {
+            console.warn(`WebGPU deinterlacing failed: ${error instanceof Error ? error.message : String(error)}`);
         });
     }
 
@@ -1818,6 +1822,11 @@ export default class WebGPUPlayer {
     /** Selects HDR output for HDR sources on HDR displays; resolves once the presenter runs it. */
     setHDROutputEnabled(enabled: boolean): Promise<void> {
         return this.presenter.setHDROutputEnabled(enabled);
+    }
+
+    /** Selects how interlaced video presents, live in the active session and for later ones; resolves once the presenter runs it. */
+    setDeinterlaceMode(mode: DeinterlaceMode): Promise<void> {
+        return this.presenter.setDeinterlaceMode(mode);
     }
 
     /** Applies live HDR display controls without rebuilding the shader pipeline. */

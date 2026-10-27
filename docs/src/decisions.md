@@ -57,6 +57,9 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - Every raw HDR route that advertises HDR10 also advertises HDR10Plus (10-09).
   HDR10+ always carries a static HDR10 base, which raw PQ presents, so AV1 and VP9 advertise the label as HEVC does.
   Jellyfin labels a stream HDR10Plus whenever it carries HDR10+ metadata, so a route without the label never direct-plays such a stream.
+- Deinterlacing is a presentation setting, not a negotiation one (10-27).
+  The engine deinterlaces in the presenter, so every mode plays the same direct-play source and the choice applies live, as HDR output does; the profile never depends on it.
+  Double rate stays the default, the engine's own, so a user who never opens the settings keeps the motion of broadcast video.
 
 ## Playback robustness
 

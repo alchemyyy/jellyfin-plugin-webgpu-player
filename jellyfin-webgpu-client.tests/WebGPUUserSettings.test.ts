@@ -7,6 +7,7 @@ vi.mock('scripts/settings/userSettings', () => ({
     }
 }));
 
+import { DEINTERLACE_MODES } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
 import {
     MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH,
@@ -150,6 +151,7 @@ describe('WebGPUUserSettings', () => {
                 outputDeviceId: 'per-origin-output-id'
             },
             presentation: {
+                deinterlaceMode: 'single-rate' as const,
                 files: [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, sourceKey: SATURATION_SOURCE_KEY } ],
                 hdrOutput: true
             }
@@ -159,6 +161,7 @@ describe('WebGPUUserSettings', () => {
 
         expect(storage.set).toHaveBeenCalledWith(WEBGPU_USER_SETTINGS_STORAGE_KEY, JSON.stringify(saved), false);
         expect(loadWebGPUUserSettings(storage)).toEqual(saved);
+        expect(saved.presentation).toEqual(changedSettings.presentation);
     });
 
     it('loads settings of any other version as the defaults', () => {
@@ -206,6 +209,7 @@ describe('WebGPUUserSettings', () => {
         });
 
         expect(normalized.presentation).toEqual({
+            deinterlaceMode: defaults.presentation.deinterlaceMode,
             files: [
                 { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, sourceKey: SATURATION_SOURCE_KEY },
                 { parameters: {}, sourceKey: INVERT_SOURCE_KEY }
@@ -259,6 +263,23 @@ describe('WebGPUUserSettings', () => {
             .toEqual(Object.keys(parameters).slice(0, MAXIMUM_PARAMETER_COUNT));
     });
 
+    it('deinterlaces at double rate unless this browser stored one of the deinterlacing modes', () => {
+        const defaults = createDefaultWebGPUUserSettings();
+        const normalizeMode = (deinterlaceMode: unknown): unknown => normalizeWebGPUUserSettings({
+            ...defaults,
+            presentation: { ...defaults.presentation, deinterlaceMode }
+        }).presentation.deinterlaceMode;
+
+        expect(defaults.presentation.deinterlaceMode).toBe('double-rate');
+        expect(DEINTERLACE_MODES.map(normalizeMode)).toEqual(DEINTERLACE_MODES);
+        // Saved before the choice existed, or a value no presenter takes
+        expect(normalizeWebGPUUserSettings({ ...defaults, presentation: { files: [], hdrOutput: true } }).presentation)
+            .toEqual({ deinterlaceMode: 'double-rate', files: [], hdrOutput: true });
+        for (const invalidMode of [ 'bob', 'Off', '', null, 1, true ]) {
+            expect(normalizeMode(invalidMode)).toBe('double-rate');
+        }
+    });
+
     it('enables custom decode and HDR tone mapping, and leaves GPU decode slicing off, unless this browser stored a boolean choice', () => {
         const defaults = createDefaultWebGPUUserSettings();
         // Saved before the playback preferences existed
@@ -285,7 +306,7 @@ describe('WebGPUUserSettings', () => {
         const changed = normalizeWebGPUUserSettings({
             ...defaults,
             playback: { enableCustomDecode: false, enableGPUDecodeSlicing: true, enableHDRToneMapping: false },
-            presentation: { files: [ { parameters: {}, sourceKey: INVERT_SOURCE_KEY } ], hdrOutput: true }
+            presentation: { deinterlaceMode: 'off', files: [ { parameters: {}, sourceKey: INVERT_SOURCE_KEY } ], hdrOutput: true }
         });
 
         expect(resetWebGPURenderSettings(changed).playback).toEqual(changed.playback);

@@ -121,6 +121,8 @@ The engine deinterlaces every route but Dolby Vision's, for each codec whose dec
 - A stock profile's `IsInterlaced` condition, which Jellyfin Web adds for H.264 and HEVC because a browser shows interlaced video woven, is removed in custom containers for a codec the engine deinterlaces, as the runtime ceilings are.
 - Jellyfin applies the same codec profiles to the containers of an HLS transcode, `ts` and `mp4`, as to direct play, so without the scan limit it would copy interlaced H.264 into HLS for the HTML player.
   `supportsVideoStreamCopy` vetoes the copy of any interlaced source instead, so a transcode re-encodes and deinterlaces it, as it does with the stock profile.
+- The deinterlacing choice in the WebGPU settings (see [The client add-on](add-on.md#settings)) changes only how the presenter shows interlaced frames, so the profile stays the same for every mode, off included.
+  Jellyfin's MediaStream reports `IsInterlaced` but no field order, so each frame's field order comes from its decoder, parser, or container, else top field first.
 
 ## Audio
 

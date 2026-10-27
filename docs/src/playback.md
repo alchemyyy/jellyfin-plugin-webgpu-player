@@ -37,6 +37,8 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - The add-on triggers a live audio layout switch when the output reports `sinkchange` with a different channel count, and when force stereo or the downmix algorithm changes.
 - Re-detect output, in the WebGPU settings, rebuilds every AudioContext sink so the browser re-reads the device.
   Chromium moves a default output to a new device without telling the page, which leaves a stale channel count until a rebuild.
+- The deinterlacing choice in the WebGPU settings reaches the presenter live through `WebGPUPlayer.setDeinterlaceMode`.
+  Double rate and single rate share one plan, so a switch between them shows at the next draw; a switch to or from off builds a new plan, and the frame loop's lookahead follows it (see the engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html)).
 
 ## Transitions
 
