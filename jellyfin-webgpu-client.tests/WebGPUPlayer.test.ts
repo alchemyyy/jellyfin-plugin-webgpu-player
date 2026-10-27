@@ -712,6 +712,7 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         waitForRawSDRAuthorizationPrewarm = vi.fn(() => Promise.resolve());
         prewarmExternalHDRPresentationAuthorization = vi.fn(() => Promise.resolve());
         waitForExternalHDRAuthorizationPrewarm = vi.fn(() => Promise.resolve());
+        waitForExternalHDRRouteAuthorization = vi.fn(() => Promise.resolve());
         prewarmDolbyVisionPresentationAuthorization = vi.fn(() => Promise.resolve());
         waitForDolbyVisionAuthorizationPrewarm = vi.fn(() => Promise.resolve());
         isRawDolbyVisionPresentationAuthorized = vi.fn(() => (
@@ -3226,6 +3227,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(backend.play).not.toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
+            codec: 'hevc',
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -3867,6 +3869,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.prewarmExternalHDRPresentationAuthorization).toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
+            codec: 'hevc',
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -3923,6 +3926,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.prewarmExternalHDRPresentationAuthorization).toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
+            codec: 'hevc',
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -3979,6 +3983,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.prewarmExternalHDRPresentationAuthorization).toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
+            codec: 'hevc',
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
