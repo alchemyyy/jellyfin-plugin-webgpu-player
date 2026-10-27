@@ -75,6 +75,7 @@ public sealed class ModuleControllerTests : IDisposable
         JsonElement package = Assert.Single(catalog.RootElement.GetProperty("decoderPackages").EnumerateArray());
         Assert.Equal(ModuleTestFiles.HEVCId, package.GetProperty("id").GetString());
         Assert.Equal("hevc", Assert.Single(package.GetProperty("codecs").EnumerateArray()).GetString());
+        Assert.StartsWith("//! id: hevc\n", package.GetProperty("header").GetString(), StringComparison.Ordinal);
         Assert.Equal(ModuleTestFiles.SharpenFileName, Assert.Single(catalog.RootElement.GetProperty("passes").EnumerateArray()).GetProperty("fileName").GetString());
     }
 

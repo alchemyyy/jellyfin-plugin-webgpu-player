@@ -11,6 +11,9 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Modules;
 /// <param name="Codecs">The codecs its <c>accepts</c> line takes, by the engine's names.</param>
 /// <param name="OutputFormats">The planar formats a video decoder writes; an audio decoder has none.</param>
 /// <param name="Monochrome">Whether a video decoder takes 4:0:0 streams.</param>
+/// <param name="Header">
+/// A video decoder's <c>//!</c> header lines without its WGSL body: its <c>accepts</c> conditions, sizes, and slots, which a client's engine reads to judge a stream before it downloads the package; an audio decoder has none.
+/// </param>
 /// <param name="ContentHash">The lowercase hexadecimal SHA-256 of the file, which tells its versions apart as the engine's own hash does.</param>
 /// <param name="ByteLength">The file's size in bytes.</param>
 public sealed record DecoderPackageInfo(
@@ -20,5 +23,6 @@ public sealed record DecoderPackageInfo(
     IReadOnlyList<string> Codecs,
     IReadOnlyList<string> OutputFormats,
     bool Monochrome,
+    string? Header,
     string ContentHash,
     int ByteLength);
