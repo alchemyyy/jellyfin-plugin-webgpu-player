@@ -1998,7 +1998,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Value: 'SDR|HDR10|HLG|HDR10Plus'
                 })
             ]),
-            Container: 'mp4,m4v,mov,mkv,ts,m2ts,mts'
+            Container: 'mp4,m4v,mov,mkv,avi,ts,m2ts,mts'
         }));
         expect(result.profile.CodecProfiles).toContainEqual(expect.objectContaining({
             Codec: 'vp9',
@@ -2063,7 +2063,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Property: 'VideoRangeType',
                 Value: 'SDR|HDR10|HLG|HDR10Plus'
             }) ]),
-            Container: 'mp4,m4v,mov,mkv,ts,m2ts,mts'
+            Container: 'mp4,m4v,mov,mkv,avi,ts,m2ts,mts'
         }));
         expect(result.profile.CodecProfiles).toContainEqual(expect.objectContaining({
             Codec: 'vp9',
@@ -3051,7 +3051,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         expect(disabledResult.profile.CodecProfiles).not.toContainEqual(original.CodecProfiles[0]);
         const nativeSDRProfile = disabledResult.profile.CodecProfiles?.find(profile => (
             profile.Codec === 'hevc'
-            && profile.Container === 'mp4,m4v,mov,mkv,ts,m2ts,mts'
+            && profile.Container === 'mp4,m4v,mov,mkv,avi,ts,m2ts,mts'
             && profile.Conditions?.some(condition => (
                 condition.Property === 'VideoBitDepth' && condition.Value === '8'
             ))
