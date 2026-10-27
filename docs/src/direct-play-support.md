@@ -1,6 +1,6 @@
 # Direct play support
 
-Two matrices decide whether Jellyfin direct-plays an HEVC or Dolby Vision source, AV1 Profile 10 included, through the custom pipeline:
+Two matrices decide whether Jellyfin direct-plays an HEVC or Dolby Vision source, AV1 Profile 10 and AV1 outside Main 10 included, through the custom pipeline:
 
 1. The engine's support matrix, in its [HEVC and Dolby Vision support](https://alchemyyy.github.io/WebGPU-Player/codec-support.html) chapter: whether the engine plays the source (Eligible), by which route, and on what evidence.
 2. This chapter: whether Jellyfin negotiates DirectPlay for the source (Negotiated), given the label Jellyfin gives it and what the add-on's device profile can express.
@@ -17,6 +17,7 @@ The engine's [Supported formats](https://alchemyyy.github.io/WebGPU-Player/forma
 - the exact route selected when every probe and authorization passes.
 
 For representative rows they also assert the fallback routes, once with native VideoFrame HDR and Dolby Vision presentation withheld and once without native HEVC decode.
+The AV1 suite asserts its fallbacks once with the RPU authorization withheld and once without raw AV1 planes, and its variants outside Main 10 with and without an AV1 decoder package.
 
 Read every "Yes" as conditional:
 
@@ -100,11 +101,29 @@ Engine rows: [Dolby Vision over AV1](https://alchemyyy.github.io/WebGPU-Player/c
 | P10, CCID 4 | DOVIWithHLG | Yes |
 | P10, CCID 6, a reserved CCID, or a base whose color contradicts its CCID | DOVIInvalid | Yes |
 | P10 without a CCID (Matroska) | HDR10, HLG, or SDR by transfer | Yes, through the static HDR ranges |
-| P10 at 8 bits, or outside the Main profile | Any | Item route, with a declared SDR base |
+| P10 at 8 bits, or outside the Main profile, in a raw format variant `av1RawFormats` qualifies | DOVI, DOVIWithHDR10, DOVIWithHDR10Plus, DOVIWithSDR, DOVIWithHLG, or DOVIInvalid | Yes, at the variant's profile and depth, such as Main at 8 bits |
+| P10 at 8 bits, or outside the Main profile, in a variant the browser does not qualify, such as 12 bits in Chrome | Any | Item route, with a declared base its ordinary routes present |
 
 The MP4 `dav1` sample entry of a 10.0 stream maps to no codec in FFmpeg, and so in Jellyfin's probe, so the server never offers such a file for direct play, although the engine plays it; Matroska 10.0 plays.
 
 Profile 9 (AVC) has no RPU route in the engine; Jellyfin labels it by transfer, or SDR under a `dvav` or `dva1` sample entry, and its declared SDR base plays through the H.264 routes.
+
+## AV1 outside Main 10
+
+Engine rows: [AV1 outside Main 10](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#av1-outside-main-10).
+
+| Engine variant | Jellyfin label | Negotiated | Notes |
+| --- | --- | --- | --- |
+| Main at 8 bits | SDR; Main | Yes | The native route; its raw I420 format serves only Profile 10 |
+| High: 4:4:4 at 8 or 10 bits | SDR, HDR10, HDR10Plus, or HLG; High | Yes, when `av1RawFormats` qualifies the variant | SDR needs both BT.709 SDR keys of the format, limited and full; HDR10 and HDR10Plus need its PQ key, and HLG its HLG key, which only the 10-bit formats have |
+| Professional: 4:2:2 at 8 or 10 bits | SDR, HDR10, HDR10Plus, or HLG; Professional | Yes, when `av1RawFormats` qualifies the variant | As High |
+| Professional at 12 bits | Any; Professional | Yes, when `av1RawFormats` qualifies the variant, else only with an AV1 decoder package | Chrome's software decoder refuses 12-bit AV1, so in Chrome these variants take the package |
+| Main at 10 bits without its raw route | SDR, HDR10, HDR10Plus, or HLG; Main | Only with an AV1 decoder package | |
+| Main 4:0:0 | As Main 4:2:0 | As Main 4:2:0 | |
+| Professional 4:0:0 at 12 bits | Any; Professional | With any AV1 decoder package that writes I420P12 | The profile cannot advertise `monochrome`, so without a package that declares it the stream fails eligibility and falls back |
+
+Each qualified variant is advertised at its own depth under the profile of its format, so a stream negotiates at its exact profile, depth, and range.
+A profile condition cannot express chroma format, so a High 4:2:0 stream, or a Professional 4:2:0 or 4:4:4 stream at 8 or 10 bits, negotiates through its profile's routes although no variant covers it, and then takes a decoder package or fails eligibility.
 
 ## Rejected
 

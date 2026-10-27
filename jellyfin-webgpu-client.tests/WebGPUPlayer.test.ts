@@ -2795,6 +2795,39 @@ describe('WebGPUPlayer HTML delegation', () => {
         });
     });
 
+    it('waits at negotiation for the raw SDR key a BT.601 10-bit AV1 item authorizes on first use, and never on a retry', async () => {
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        const createItem = (color: string): unknown => ({
+            Id: `${color}-av1-item`,
+            MediaSources: [{
+                MediaStreams: [{
+                    BitDepth: 10,
+                    Codec: 'av1',
+                    ColorPrimaries: color,
+                    ColorRange: 'tv',
+                    ColorSpace: color,
+                    ColorTransfer: color,
+                    Profile: 'Main',
+                    Type: 'Video',
+                    VideoRange: 'SDR',
+                    VideoRangeType: 'SDR'
+                }]
+            }]
+        });
+
+        await player.getDeviceProfile(createItem('smpte170m'), { isRetry: false });
+        // The BT.709 keys are prewarmed, so a BT.709 item names no first-use key
+        await player.getDeviceProfile(createItem('bt709'), { isRetry: false });
+        await player.getDeviceProfile(createItem('smpte170m'), { isRetry: true });
+
+        expect(presenter.waitForRawSDRAuthorizationPrewarm.mock.calls).toEqual([
+            [ 'I420P10:smpte170m:smpte170m:limited:sdr' ],
+            [ null ]
+        ]);
+    });
+
     it('widens Dolby Vision capability only after exact-device authorization', async () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();

@@ -18,7 +18,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 1. `WebGPUPlayer.play` advances the presentation generation and consumes the stock-profile proof.
    It runs `prewarmBrowserAudioContext(48000)` (engine) synchronously inside `play()` (the user-activation window), calls `presenter.startSession`, and queues `startBackendPlayback`.
 2. `startCustomPlaybackBounded` runs the engine's eligibility check, described in [Negotiation](negotiation.md#flow).
-   It waits for the raw SDR prewarm.
+   It waits for the raw SDR prewarm, and for the stream's own raw SDR key when that key authorizes on first use, as every key outside BT.709 does.
    An HDR range-extension source also waits for the raw HDR prewarm, and a Dolby Vision source waits for its first-use key (Profile 4, or Profile 7 or single-layer reconstruction outside I420P10).
    Other HDR and Dolby Vision routes use only keys that have already settled.
    Its 25 s bound lasts until the controller starts, and the controller's own startup bound applies after that.

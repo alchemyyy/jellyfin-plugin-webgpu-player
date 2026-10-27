@@ -153,6 +153,7 @@ import {
     getCustomPresentationEligibilityOptions,
     getDolbyVisionReconstructionTarget,
     getDualLayerDolbyVisionRawFrameFormat,
+    getFirstUseRawSDRRouteKey,
     getGPUVideoDecoderOffers,
     getSingleLayerDolbyVisionRawFrameFormat,
     getStaticHDRRenderSettings,
@@ -3582,12 +3583,15 @@ export default class WebGPUPlayer {
         }
     }
 
-    /** Raw SDR authorization is independent of HDR settings but never widens a retry. */
-    private async getDeviceProfileRawSDRRouteKeys(isRetry: boolean): Promise<RawHDRAuthorizationRouteKey[]> {
+    /**
+     * Raw SDR authorization is independent of HDR settings but never widens a retry.
+     * A key outside BT.709 authorizes on first use, so the item's own key settles here, before its route is advertised.
+     */
+    private async getDeviceProfileRawSDRRouteKeys(presentationOptions: unknown, isRetry: boolean): Promise<RawHDRAuthorizationRouteKey[]> {
         if (isRetry) {
             return [];
         }
-        await this.presenter.waitForRawSDRAuthorizationPrewarm();
+        await this.presenter.waitForRawSDRAuthorizationPrewarm(getFirstUseRawSDRRouteKey(presentationOptions));
         return this.presenter.getAuthorizedRawHDRRouteKeys().filter(isRawSDRRouteKey);
     }
 
@@ -3624,10 +3628,10 @@ export default class WebGPUPlayer {
 
     /** Returns only the HDR routes authorized on the present GPU device. */
     private async getHDRDeviceProfileOptions(item: unknown, isRetry: boolean): Promise<CustomDeviceProfileOptions> {
-        const authorizedRawSDRRouteKeys = await this.getDeviceProfileRawSDRRouteKeys(isRetry);
+        const presentationOptions = getDeviceProfilePresentationOptions(item);
+        const authorizedRawSDRRouteKeys = await this.getDeviceProfileRawSDRRouteKeys(presentationOptions, isRetry);
         const HDRToneMappingEnabled = !isRetry && await getWebGPUHDRToneMappingEnabled();
         const probeScope = getHDRDeviceProfileProbeScope(item);
-        const presentationOptions = getDeviceProfilePresentationOptions(item);
         const rawOnlyHDRPresentation = isRawOnlyHDRPresentation(presentationOptions);
         const reconstructionTarget = getDolbyVisionReconstructionTarget(presentationOptions);
         if (HDRToneMappingEnabled) {

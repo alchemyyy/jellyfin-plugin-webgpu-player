@@ -75,11 +75,15 @@ The profile never advertises more than the engine's support matrix, in its [HEVC
 
 Per codec, the routes are:
 
-- AV1 (VideoProfile `main`):
+- AV1 (VideoProfile `main`, and `high` and `professional` for the raw formats outside Main 10):
   - native SDR at 8 bits;
   - raw HDR10, HDR10Plus, and HLG at 10 bits;
   - raw Dolby Vision Profile 10 at 10 bits (DOVI, DOVIWithHDR10, DOVIWithHDR10Plus, DOVIWithSDR, DOVIWithHLG, and DOVIInvalid, never DOVIWithEL), when `rawHDRVideo.av1` passes and the `I420P10:dovi-rpu-v1` key is authorized;
-  - raw SDR at 10 bits.
+  - raw SDR at 10 bits;
+  - each raw format variant that `av1RawFormats` qualifies, at its own depth under the profile of its format (`main` for 4:2:0, `high` for 4:4:4, and `professional` for 4:2:2 and 12 bits), as `createAV1RawFormatMeasuredVideoRoutes` builds it.
+    Outside `main`, a variant advertises SDR when both BT.709 SDR keys of its format are authorized, HDR10 and HDR10Plus when the format's PQ key is, and HLG when its HLG key is.
+    Every qualified variant, 8-bit `main` included, advertises the Profile 10 ranges under `allowDolbyVision`, which the add-on sets from the RPU key of the item's reconstruction format, such as `I420:dovi-rpu-v1` for 8-bit Main.
+    8-bit `main` SDR keeps its native route.
 - VP9:
   - native SDR at 8 bits (`profile 0`);
   - raw HDR10, HDR10Plus, and HLG, and raw SDR, at 10 bits (`profile 2`).
@@ -87,7 +91,8 @@ Per codec, the routes are:
 
 Every raw HDR route that advertises HDR10 also advertises HDR10Plus, because HDR10+ always carries a static HDR10 base that raw PQ presents (`getRawHDRRouteVideoRangeTypes`).
 
-Raw SDR at 10 bits needs `allowRawSDR` with both I420P10 BT.709 SDR keys, limited and full, because a profile condition cannot express color range.
+Raw SDR needs `allowRawSDR` with both BT.709 SDR keys of the format, limited and full, because a profile condition cannot express color range.
+A profile condition cannot express color primaries either, so those keys stand for the format's SDR keys of every primaries.
 
 Jellyfin labels many Dolby Vision streams the engine can present outside the generic Dolby Vision ranges:
 
@@ -168,7 +173,7 @@ An AV1, VP9, or HEVC range-extension item presents HDR only through raw planes, 
 Eligibility waits the same way for such an item whose metadata or declared Dolby Vision base is PQ or HLG.
 
 The Dolby Vision wait also settles the item's first-use key: Profile 4 in any format, or Profile 7 or single-layer reconstruction in a format other than I420P10.
-Every non-retry profile also waits for the raw SDR authorization, whatever the scope.
+Every non-retry profile also waits for the raw SDR authorization, whatever the scope, and for the item's own raw SDR key when that key authorizes on first use, as every key outside BT.709 does (`getFirstUseRawSDRRouteKey`).
 
 ## Gotchas
 
@@ -180,12 +185,15 @@ Every non-retry profile also waits for the raw SDR authorization, whatever the s
 - Width, Height, VideoLevel, and VideoFramerate are removed only for custom containers, as is IsInterlaced for a codec the engine deinterlaces.
   Bitrate is stripped everywhere on non-retry profiles.
 - HEVC routes expand to every (VideoProfile, VideoRangeType) pair, with `VideoBitDepth Equals 0` as the value that always fails.
-  AV1 and VP9 expand the same way when they have more than one route, so their native 8-bit SDR and raw 10-bit SDR share one SDR pair with both depths.
+  AV1 and VP9 expand the same way when they have more than one route, so their native 8-bit SDR and raw 10-bit SDR share one SDR pair with both depths, and the AV1 raw format variants of one profile share its pairs.
   H.264 is not expanded.
 - Generic `Rext` advertises a bit depth only when 4:2:0, 4:2:2, and 4:4:4 at that depth are all authorized (`hasCompleteRextBitDepthEnvelope`).
 - The native external route needs explicit color fields that a profile cannot express.
   Such a source can negotiate DirectPlay and then take the raw route or fall back.
-- A profile condition cannot express color primaries, so 10-bit SDR AV1 or VP9 tagged BT.601 or BT.2020 negotiates and then fails eligibility: the raw SDR keys are BT.709 only.
+- A profile condition cannot express color primaries, so a raw SDR route is advertised by its format's BT.709 keys.
+  A BT.601 or BT.2020 SDR item settles its own key at negotiation; if that key fails, the item negotiates and then fails eligibility.
+- A profile condition cannot express chroma format either, and AV1 `high` also names 4:2:0, and `professional` 4:2:0 and 4:4:4 at 8 and 10 bits, which no raw format variant covers.
+  Such a stream negotiates through its profile's variant routes and then takes a decoder package or fails eligibility.
 - A P10 Matroska stream without a CCID, labeled by transfer, negotiates through the static HDR ranges, but it declares no base, so it plays only through its RPU route.
 - `customProfileAugmentationAvailable` stays set for the lifetime of the player instance.
 - Dolby Vision and interlaced sources always disable HLS video stream copy, so an HLS fallback re-encodes the video.
