@@ -559,7 +559,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // A test that fails with its panel open would leave it the module's one active panel, which every later open reuses
+        document.querySelector<HTMLButtonElement>('.webgpuSettingsPanel .webgpuSettingsClose')?.click();
+        await flushMicrotasks();
         vi.unstubAllGlobals();
         document.documentElement.removeAttribute('dir');
         for (const placementStyle of document.head.querySelectorAll(`[${PLACEMENT_STYLE_ATTRIBUTE}]`)) {
@@ -716,13 +719,15 @@ describe('WebGPUPlaybackSettingsPanel', () => {
                 }
             }
         };
+        // Each restores the plugin's default, whatever it is, over the value the test set
+        const defaultSettings = createDefaultWebGPUUserSettings();
         expect(defaultedSettings).toMatchObject({
-            audio: { forceStereoDownmix: false },
+            audio: { forceStereoDownmix: defaultSettings.audio.forceStereoDownmix },
             render: {
-                automaticInputPeakNits: true,
+                automaticInputPeakNits: defaultSettings.render.automaticInputPeakNits,
                 settings: {
-                    display: { brightness: 0 },
-                    toneMapping: { operator: 'spline' }
+                    display: { brightness: defaultSettings.render.settings.display.brightness },
+                    toneMapping: { operator: defaultSettings.render.settings.toneMapping.operator }
                 }
             }
         });
