@@ -973,9 +973,9 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             Type: 'Video',
             VideoCodec: 'h264'
         });
-        // AVI carries no Vorbis decoder description Mediabunny reads
+        // The fork gives Vorbis in AVI the decoder description its extradata holds
         expect(addedProfiles).toContainEqual({
-            AudioCodec: 'aac',
+            AudioCodec: 'aac,vorbis',
             Container: 'avi',
             Type: 'Video',
             VideoCodec: 'h264,vp8'
