@@ -93,6 +93,26 @@ What they do:
 
 Engine changes must also pass the engine's own checks, from its root.
 
+## Local development client
+
+From `jellyfin-webgpu-client/`, copy `.env.example` to the ignored `.env`, set `JELLYFIN_SERVER_URL`, and run `npm run dev`, then open `http://127.0.0.1:5173/web/`.
+`JELLYFIN_DEV_PORT` selects the local port; `--server` and `--port` override the environment.
+This builds and serves the pinned Jellyfin Web with the local add-on, without installing the server plugin or needing .NET.
+The server URL is the API root, optionally including a BaseUrl, not a `/web/` URL.
+
+The tool copies the web build inputs into the ignored `bin/webgpu-dev/jellyfin-web/`, installs that copy's dependencies, and builds it there; the source checkout remains read-only.
+API, media (including byte ranges), and WebSocket requests go through the local server to the configured upstream.
+The bootstrap and `config.json` follow the same window-plugin contract as the server plugin.
+The browser connects to the local origin, avoiding CORS and HTTPS-to-HTTP mixed-content problems.
+Upstream HTTPS certificates must be trusted.
+
+The web build is cached: pass `--rebuild-web` after changing its source or pinned revision.
+`--no-build` serves existing web and add-on builds; `--port` changes the default 5173.
+`JELLYFIN_WEB_DIR` selects the source checkout as with the add-on's other build commands.
+Rebuild player or engine changes with `npm run build:development` in another terminal, then refresh; there is no HMR, and the dev tool disables service-worker caching.
+The listener binds only to `127.0.0.1`, which browsers treat as a secure context for WebGPU even over HTTP.
+Credentials and settings are separate from the remote web origin, but actions still affect the real server.
+
 ## Gotchas
 
 - Never write into the Jellyfin Web checkout.

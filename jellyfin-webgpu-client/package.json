@@ -76,6 +76,7 @@
     "Firefox ESR"
   ],
   "scripts": {
+    "dev": "node scripts/dev.js",
     "build": "node scripts/build-hls.js && node scripts/write-host-tsconfig.js && cross-env NODE_ENV=\"production\" webpack --config webpack.config.js",
     "build:development": "node scripts/build-hls.js && node scripts/write-host-tsconfig.js && webpack --config webpack.config.js",
     "lint": "node scripts/write-host-tsconfig.js && cd .. && eslint --concurrency=auto",

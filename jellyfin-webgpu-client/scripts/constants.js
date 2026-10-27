@@ -13,6 +13,10 @@ const WEBGPU_PLAYER_DIRECTORY = path.join(CLIENT_DIRECTORY, 'vendor', 'webgpu-pl
 const WEBGPU_PLAYER_HLS_DIRECTORY = path.join(CLIENT_DIRECTORY, 'vendor', 'webgpu-player-hls');
 // The pinned Jellyfin Web, used when JELLYFIN_WEB_DIR is not set
 const DEFAULT_JELLYFIN_WEB_DIRECTORY = path.join(CLIENT_DIRECTORY, 'vendor', 'jellyfin-web');
+// The dev tool builds its own copy, never writing into the read-only host checkout
+const DEV_DIRECTORY = path.resolve(CLIENT_DIRECTORY, '..', 'bin', 'webgpu-dev');
+const DEV_WEB_DIRECTORY = path.join(DEV_DIRECTORY, 'jellyfin-web');
+const DEV_WEB_OUTPUT_DIRECTORY = path.join(DEV_WEB_DIRECTORY, 'dist');
 
 // The one engine path spelled out here; the engine's layout file names the rest
 const WEBGPU_PLAYER_LAYOUT = require(path.join(WEBGPU_PLAYER_DIRECTORY, 'tools', 'constants.json'));
@@ -28,6 +32,9 @@ module.exports = {
     TESTS_DIRECTORY,
     ADDON_OUTPUT_DIRECTORY,
     DEFAULT_JELLYFIN_WEB_DIRECTORY,
+    DEV_DIRECTORY,
+    DEV_WEB_DIRECTORY,
+    DEV_WEB_OUTPUT_DIRECTORY,
     WEBGPU_PLAYER_DIRECTORY,
     WEBGPU_PLAYER_HLS_DIRECTORY,
     WEBGPU_PLAYER_SOURCE_DIRECTORY,

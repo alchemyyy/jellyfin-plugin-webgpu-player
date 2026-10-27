@@ -5,6 +5,8 @@ obj/
 artifacts
 jellyfin-webgpu-client/node_modules/
 jellyfin-webgpu-client/tsconfig.host.json
+jellyfin-webgpu-client/.env
+jellyfin-webgpu-client/.env.local
 field-tester/
 /__pycache__
 docs/book/

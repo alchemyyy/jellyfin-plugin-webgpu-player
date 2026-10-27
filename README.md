@@ -89,6 +89,27 @@ cd jellyfin-plugin-webgpu-player
 - `--publish` runs `dotnet publish` instead of `dotnet build`, for packaging.
 - The add-on's own checks run from `jellyfin-webgpu-client/`: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`.
 
+### Local WebGPU development client
+
+Run a local Jellyfin Web client with the local WebGPU player against an existing server, without installing or rebuilding the .NET plugin:
+
+```sh
+cd jellyfin-webgpu-client
+npm ci
+cp .env.example .env
+# Set JELLYFIN_SERVER_URL in .env, then:
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/web/` and log in normally. Pass the server root URL, including its BaseUrl if configured (for example, `https://example.com/jellyfin`), not its `/web/` URL.
+The ignored `.env` configures `JELLYFIN_SERVER_URL` and `JELLYFIN_DEV_PORT`; `--server` and `--port` override them.
+The dev tool builds a private copy of the pinned Jellyfin Web under the ignored `bin/webgpu-dev/`, builds the add-on, and proxies API requests, media, and WebSockets to your server. The vendored Jellyfin Web checkout is not modified. The existing Node.js and engine decoder build prerequisites still apply; .NET is not needed.
+
+- The listener is local-only. Loopback HTTP is a secure context for WebGPU; the upstream can use HTTP or HTTPS with a trusted certificate.
+- Subsequent starts reuse the web build. Use `--rebuild-web` after changing Jellyfin Web sources or its pinned revision, `--no-build` to reuse both existing builds, or `--port 5174` to change the local port. `JELLYFIN_WEB_DIR` also selects the local web build's source checkout.
+- For player changes, run `npm run build:development` in another terminal, then refresh. This is build-and-refresh development, not hot module replacement. Engine worker changes also require this rebuild.
+- Login and player settings belong to this local browser origin. Login, playback, watched-state updates, and admin actions still use the real server; this is not an isolated test server. Casting a localhost client to another device is not supported by this workflow.
+
 ### Test Install
 
 ```sh

@@ -365,6 +365,13 @@ export const addonSourceConfig = {
 export default tseslint.config(
     ...sharedConfigs,
 
+    {
+        files: [ 'scripts/**/*.js' ],
+        rules: {
+            'compat/compat': 'off'
+        }
+    },
+
     // Config files use node globals
     {
         ignores: [ ADDON_SOURCE_PATTERN ],
