@@ -83,6 +83,11 @@ const ULTRA_HD_8K_HEIGHT = 4_320;
 // The decoder packages the engine's decoder projects build, as the server's catalog describes them
 const MPEG2_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'mpeg2video', 'mpeg1video' ], kind: 'video', outputFormats: [ 'I420', 'I422', 'I444' ] };
 const VC1_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'vc1', 'wmv3' ], kind: 'video', outputFormats: [ 'I420' ] };
+const MPEG4_DECODER_PACKAGE: DecoderPackageRouteSummary = {
+    codecs: [ 'mpeg4', 'h263', 'msmpeg4v1', 'msmpeg4v2', 'msmpeg4v3' ],
+    kind: 'video',
+    outputFormats: [ 'I420' ]
+};
 const JPEG2000_DECODER_PACKAGE: DecoderPackageRouteSummary = {
     codecs: [ 'jpeg2000' ],
     kind: 'video',
@@ -100,6 +105,7 @@ const HEVC_DECODER_PACKAGE: DecoderPackageRouteSummary = {
 const PACKAGE_CODEC_DECODER_PACKAGES: readonly DecoderPackageRouteSummary[] = [
     MPEG2_DECODER_PACKAGE,
     VC1_DECODER_PACKAGE,
+    MPEG4_DECODER_PACKAGE,
     JPEG2000_DECODER_PACKAGE,
     EAC3_DECODER_PACKAGE,
     DTS_DECODER_PACKAGE,
@@ -576,6 +582,43 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             }
         }
     );
+
+    it('advertises MPEG-4 Part 2, H.263, and MS-MPEG4 from their decoder package in AVI, Matroska, and MP4 as 8-bit SDR', () => {
+        const withoutPackage = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac', 'mp3' ] }),
+            {}
+        );
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac', 'mp3' ] }),
+            { decoderPackages: [ MPEG4_DECODER_PACKAGE ] }
+        );
+
+        const advertises = (profile: typeof result.profile, container: string, codec: string): boolean => (
+            profile.DirectPlayProfiles?.some(directPlay => (
+                directPlay.Container?.split(',').includes(container) === true
+                && directPlay.VideoCodec?.split(',').includes(codec) === true
+            )) === true
+        );
+        for (const codec of MPEG4_DECODER_PACKAGE.codecs) {
+            expect(advertises(result.profile, 'avi', codec), `avi/${codec}`).toBe(true);
+            expect(advertises(result.profile, 'mkv', codec), `mkv/${codec}`).toBe(true);
+            expect(advertises(result.profile, 'mp4', codec), `mp4/${codec}`).toBe([ 'mpeg4', 'h263' ].includes(codec));
+            expect(advertises(withoutPackage.profile, 'avi', codec), `no package avi/${codec}`).toBe(false);
+            expect(advertises(withoutPackage.profile, 'mkv', codec), `no package mkv/${codec}`).toBe(false);
+            expect(withoutPackage.profile.CodecProfiles?.some(profile => profile.Codec === codec)).toBe(false);
+            expect(result.profile.CodecProfiles?.find(profile => profile.Codec === codec)).toEqual({
+                Codec: codec,
+                Conditions: [
+                    { Condition: 'EqualsAny', IsRequired: true, Property: 'VideoRangeType', Value: 'SDR' },
+                    { Condition: 'Equals', IsRequired: true, Property: 'VideoBitDepth', Value: '8' }
+                ],
+                Container: getCustomVideoCodecContainers(codec as CustomVideoCodec),
+                Type: 'Video'
+            });
+        }
+    });
 
     it('advertises JPEG 2000 from its decoder package as progressive only, since it codes interlaced fields apart', () => {
         const result = augmentDeviceProfileForCustomDecode(
