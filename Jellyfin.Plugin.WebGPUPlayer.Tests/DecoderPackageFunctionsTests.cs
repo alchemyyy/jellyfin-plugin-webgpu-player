@@ -14,6 +14,8 @@ public sealed class DecoderPackageFunctionsTests
     private const string NotAModule = "not a module";
     // A UTF-8 lead byte without its continuation byte
     private static readonly byte[] InvalidUTF8 = [0xC3, 0x28];
+    // The video header's directive lines, which end at the blank line before its body
+    private static readonly string VideoHeaderLines = ModuleTestFiles.VideoHeader[..ModuleTestFiles.VideoHeader.IndexOf("\n\n", StringComparison.Ordinal)];
 
     // Every package the add-on build carries, which the plugin offers as bundled
     public static TheoryData<string> BundledPackages
@@ -45,6 +47,7 @@ public sealed class DecoderPackageFunctionsTests
         Assert.Equal(["hevc"], package.Codecs);
         Assert.Equal(["I420", "I420P10"], package.OutputFormats);
         Assert.True(package.Monochrome);
+        Assert.Equal(VideoHeaderLines, package.Header);
         Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(bytes)), package.ContentHash);
         Assert.Equal(bytes.Length, package.ByteLength);
     }
@@ -63,6 +66,18 @@ public sealed class DecoderPackageFunctionsTests
         Assert.Equal(["eac3", "ac3"], package.Codecs);
         Assert.Empty(package.OutputFormats);
         Assert.False(package.Monochrome);
+        Assert.Null(package.Header);
+    }
+
+    [Fact]
+    public void ReadPackage_CRLFHeader_KeepsItsLinesWithoutCarriageReturns()
+    {
+        byte[] bytes = ModuleTestFiles.CreatePackage(ModuleTestFiles.VideoHeader.Replace("\n", "\r\n", StringComparison.Ordinal));
+
+        DecoderPackageInfo? package = DecoderPackageFunctions.ReadPackage(bytes, ModuleTestFiles.DecoderSection).Package;
+
+        Assert.NotNull(package);
+        Assert.Equal(VideoHeaderLines, package.Header);
     }
 
     [Fact]
@@ -144,6 +159,19 @@ public sealed class DecoderPackageFunctionsTests
         Assert.NotNull(package);
         Assert.Equal(Path.GetFileNameWithoutExtension(path), package.Id);
         Assert.NotEmpty(package.Codecs);
+        // A video package's header carries its accepts conditions and sizes, and none of its WGSL body
+        if (package.Kind == DecoderPackageFunctions.VideoKind)
+        {
+            Assert.NotNull(package.Header);
+            string[] headerLines = package.Header.Split('\n');
+            Assert.All(headerLines, line => Assert.StartsWith("//!", line, StringComparison.Ordinal));
+            Assert.Contains(headerLines, line => line.StartsWith("//! accepts: codec in [", StringComparison.Ordinal));
+            Assert.Contains(headerLines, line => line.StartsWith("//! packet:", StringComparison.Ordinal));
+        }
+        else
+        {
+            Assert.Null(package.Header);
+        }
     }
 
     private static ModuleProblem? ReadProblem(byte[] bytes)

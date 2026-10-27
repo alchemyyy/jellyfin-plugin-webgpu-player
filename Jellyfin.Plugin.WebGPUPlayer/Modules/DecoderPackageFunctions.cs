@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -9,7 +10,7 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Modules;
 
 /// <summary>
 /// Stateless rules for reading decoder packages: WebAssembly modules whose custom section carries the decoder's <c>//!</c> header.
-/// The plugin reads only what it offers and shows: the id, name, kind, codecs, output formats, and monochrome support.
+/// The plugin reads only what it offers and shows: the id, name, kind, codecs, output formats, and monochrome support, and a video decoder's header text, which a client's engine reads.
 /// The engine's book defines the format, and a client's engine runs every check of its own when it loads a package.
 /// </summary>
 public static partial class DecoderPackageFunctions
@@ -65,6 +66,7 @@ public static partial class DecoderPackageFunctions
     private const string MonochromeValue = "yes";
     private const char ListSeparator = ',';
     private const char LineFeed = '\n';
+    private const char CarriageReturn = '\r';
 
     private static readonly UTF8Encoding StrictUTF8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
@@ -104,13 +106,13 @@ public static partial class DecoderPackageFunctions
             return (null, new ModuleProblem(EncodingCode, exception.Message));
         }
 
-        (Dictionary<string, (string Value, int Line)> Directives, ModuleProblem? Problem) header = ReadHeader(source);
+        (Dictionary<string, (string Value, int Line)> Directives, string Text, ModuleProblem? Problem) header = ReadHeader(source);
         if (header.Problem is not null)
         {
             return (null, header.Problem);
         }
 
-        return ReadManifest(header.Directives, Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length);
+        return ReadManifest(header.Directives, header.Text, Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length);
     }
 
     /// <summary>
@@ -192,12 +194,13 @@ public static partial class DecoderPackageFunctions
     }
 
     /// <summary>
-    /// Reads the leading <c>//!</c> lines of a decoder source into its directives by name; a repeated directive keeps its first value, since the engine judges repeats.
+    /// Reads the leading <c>//!</c> lines of a decoder source into its directives by name, and the text of those lines; a repeated directive keeps its first value, since the engine judges repeats.
     /// </summary>
-    private static (Dictionary<string, (string Value, int Line)> Directives, ModuleProblem? Problem) ReadHeader(string source)
+    private static (Dictionary<string, (string Value, int Line)> Directives, string Text, ModuleProblem? Problem) ReadHeader(string source)
     {
         Dictionary<string, (string Value, int Line)> directives = new Dictionary<string, (string Value, int Line)>(StringComparer.Ordinal);
         string[] lines = source.Split(LineFeed);
+        int headerLineCount = 0;
         for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
         {
             // Trimming also drops the carriage return of a CRLF line
@@ -207,24 +210,29 @@ public static partial class DecoderPackageFunctions
                 break;
             }
 
+            int line = lineIndex + 1;
+            headerLineCount = line;
             if (text.Length == HeaderPrefix.Length)
             {
                 continue;
             }
 
-            int line = lineIndex + 1;
             Match match = DirectivePattern().Match(text);
             if (!match.Success)
             {
-                return (directives, CreateManifestProblem("header-syntax", Quote(text), line));
+                return (directives, string.Empty, CreateManifestProblem("header-syntax", Quote(text), line));
             }
 
             directives.TryAdd(match.Groups[1].Value, (match.Groups[2].Value.Trim(), line));
         }
 
-        return directives.Count == 0
-            ? (directives, CreateManifestProblem("header-missing", Quote(lines[0].Trim()), 1))
-            : (directives, null);
+        if (directives.Count == 0)
+        {
+            return (directives, string.Empty, CreateManifestProblem("header-missing", Quote(lines[0].Trim()), 1));
+        }
+
+        string headerText = string.Join(LineFeed, lines.Take(headerLineCount).Select(headerLine => headerLine.TrimEnd(CarriageReturn)));
+        return (directives, headerText, null);
     }
 
     /// <summary>
@@ -232,6 +240,7 @@ public static partial class DecoderPackageFunctions
     /// </summary>
     private static (DecoderPackageInfo? Package, ModuleProblem? Problem) ReadManifest(
         Dictionary<string, (string Value, int Line)> directives,
+        string header,
         string contentHash,
         int byteLength)
     {
@@ -274,7 +283,7 @@ public static partial class DecoderPackageFunctions
 
         if (kind == AudioKind)
         {
-            return (new DecoderPackageInfo(idValue, name, kind, codecs, [], false, contentHash, byteLength), null);
+            return (new DecoderPackageInfo(idValue, name, kind, codecs, [], false, null, contentHash, byteLength), null);
         }
 
         if (!directives.TryGetValue(OutputDirective, out (string Value, int Line) output))
@@ -299,7 +308,7 @@ public static partial class DecoderPackageFunctions
             monochrome = true;
         }
 
-        return (new DecoderPackageInfo(idValue, name, kind, codecs, outputFormats, monochrome, contentHash, byteLength), null);
+        return (new DecoderPackageInfo(idValue, name, kind, codecs, outputFormats, monochrome, header, contentHash, byteLength), null);
     }
 
     /// <summary>
