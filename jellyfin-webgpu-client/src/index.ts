@@ -1,7 +1,9 @@
+import { configureCapabilityProbeStore } from 'webgpu-player/capability/CapabilityProbeStore';
 import { configureEngineAssets } from 'webgpu-player/EngineAssets';
 import { configureEngineFeatureFlags } from 'webgpu-player/EngineConfiguration';
 import 'webgpu-player/style.css';
 
+import { startCapabilityProbeWarmUp } from './CapabilityProbeWarmUp';
 import { installHostCompatibleMode } from './compat/HostCompatibleMode';
 import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
 import HostCompatibleWebGPUPlayer from './HostCompatibleWebGPUPlayer';
@@ -27,6 +29,8 @@ configureEngineAssets({
     baseURL: getAddonAssetBaseURL() + ENGINE_LIBRARIES_DIRECTORY,
     cacheKey: __WEBGPU_PLAYER_ASSET_KEY__
 });
+// Stored probe verdicts count only for this build: the engine's asset key, and the compilation hash, which also covers the add-on's own probe code and expectations
+configureCapabilityProbeStore({ buildKey: `${__WEBGPU_PLAYER_ASSET_KEY__}-${__webpack_hash__}` });
 configureEngineFeatureFlags({
     isHDRToneMappingEnabled: getWebGPUHDRToneMappingEnabled
 });
@@ -40,6 +44,8 @@ installTimingTraceControl({ engineAssetKey: __WEBGPU_PLAYER_ASSET_KEY__ });
  */
 function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWebGPUPlayer {
     bindHostBridge(bag);
+    // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks
+    startCapabilityProbeWarmUp();
     const player = new HostCompatibleWebGPUPlayer();
     installHostCompatibleMode(player);
     return player;

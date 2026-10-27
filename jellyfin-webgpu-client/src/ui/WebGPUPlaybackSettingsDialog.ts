@@ -24,6 +24,7 @@ import 'elements/emby-select/emby-select';
 import 'elements/emby-slider/emby-slider';
 import 'material-design-icons-iconfont';
 
+import { clearStoredCapabilityProbeVerdicts } from 'webgpu-player/capability/CapabilityProbeStore';
 import {
     HDR_RENDER_SETTING_RANGES,
     type RenderSettings
@@ -414,6 +415,16 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsStatus" data-playback-status role="status">
                         ${translateToHTML('WebGPUPlaybackChangesRestartRequired')}
                     </div>
+                    <button
+                        aria-describedby="webgpu-probe-cache-description"
+                        class="raised webgpuSettingsClearProbeCache"
+                        is="emby-button"
+                        type="button"
+                    >${translateToHTML('WebGPUClearProbeCache')}</button>
+                    <div
+                        class="fieldDescription"
+                        id="webgpu-probe-cache-description"
+                    >${translateToHTML('WebGPUClearProbeCacheHelp')}</div>
                 </section>
 
                 <section class="webgpuSettingsSection" aria-labelledby="webgpu-tone-mapping-title">
@@ -1157,6 +1168,16 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     resetRenderButton.addEventListener('click', onResetRender);
     cleanupCallbacks.push((): void => {
         resetRenderButton.removeEventListener('click', onResetRender);
+    });
+
+    const clearProbeCacheButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache');
+    const onClearProbeCache = (): void => {
+        clearStoredCapabilityProbeVerdicts();
+        setStatus(playbackStatus, globalize.translate('WebGPUProbeCacheClearedStatus'));
+    };
+    clearProbeCacheButton.addEventListener('click', onClearProbeCache);
+    cleanupCallbacks.push((): void => {
+        clearProbeCacheButton.removeEventListener('click', onClearProbeCache);
     });
 
     const resetAudioButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAudio');

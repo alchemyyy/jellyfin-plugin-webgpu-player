@@ -9,6 +9,9 @@ type WebGPUPlayerAddonConfiguration = {
 export declare global {
     // Defined by webpack.config.js from the build info the engine's asset build writes
     const __WEBGPU_PLAYER_ASSET_KEY__: string;
+    // Webpack's compilation hash, which changes with any module of the build
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- webpack defines this free variable
+    const __webpack_hash__: string;
     // Webpack's runtime public path; publicPath 'auto' resolves it from the entry module URL
     // eslint-disable-next-line @typescript-eslint/naming-convention -- webpack defines this free variable
     let __webpack_public_path__: string;
