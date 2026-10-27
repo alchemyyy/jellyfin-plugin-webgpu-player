@@ -2196,7 +2196,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(playbackPreferencesMockState.refreshWebGPUPlaybackPreferences).toHaveBeenCalledTimes(2);
     });
 
-    it('advertises locked ASS and PGS renderers without the HTML PGS profile flag', async () => {
+    it('advertises locked ASS, PGS, and VobSub renderers without the HTML PGS profile flag', async () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
         Object.assign(backend.profile, {
@@ -2219,6 +2219,7 @@ describe('WebGPUPlayer HTML delegation', () => {
             subtitleCapabilities: {
                 externalASS: true,
                 externalPGS: true,
+                externalVobSub: true,
                 externalText: true
             }
         });

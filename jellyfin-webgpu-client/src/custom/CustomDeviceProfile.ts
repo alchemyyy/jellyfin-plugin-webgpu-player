@@ -113,6 +113,7 @@ export type CustomDeviceProfileOptions = {
 export type CustomSubtitleCapabilities = Readonly<{
     externalASS: boolean
     externalPGS: boolean
+    externalVobSub: boolean
     externalText: boolean
 }>;
 
@@ -207,6 +208,9 @@ const EXTERNAL_SUBTITLE_METHOD = 'External';
 const CUSTOM_EXTERNAL_TEXT_SUBTITLE_FORMAT = 'vtt';
 const CUSTOM_EXTERNAL_ASS_SUBTITLE_FORMATS = [ 'ass', 'ssa' ] as const;
 const CUSTOM_EXTERNAL_PGS_SUBTITLE_FORMAT = 'pgssub';
+// Jellyfin delivers a VobSub track only extracted to a Matroska subtitle file, which a profile names with this container
+const CUSTOM_EXTERNAL_VOBSUB_SUBTITLE_FORMAT = 'vobsub';
+const CUSTOM_EXTERNAL_VOBSUB_SUBTITLE_CONTAINER = 'mks';
 const DTS_HIGH_SAMPLE_RATE_MINIMUM = 96_001;
 const MAXIMUM_RAW_HDR_VIDEO_BIT_DEPTH = 10;
 // VideoBitDepth Equals 0 never matches a real stream, so the route rejects its profile/range pair
@@ -822,6 +826,13 @@ function applyCustomSubtitleProfiles(
     if (capabilities.externalPGS) {
         addUniqueSubtitleProfile(customProfiles, profileKeys, {
             Format: CUSTOM_EXTERNAL_PGS_SUBTITLE_FORMAT,
+            Method: EXTERNAL_SUBTITLE_METHOD
+        });
+    }
+    if (capabilities.externalVobSub) {
+        addUniqueSubtitleProfile(customProfiles, profileKeys, {
+            Container: CUSTOM_EXTERNAL_VOBSUB_SUBTITLE_CONTAINER,
+            Format: CUSTOM_EXTERNAL_VOBSUB_SUBTITLE_FORMAT,
             Method: EXTERNAL_SUBTITLE_METHOD
         });
     }

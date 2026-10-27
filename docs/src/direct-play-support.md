@@ -130,5 +130,20 @@ A selected track in any other format is burned in by the server, so the play met
 | WebVTT, and the text formats the server converts to it, such as SubRip | Yes | External, as WebVTT | The add-on's subtitle element |
 | ASS, SSA | Yes, with Worker, WebAssembly, and a 2D canvas | External | `@jellyfin/libass-wasm` |
 | PGS | Yes, with Worker, WebAssembly, and a 2D canvas | External | libbitsub's `PgsRenderer` |
-| VobSub (`dvdsub`) | No: not advertised, so it is burned in | Encode | None on the custom path, although the HTML backend holds libbitsub's `VobSubRenderer` |
+| VobSub (`dvdsub`) embedded in any container, or an external `.mks` | Yes, with Worker, WebAssembly, and a 2D canvas | External, as a Matroska subtitle file | libbitsub's `VobSubRenderer` |
+| VobSub as an external `.idx`/`.sub` pair | No: burned in | Encode | None |
 | Any other bitmap format, such as DVB subtitles | No: burned in | Encode | None |
+
+### VobSub delivery
+
+The add-on advertises VobSub as Jellyfin Web does, with the profile `{ Format: 'vobsub', Container: 'mks', Method: 'External' }`.
+The server's `StreamBuilder` matches a profile whose format names `dvdsub` or `vobsub` and whose container is `mks` to a VobSub track that is embedded, in MKV, MP4, VOB, or any container it probes, or that is an external `.mks` file.
+The server then extracts the track with FFmpeg into a Matroska subtitle file in its subtitle cache, since FFmpeg has no `.idx`/`.sub` muxer.
+An external `.idx`/`.sub` pair matches no External profile, so the server burns it in; remuxing the pair into an `.mks` beside the video, for example with `mkvmerge`, makes it deliverable.
+A profile without the `mks` container would match the pair too, but the server cannot serve it: the subtitle route answers 400.
+The delivery URL ends in `Stream.<format>`, `Stream.vobsub` here.
+Servers from 12.2 serve that name from the extracted file with HTTP ranges, but 12.1 hands it to its text converter, which answers 400.
+Every supported server serves the extracted file unchanged as `Stream.mks`, without ranges, so the add-on's HTML player requests `Stream.mks` for a server-delivered VobSub track.
+libbitsub reads a VobSub source as Matroska only when its file name hint ends in `.mks`, and otherwise as an `.idx`/`.sub` pair, so the hint is the requested file's name, and `subtitle.mks` when that name is neither.
+Both backends hand the track to the same renderer: the HTML backend samples its `<video>`, and the custom path samples the source-less `<video>` through `timeOffset`, as for PGS.
+With custom decode off the add-on negotiates with the stock profile, which advertises that VobSub profile only while Jellyfin Web's PGS rendering setting is on, so otherwise the server burns the track in.

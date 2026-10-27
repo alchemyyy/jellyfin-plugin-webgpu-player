@@ -17,6 +17,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - libbitsub replaces libpgs (10-02).
   This follows upstream and adds VobSub support.
   The custom path drives it through `timeOffset`, measured against the source-less video.
+  VobSub reaches it as the Matroska subtitle file the server extracts, requested as `Stream.mks`, the one name every server from 12.1 serves unchanged (10-27); [Direct play support](direct-play-support.md#vobsub-delivery) has the server's rules.
 - The server offers the engine's decoder packages and passes, and a client fetches each when it needs it (10-16).
   The add-on build carries every package `bin/wgpud/` (engine) holds and every pass file of `bin/wgpup/` (engine), and an administrator uploads, deletes, enables, and disables them on the plugin's settings page.
   A client downloads a package only for a playback that needs its codec and keeps it in IndexedDB by id, so a page loads a stored version again until the server offers another; a pass file downloads when the user adds it.

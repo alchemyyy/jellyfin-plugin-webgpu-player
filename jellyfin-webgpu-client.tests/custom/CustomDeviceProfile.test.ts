@@ -3128,7 +3128,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             { Format: 'srt', Method: 'External' },
             { Format: 'vtt', Method: 'External' },
             { Format: 'ass', Method: 'External' },
-            { Format: 'ass', Method: 'External' }
+            { Format: 'ass', Method: 'External' },
+            { Container: 'mks', Format: 'vobsub', Method: 'External' }
         ];
         const originalSnapshot = JSON.stringify(original);
 
@@ -3139,6 +3140,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 subtitleCapabilities: {
                     externalASS: true,
                     externalPGS: true,
+                    externalVobSub: true,
                     externalText: true
                 }
             }
@@ -3149,7 +3151,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             { Format: 'vtt', Method: 'External' },
             { Format: 'ass', Method: 'External' },
             { Format: 'ssa', Method: 'External' },
-            { Format: 'pgssub', Method: 'External' }
+            { Format: 'pgssub', Method: 'External' },
+            { Container: 'mks', Format: 'vobsub', Method: 'External' }
         ]);
         expect(result.profile.SubtitleProfiles).not.toBe(original.SubtitleProfiles);
         expect(JSON.stringify(original)).toBe(originalSnapshot);
@@ -3162,7 +3165,8 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             { Format: 'dvdsub', Method: 'Encode' },
             { Format: 'ass', Method: 'External' },
             { Format: 'pgssub', Method: 'External' },
-            { Format: 'vtt', Method: 'External' }
+            { Format: 'vtt', Method: 'External' },
+            { Container: 'mks', Format: 'vobsub', Method: 'External' }
         ];
 
         const result = augmentDeviceProfileForCustomDecode(
@@ -3172,6 +3176,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 subtitleCapabilities: {
                     externalASS: false,
                     externalPGS: false,
+                    externalVobSub: false,
                     externalText: true
                 }
             }
@@ -3192,6 +3197,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         const subtitleCapabilities = {
             externalASS: true,
             externalPGS: true,
+            externalVobSub: true,
             externalText: true
         } as const;
 
@@ -3224,6 +3230,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             subtitleCapabilities: {
                 externalASS: true,
                 externalPGS: true,
+                externalVobSub: true,
                 externalText: true
             }
         } as const;
@@ -3232,7 +3239,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
 
         expect(secondResult.profile.SubtitleProfiles).toEqual(firstResult.profile.SubtitleProfiles);
         expect(new Set(secondResult.profile.SubtitleProfiles?.map(subtitleProfile => (
-            `${subtitleProfile.Method}|${subtitleProfile.Format}`
+            `${subtitleProfile.Method}|${subtitleProfile.Format}|${subtitleProfile.Container}`
         ))).size).toBe(secondResult.profile.SubtitleProfiles?.length);
         expect(secondResult.telemetry.subtitleProfileChanged).toBe(false);
     });

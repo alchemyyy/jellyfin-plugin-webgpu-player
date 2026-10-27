@@ -52,7 +52,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
 1. Strip bitrate.
 2. Find the supported video and audio codecs, a decoder package's among them.
 3. Add one DirectPlayProfile per rule in the engine's `CUSTOM_CONTAINER_CODEC_RULES`.
-4. Add the custom subtitle profiles (vtt, ass/ssa, pgssub).
+4. Add the custom subtitle profiles (vtt, ass/ssa, pgssub, and vobsub in an `mks` container).
 5. Scope the stock video and container conditions to non-custom containers.
 6. `widenAuthorizedHDRCodecProfiles`.
 7. `appendMeasuredVideoRouteProfiles`.
