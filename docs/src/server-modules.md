@@ -18,6 +18,7 @@ A client downloads a decoder package only when a playback needs it, and a pass f
   A state file of another version loads as every module enabled.
 - The plugin reads only what it shows and offers.
   `Modules/DecoderPackageFunctions.cs` reads a package's id, name, kind, codecs, output formats, and monochrome support from its header, and `Modules/PassFileFunctions.cs` reads a pass file's pass names.
+  The catalog also carries a video package's `header`, its `//!` lines without the WGSL body, which the client's engine reads to judge a stream before it downloads the package; an audio package's is null.
   A client's engine runs every check of its own when it loads a file.
 
 ## Routes
@@ -26,7 +27,7 @@ A client downloads a decoder package only when a playback needs it, and a pass f
 
 | Route | Caller | Answer |
 | --- | --- | --- |
-| `GET WebGPUPlayer/Catalog` | A signed-in user | The offered packages and pass files, each with its SHA-256 and size |
+| `GET WebGPUPlayer/Catalog` | A signed-in user | The offered packages and pass files, each with its SHA-256 and size, and each video package with its header |
 | `GET WebGPUPlayer/DecoderPackages/{id}` | A signed-in user | The offered package, with its SHA-256 as its entity tag |
 | `GET WebGPUPlayer/Passes/{fileName}` | A signed-in user | The offered pass file, with its SHA-256 as its entity tag |
 | `GET WebGPUPlayer/Catalog/All` | An administrator | Every file the store holds, with its source, state, and problem |
@@ -52,6 +53,7 @@ A client downloads a decoder package only when a playback needs it, and a pass f
 - `ServerModules.ts` reads the catalog of the item's server, signed in with the page's token (`Authorization: MediaBrowser Token="..."`).
   A negotiation and its playback's eligibility share one read: a catalog read in the last 60 seconds is reused, and the settings panel reads it again when it opens.
 - Negotiation advertises what the user's packages and the server's decode before any of them is downloaded (see [Negotiation](negotiation.md#decoder-packages)).
+  The engine's `parseGPUDecoderHeader` reads each video package's catalog header, whose `accepts` conditions, `monochrome`, and buffer sizes bound the sizes the routes advertise on the presenter's device; a package whose header the engine refuses is logged and left out, since its load would fail too.
 - Eligibility downloads only what the playback needs:
   - the video packages that decode the stream's codec into its frame pool format, when no native route plays the video;
   - the audio packages of the selected track's codec, when the eligibility refused the track because neither an engine decoder, a native route, nor one of the user's packages takes it.

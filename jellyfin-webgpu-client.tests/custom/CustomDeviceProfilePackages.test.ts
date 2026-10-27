@@ -20,6 +20,7 @@ import {
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 
 import { createConfigCodecCapability, createH264ProfileCapabilities } from './CustomDecodeCapabilityBuilders';
+import { HEVC_HEADER, MPEG2_HEADER } from './DecoderPackageHeaders';
 
 // The decoder packages the engine's decoder projects build, as the server's catalog describes them
 const MPEG2_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'mpeg2video', 'mpeg1video' ], kind: 'video', outputFormats: [ 'I420', 'I422', 'I444' ] };
@@ -29,6 +30,22 @@ const HEVC_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'hevc' ], kind: 'vi
 const EAC3_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], kind: 'audio', outputFormats: [] };
 // A package that names a codec and a format the engine has no name for, which negotiation ignores
 const UNKNOWN_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'uncompressed' ], kind: 'video', outputFormats: [ 'RGBA' ] };
+// WebGPU's default largest storage binding, and a device that holds 2 GiB
+const DEFAULT_STORAGE_BINDING_BYTE_LIMIT = 128 * 1024 * 1024;
+const LARGE_BUFFER_BYTE_LIMIT = 2 ** 31;
+// The HEVC package as the catalog describes it with its header, on a device of each limit
+const HEVC_HEADER_PACKAGE: DecoderPackageRouteSummary = { ...HEVC_PACKAGE, header: HEVC_HEADER };
+const SMALL_DEVICE_HEVC_PACKAGE: DecoderPackageRouteSummary = { ...HEVC_HEADER_PACKAGE, maximumBufferByteLength: DEFAULT_STORAGE_BINDING_BYTE_LIMIT };
+const LARGE_DEVICE_HEVC_PACKAGE: DecoderPackageRouteSummary = { ...HEVC_HEADER_PACKAGE, maximumBufferByteLength: LARGE_BUFFER_BYTE_LIMIT };
+const SIZES = {
+    dci4K: { Height: 2_160, Width: 4_096 },
+    fullHD: { Height: 1_080, Width: 1_920 },
+    hd: { Height: 720, Width: 1_280 },
+    portraitFullHD: { Height: 1_920, Width: 1_080 },
+    ultraHD: { Height: 2_160, Width: 3_840 },
+    ultraHD8K: { Height: 4_320, Width: 7_680 },
+    wideUltraHD: { Height: 1_600, Width: 3_840 }
+} as const;
 
 const MATROSKA_CONTAINER = 'mkv';
 const MPEG4_CONTAINER = 'mp4';
@@ -260,5 +277,78 @@ describe('augmentDeviceProfileForCustomDecode with decoder packages', () => {
 
         expect(unknownProfile).toEqual(augment([]));
         expect(retryProfile.DirectPlayProfiles).toEqual(createStockProfile().DirectPlayProfiles);
+    });
+
+    it('refuses 1080p Main 10 on a device whose largest storage binding is WebGPU\'s default 128 MiB, which its 29-slot pool outgrows, and takes 720p', () => {
+        const main10Stream = createVideoStream('hevc', 'Main 10', TEN_BIT_DEPTH);
+
+        const smallDevice = augment([ SMALL_DEVICE_HEVC_PACKAGE ]);
+
+        expect(isDirectPlayAdvertised(smallDevice, MATROSKA_CONTAINER, { ...main10Stream, ...SIZES.fullHD })).toBe(false);
+        expect(isDirectPlayAdvertised(smallDevice, MATROSKA_CONTAINER, { ...main10Stream, ...SIZES.hd })).toBe(true);
+        // Without the device's limit, the header's accepts alone bound it
+        expect(isDirectPlayAdvertised(augment([ HEVC_HEADER_PACKAGE ]), MATROSKA_CONTAINER, { ...main10Stream, ...SIZES.fullHD })).toBe(true);
+    });
+
+    it('takes on a 2 GiB device every size the HEVC header accepts, within its 8912896 coded samples', () => {
+        const largeDevice = augment([ LARGE_DEVICE_HEVC_PACKAGE ]);
+        const advertises = (profile: string, bitDepth: number, size: StreamRecord): boolean => (
+            isDirectPlayAdvertised(largeDevice, MATROSKA_CONTAINER, createVideoStream('hevc', profile, bitDepth, size))
+        );
+
+        for (const size of [ SIZES.fullHD, SIZES.ultraHD, SIZES.dci4K, SIZES.wideUltraHD, SIZES.portraitFullHD ]) {
+            expect(advertises('Main 10', TEN_BIT_DEPTH, size)).toBe(true);
+            expect(advertises('Main 4:4:4 12', TWELVE_BIT_DEPTH, size)).toBe(true);
+        }
+        expect(advertises('Main 10', TEN_BIT_DEPTH, SIZES.ultraHD8K)).toBe(false);
+        expect(advertises('Main 10', TEN_BIT_DEPTH, { Height: 1_088, Width: 8_192 })).toBe(true);
+        expect(advertises('Main 10', TEN_BIT_DEPTH, { Height: 1_088, Width: 8_193 })).toBe(false);
+    });
+
+    it('leaves the size of a stream a native route takes to the browser\'s decoder', () => {
+        const withNativeHEVC = augment([ SMALL_DEVICE_HEVC_PACKAGE ], [ 'hevc' ]);
+
+        expect(isDirectPlayAdvertised(withNativeHEVC, MATROSKA_CONTAINER, createVideoStream('hevc', 'Main', EIGHT_BIT_DEPTH, SIZES.ultraHD8K))).toBe(true);
+        expect(isDirectPlayAdvertised(withNativeHEVC, MATROSKA_CONTAINER, createVideoStream('hevc', 'Main 10', TEN_BIT_DEPTH, SIZES.fullHD))).toBe(false);
+    });
+
+    it('advertises generic Rext, whose label 4:0:0 streams carry, only from a package that declares monochrome', () => {
+        const rextStream = createVideoStream('hevc', 'Rext', TEN_BIT_DEPTH);
+        const named422Stream = createVideoStream('hevc', 'Main 4:2:2 10', TEN_BIT_DEPTH);
+        // Jellyfin Web's HEVC ceiling, which the routes widen to the profiles they take
+        const stockProfile = createStockProfile();
+        stockProfile.CodecProfiles = [
+            ...(stockProfile.CodecProfiles ?? []),
+            { Codec: 'hevc', Conditions: [ { Condition: 'EqualsAny', IsRequired: false, Property: 'VideoProfile', Value: 'main' } ], Type: 'Video' }
+        ];
+        const augmentStock = (decoderPackage: DecoderPackageRouteSummary): DeviceProfile => (
+            augmentDeviceProfileForCustomDecode(stockProfile, createCapabilities(), { decoderPackages: [ decoderPackage ] }).profile
+        );
+        const withoutMonochrome = augmentStock({ ...LARGE_DEVICE_HEVC_PACKAGE, header: { ...HEVC_HEADER, monochrome: false } });
+
+        expect(isDirectPlayAdvertised(augmentStock(LARGE_DEVICE_HEVC_PACKAGE), MATROSKA_CONTAINER, rextStream)).toBe(true);
+        expect(isDirectPlayAdvertised(withoutMonochrome, MATROSKA_CONTAINER, rextStream)).toBe(false);
+        expect(isDirectPlayAdvertised(withoutMonochrome, MATROSKA_CONTAINER, named422Stream)).toBe(true);
+    });
+
+    it('advertises a profile and depth only where the packages write every chroma format its streams may carry', () => {
+        // AV1 High is 4:4:4, and Professional at 12 bits any chroma format
+        const partialAV1Package: DecoderPackageRouteSummary = { codecs: [ 'av1' ], kind: 'video', outputFormats: [ 'I420', 'I444', 'I420P12' ] };
+
+        const profile = augment([ partialAV1Package ], [ 'av1' ]);
+
+        expect(isDirectPlayAdvertised(profile, MATROSKA_CONTAINER, createVideoStream('av1', 'High', EIGHT_BIT_DEPTH))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, MATROSKA_CONTAINER, createVideoStream('av1', 'Professional', TWELVE_BIT_DEPTH))).toBe(false);
+    });
+
+    it('bounds a codec only packages decode at each depth by its largest chroma format', () => {
+        const mpeg2Package: DecoderPackageRouteSummary = { ...MPEG2_PACKAGE, header: MPEG2_HEADER, maximumBufferByteLength: DEFAULT_STORAGE_BINDING_BYTE_LIMIT };
+        const mpeg2Stream = createVideoStream('mpeg2video', 'Main', EIGHT_BIT_DEPTH);
+
+        const profile = augment([ mpeg2Package ]);
+
+        // A 4:4:4 pool of ten 1080p slots fits 128 MiB, and of ten 2160p slots does not
+        expect(isDirectPlayAdvertised(profile, MATROSKA_CONTAINER, { ...mpeg2Stream, ...SIZES.fullHD })).toBe(true);
+        expect(isDirectPlayAdvertised(profile, MATROSKA_CONTAINER, { ...mpeg2Stream, ...SIZES.ultraHD })).toBe(false);
     });
 });

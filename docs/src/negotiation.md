@@ -23,7 +23,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    - It stops there when custom decode is off or the engine's `getCustomPlaybackRuntimeAvailability` fails (secure context, Worker, `navigator.gpu`, `VideoFrame`).
    - It awaits the engine's `probeCustomDecodeCapabilities(item)` and the native-media audio probe.
      PlaybackInfo waits until the probes the item selects settle; a probe an earlier item ran is not repeated.
-   - In parallel, `getDeviceProfileDecoderPackages` lists what the user's decoder packages and the server's catalog decode, the video ones only when the presenter's device holds a frame pool (see [Decoders and passes from the server](server-modules.md)).
+   - In parallel, `getDeviceProfileDecoderPackages` lists what the user's decoder packages and the server's catalog decode, with each video package's header, the video ones only when the presenter's device holds a frame pool, each with that device's buffer limit (see [Decoders and passes from the server](server-modules.md)).
    - `getHDRDeviceProfileOptions` waits for the GPU authorizations the item's HDR scope needs (5 s each; see [Probe scopes](#probe-scopes)) and returns the flags and route keys.
    - `CustomDeviceProfile.augmentDeviceProfileForCustomDecode` builds the profile, and `HostCompatibleWebGPUPlayer` marks it so the PlaybackInfo interceptor recognizes the request.
 3. Request PlaybackInfo.
@@ -58,8 +58,9 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
 7. `appendMeasuredVideoRouteProfiles`.
    Each route profile requires VideoRangeType, VideoBitDepth, and VideoProfile, and `IsInterlaced=false` where the route takes only progressive video (see [Interlaced video](#interlaced-video)).
    A codec with several routes is split with ApplyConditions.
-8. `appendMeasuredAudioRouteProfiles`.
-9. `splitOriginalAudioRouteProfiles`.
+8. `appendPackageVideoSizeProfiles`: the Width and Height bounds of the decoder package routes (see [Sizes](#sizes)).
+9. `appendMeasuredAudioRouteProfiles`.
+10. `splitOriginalAudioRouteProfiles`.
 
 ## What the profile advertises
 
@@ -94,24 +95,40 @@ Jellyfin labels many Dolby Vision streams the engine can present outside the gen
 
 For a non-retry Dolby Vision item, `getHDRDeviceProfileOptions` passes the item's streams as `itemMediaSource`.
 `CustomDeviceProfile` asks the engine's `hasEligibleCustomVideoRoute` whether the runtime would present the item with the measured capabilities and authorizations, the video packages of `decoderPackages`, and `allowFramePoolHDR`.
+A video package's summary carries its header and the device's buffer limit, so the engine runs the offers' fit check on the item's stream: its `accepts` conditions, `monochrome`, frame pool, `state`, `buffer:`s, and packet ring.
 If it would, `CustomDeviceProfile` advertises the item's exact VideoProfile (as the existing route token), VideoBitDepth, and VideoRangeType as one more HEVC or AV1 route.
-So without native HEVC decode, a stream whose declared base the HEVC decoder package decodes, such as Profile 7 or 8.1, is advertised.
+So without native HEVC decode, a stream whose declared base the HEVC decoder package decodes, such as Profile 7 or 8.1, is advertised, and one past the package's bound of 8912896 coded samples, such as 8K, is not.
 
 ## Decoder packages
 
 The profile advertises what the decoder packages a playback can use decode, before any of them is downloaded: the user's own packages and the server's.
 
-- A video package's route is per profile, with the depths of the formats it writes, SDR, and HDR10, HDR10Plus, and HLG when the user's HDR tone mapping is on (`allowFramePoolHDR`).
+- A video package's route is per profile, with the depths whose formats it writes, SDR, and HDR10, HDR10Plus, and HLG when the user's HDR tone mapping is on (`allowFramePoolHDR`).
   It takes interlaced video unless its codec codes the fields apart, as every measured route does.
 - AV1 takes `main` for 4:2:0 at 8 and 10 bits, `high` for 4:4:4 at 8 and 10 bits, and `professional` for 4:2:2 and 12 bits.
   VP9 takes `profile 0` to `profile 3` by depth and chroma the same way.
-- HEVC takes `main` and `main 10` for 4:2:0, each named range extension profile for its format, and generic `Rext` at a depth whose every chroma format the package writes.
-- A codec only packages decode, such as MPEG-2, VC-1, or JPEG 2000, takes one route without a profile condition.
+  A profile and depth is advertised only when the packages write every chroma format its streams may carry, so AV1 `professional` at 12 bits needs 4:2:0, 4:2:2, and 4:4:4.
+- HEVC takes `main` and `main 10` for 4:2:0, each named range extension profile for its format, and generic `Rext` at a depth whose every chroma format the packages write.
+  Generic `Rext` is also the label of 4:0:0 streams, so it needs a package that declares `monochrome`.
+- A codec only packages decode, such as MPEG-2, VC-1, or JPEG 2000, takes one route without a profile condition, at the depths of the formats its packages write.
 - A package codec with stock CodecProfiles, AV1 or HEVC, widens their custom-container ceiling with its profiles and depths, as a raw route does (`createRawCodecProfilePlans`, `createAuthorizedHEVCProfilePlan`).
 - An audio package's codec is a decoded route at every channel count its decoded PCM path presents; DTS and TrueHD keep their exact profile routes.
   Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
-- A package's `accepts` sizes and its `monochrome` support are not advertised, and the item route check skips them too.
-  A stream past them negotiates, then fails eligibility and renegotiates.
+
+### Sizes
+
+A video package's route covers only the picture sizes some package takes on the device: its `accepts` conditions, and its frame pool, `state`, `buffer:`s, and packet ring within the device's buffer limit, the smaller of its largest buffer and largest storage binding.
+`PackageRouteSizes.ts` finds them with the engine's `isGPUVideoDecoderSummaryFit`, the offers' own check, for each profile and depth, at the tightest of the formats its streams may carry.
+
+- The bound is a staircase, since `accepts` may bound the area as well as each side: the height a width takes falls as the width grows.
+  It steps at the widths 1280, 1920, 2560, 3840, 4096, and 7680, and at the widest the packages take, and each step bounds the widths since the previous one by the height its own width takes.
+- `appendPackageVideoSizeProfiles` adds one CodecProfile per step, for the ranges no native or raw route takes at that profile and depth, and the profiles of one depth whose steps match share them.
+  Its ApplyConditions name the range, the profiles, the depth, and past the first step the width since the previous step; its Conditions bound the height, and the first step's the width too.
+  Each requires the range among its Conditions as well, which marks it as the add-on's.
+- On a device at WebGPU's default 128 MiB storage binding, HEVC Main 10 stops below 1080p at 1920 wide, since the HEVC package's pool of 29 I420P10 slots is about 186 MB at 1080p; 720p fits.
+  On a 2 GiB device it takes every size its header accepts, 3840x2160 and 4096x2160 among them, and 8K none.
+- Jellyfin labels a 4:0:0 AV1 stream `main` and a 4:0:0 JPEG 2000 stream with no chroma at all, and the pixel format is no profile condition, so such a stream still negotiates for a package without `monochrome`, then fails eligibility and renegotiates.
+- A package without a header, such as an older catalog's, takes every size.
 
 ## Interlaced video
 

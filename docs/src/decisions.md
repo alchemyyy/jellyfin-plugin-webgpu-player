@@ -48,8 +48,10 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The PlaybackManager hook returns the pending request's promise for a request with the same items and options, and any other request still supersedes it.
 - The device profile advertises what decoder packages decode before any is downloaded (10-16).
   Before, only native routes were advertised, so Jellyfin transcoded every codec and variant a package alone decodes, such as MPEG-2, VC-1, AV1 High, and E-AC-3 without a native decoder, before the package fallback ever saw it.
-  The user's packages and the server's catalog give each package's codecs and output formats, from which the profile builds per-profile routes and widens the stock AV1 and HEVC ceilings; downloading a package for negotiation alone would cost every negotiation a download.
-  A package's size limits and monochrome support are left out, so a stream past them negotiates and then renegotiates, which costs one failed start.
+  The user's packages and the server's catalog give each package's codecs, output formats, and header, from which the profile builds per-profile routes and widens the stock AV1 and HEVC ceilings; downloading a package for negotiation alone would cost every negotiation a download.
+  Since 10-27 the catalog carries each video package's header, so the routes also bound Width and Height by the sizes the package's `accepts` conditions and the device's buffer limit take, and need `monochrome` where a label holds 4:0:0 streams.
+  Jellyfin has no pixel format condition, and its size conditions take no product, so the bound is a staircase of steps at common widths, which refuses a little of what a package takes between two steps rather than offer what it cannot take.
+  A 4:0:0 stream under a label Jellyfin gives 4:2:0 too, such as AV1 `main`, still negotiates for a package without `monochrome` and renegotiates after a failed start.
 - Interlaced video direct-plays to the custom path wherever the engine deinterlaces it (10-16).
   Every route but Dolby Vision's has deinterlaced since engine 10-15, yet every route profile still required `IsInterlaced=false`, so Jellyfin transcoded the interlaced MPEG-2, VC-1, and H.264 the engine plays.
   A route now requires a progressive scan only for HEVC and JPEG 2000, which code the fields apart, and on the Dolby Vision labels, and the stock scan limit leaves the custom containers as the runtime ceilings do.

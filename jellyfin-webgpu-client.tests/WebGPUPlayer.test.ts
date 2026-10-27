@@ -172,7 +172,10 @@ const decoderPackageMockState = vi.hoisted(() => ({
     gpuVideoDecoderOffers: [] as Array<{ decoderId: string, package: object }>,
     gpuVideoDecoderOffersFailure: null as Error | null,
     // GPU decoder offer requests, which download the server's packages a playback needs and check them on the device
-    offerRequestCount: 0
+    offerRequestCount: 0,
+    // The buffer limit of the presenter's device, null when it cannot create one, and the summaries of the server's packages negotiation advertises
+    presenterFramePoolByteLimit: null as number | null,
+    serverPackageSummaries: [] as object[]
 }));
 
 vi.mock('lib/globalize', async () => {
@@ -366,7 +369,7 @@ vi.mock('addons/webGPUPlayer/DecoderPackages', () => ({
 vi.mock('addons/webGPUPlayer/ServerModules', () => ({
     fetchServerPassSource: vi.fn(() => Promise.reject(new Error('no server'))),
     loadServerAudioDecoderPackages: vi.fn(() => Promise.resolve([])),
-    loadServerDecoderPackageSummaries: vi.fn(() => Promise.resolve([])),
+    loadServerDecoderPackageSummaries: vi.fn(() => Promise.resolve(decoderPackageMockState.serverPackageSummaries)),
     loadServerModuleCatalog: vi.fn(() => Promise.resolve({ decoderPackages: [], passes: [] })),
     loadServerVideoDecoderPackages: vi.fn(() => Promise.resolve([]))
 }));
@@ -723,6 +726,7 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         isExternalDolbyVisionPresentationAuthorized = vi.fn(() => (
             presenterMockState.dolbyVisionAuthorized
         ));
+        getGPUFramePoolByteLimit = vi.fn(() => Promise.resolve(decoderPackageMockState.presenterFramePoolByteLimit));
         getAuthorizedExternalHDRRouteKeys = vi.fn(() => (
             [ ...presenterMockState.authorizedExternalHDRRouteKeys ]
         ));
@@ -1684,6 +1688,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         decoderPackageMockState.gpuVideoDecoderOffers = [];
         decoderPackageMockState.gpuVideoDecoderOffersFailure = null;
         decoderPackageMockState.offerRequestCount = 0;
+        decoderPackageMockState.presenterFramePoolByteLimit = null;
+        decoderPackageMockState.serverPackageSummaries = [];
         vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback): number => {
             const identifier = animationFrameMockState.nextIdentifier;
             animationFrameMockState.nextIdentifier += 1;
@@ -2147,6 +2153,27 @@ describe('WebGPUPlayer HTML delegation', () => {
             reason: 'augmented',
             supportedVideoCodecs: [ 'h264' ]
         });
+    });
+
+    it('gives each video package summary the buffer limit of the presenter\'s device, and lists none when it cannot create one', async () => {
+        const player = new WebGPUPlayer();
+        const item = { Id: 'item' };
+        const videoSummary = { codecs: [ 'hevc' ], kind: 'video', outputFormats: [ 'I420P10' ] };
+        const audioSummary = { codecs: [ 'eac3' ], kind: 'audio', outputFormats: [] };
+        // WebGPU's default largest storage binding
+        const framePoolByteLimit = 128 * 1024 * 1024;
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        decoderPackageMockState.serverPackageSummaries = [ videoSummary, audioSummary ];
+        decoderPackageMockState.presenterFramePoolByteLimit = framePoolByteLimit;
+
+        await player.getDeviceProfile(item, { isRetry: false });
+        decoderPackageMockState.presenterFramePoolByteLimit = null;
+        await player.getDeviceProfile(item, { isRetry: false });
+
+        expect(customProfileMockState.augmentationCalls[0]?.options).toMatchObject({
+            decoderPackages: [ { ...videoSummary, maximumBufferByteLength: framePoolByteLimit }, audioSummary ]
+        });
+        expect(customProfileMockState.augmentationCalls[1]?.options).toMatchObject({ decoderPackages: [ audioSummary ] });
     });
 
     it('adopts the stored playback preferences for each new negotiation but not for a retry', async () => {

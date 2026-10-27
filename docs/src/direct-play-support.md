@@ -85,7 +85,8 @@ Engine rows: [Dolby Vision](https://alchemyyy.github.io/WebGPU-Player/codec-supp
 | P4 over 8-bit Main | SDR by transfer | Yes; its SDR base presents natively |
 | P5, or P7 or P8 with CCID 0, over 8-bit Main | Any | No; no route decodes 8-bit Main planes for the RPU, and no base is declared |
 
-Without native HEVC decode, a stream with a declared base negotiates through its item route when the HEVC decoder package decodes the base, which then presents an HDR base only under the HDR tone mapping setting.
+Without native HEVC decode, a stream with a declared base negotiates through its item route when the HEVC decoder package decodes the base at its size on the presenter's device, which then presents an HDR base only under the HDR tone mapping setting.
+A base past the package's 8912896 coded samples, such as 8K, or whose frame pool the device cannot hold, is not advertised.
 
 ## Dolby Vision over AV1
 

@@ -52,6 +52,7 @@ import {
     HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS,
     HEVC_RANGE_EXTENSION_VARIANTS,
     type HEVCRangeExtensionBitDepth,
+    type HEVCRangeExtensionProbeDefinition,
     type HEVCRangeExtensionRawFormat,
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
@@ -66,12 +67,16 @@ import {
     isGPUDecoderOutputFormat,
     type GPUDecoderOutputFormat
 } from 'webgpu-player/decode/video/gpu/GPUDecodeFormats';
+import type { GPUVideoDecoderSummary } from 'webgpu-player/decode/video/gpu/GPUVideoDecoderCatalog';
 
-/** What a decoder package a playback can use decodes, as negotiation reads it: its kind, its codecs by the engine's names, and a video decoder's output formats. */
-export type DecoderPackageRouteSummary = Readonly<{
-    codecs: readonly string[]
+import { getPackageRouteSizeSteps, type PackageRouteSizeScope, type PackageRouteSizeStep } from './PackageRouteSizes';
+
+/**
+ * What a decoder package a playback can use decodes, as negotiation reads it: its kind, its codecs by the engine's names, and a video decoder's output formats,
+ * with its header and the buffer limit of the device it would decode on where the host has them, which bound the streams its routes advertise.
+ */
+export type DecoderPackageRouteSummary = GPUVideoDecoderSummary & Readonly<{
     kind: 'audio' | 'video'
-    outputFormats: readonly string[]
 }>;
 
 export type CustomDeviceProfileOptions = {
@@ -160,6 +165,8 @@ type MeasuredVideoRouteOptions = {
     nativeHDRVideoRangeTypes: readonly string[]
     /** The routes of the decoder packages a playback can use, every codec's */
     packageVideoRoutes: readonly MeasuredVideoRoute[]
+    /** The decoder packages' route scopes, each of one profile and depth, whose size steps bound the streams a scope takes where no other route takes them */
+    packageVideoScopes: readonly PackageVideoScope[]
     rawAV1DolbyVisionVideoRangeTypes: readonly string[]
     rawDolbyVisionVideoRangeTypes: readonly string[]
     rawHDRRouteVideoRangeTypes: readonly string[]
@@ -572,98 +579,129 @@ function isCustomAudioCodec(codec: string): codec is CustomAudioCodec {
     return (CUSTOM_AUDIO_CODECS as readonly string[]).includes(codec);
 }
 
-/** Returns the depths of an HEVC package's formats under each profile: Main and Main 10 at 4:2:0, each named range extension, and generic Rext at a depth whose every chroma format it writes. */
-function getPackageHEVCProfileBitDepths(formats: readonly GPUDecoderOutputFormat[]): Map<string, number[]> {
-    const bitDepthsByProfile = new Map<string, number[]>();
-    const addProfile = (profile: string, bitDepth: number): void => {
-        const bitDepths = bitDepthsByProfile.get(profile) ?? [];
-        appendUniqueValues(bitDepths, [ bitDepth ]);
-        bitDepthsByProfile.set(profile, bitDepths);
-    };
-    if (formats.includes('I420')) {
-        for (const profile of NATIVE_VIDEO_PROFILES.hevc) {
-            addProfile(profile, CUSTOM_NATIVE_VIDEO_BIT_DEPTH);
-        }
-    }
-    if (formats.includes('I420P10')) {
-        for (const profile of RAW_VIDEO_PROFILES.hevc) {
-            addProfile(profile, MAXIMUM_RAW_HDR_VIDEO_BIT_DEPTH);
-        }
-    }
+/**
+ * One profile and depth of a codec that decoder packages decode: the formats its streams may decode into, the ranges it presents,
+ * and the size steps of the streams the packages take on the device, null when no size bounds them.
+ * A codec only packages decode takes no profile condition, so its scopes have no profile.
+ */
+type PackageVideoScope = PackageRouteSizeScope & Readonly<{
+    bitDepth: number
+    codec: CustomVideoCodec
+    profile: string | null
+    rangeTypes: readonly string[]
+    sizeSteps: readonly PackageRouteSizeStep[] | null
+}>;
+
+type PackageVideoScopeDefinition = Pick<PackageVideoScope, 'bitDepth' | 'formats' | 'monochromeFormat' | 'profile'>;
+
+/**
+ * Returns HEVC's package scopes: Main and Main 10 at 4:2:0, each named range extension at its format, and generic Rext at each depth,
+ * whose label hides the chroma format, so it needs every chroma format of the depth, 4:0:0 among them.
+ */
+function getPackageHEVCScopeDefinitions(): PackageVideoScopeDefinition[] {
+    const definitions: PackageVideoScopeDefinition[] = [
+        ...NATIVE_VIDEO_PROFILES.hevc.map((profile: string): PackageVideoScopeDefinition => (
+            { bitDepth: CUSTOM_NATIVE_VIDEO_BIT_DEPTH, formats: [ 'I420' ], monochromeFormat: null, profile }
+        )),
+        ...RAW_VIDEO_PROFILES.hevc.map((profile: string): PackageVideoScopeDefinition => (
+            { bitDepth: MAXIMUM_RAW_HDR_VIDEO_BIT_DEPTH, formats: [ 'I420P10' ], monochromeFormat: null, profile }
+        ))
+    ];
     for (const variant of HEVC_RANGE_EXTENSION_VARIANTS) {
         const definition = HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant];
-        if (definition.jellyfinProfile !== GENERIC_REXT_PROFILE && formats.includes(definition.format)) {
-            addProfile(definition.jellyfinProfile, definition.bitDepth);
+        if (definition.jellyfinProfile !== GENERIC_REXT_PROFILE) {
+            definitions.push({ bitDepth: definition.bitDepth, formats: [ definition.format ], monochromeFormat: null, profile: definition.jellyfinProfile });
         }
     }
     for (const bitDepth of GENERIC_REXT_BIT_DEPTHS) {
-        const depthFormats = HEVC_RANGE_EXTENSION_VARIANTS
-            .map((variant: HEVCRangeExtensionVariant): HEVCRangeExtensionRawFormat => HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant].format)
-            .filter((format: HEVCRangeExtensionRawFormat): boolean => getGPUDecoderFormatFacts(format).bitDepth === bitDepth);
-        if (depthFormats.every((format: HEVCRangeExtensionRawFormat): boolean => formats.includes(format))) {
-            addProfile(GENERIC_REXT_PROFILE, bitDepth);
-        }
+        const depthDefinitions = HEVC_RANGE_EXTENSION_VARIANTS
+            .map((variant: HEVCRangeExtensionVariant): HEVCRangeExtensionProbeDefinition => HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS[variant])
+            .filter((definition: HEVCRangeExtensionProbeDefinition): boolean => definition.bitDepth === bitDepth);
+        definitions.push({
+            bitDepth,
+            formats: depthDefinitions.map((definition: HEVCRangeExtensionProbeDefinition): HEVCRangeExtensionRawFormat => definition.format),
+            monochromeFormat: depthDefinitions.find((definition: HEVCRangeExtensionProbeDefinition): boolean => definition.chromaFormat === '420')?.format ?? null,
+            profile: GENERIC_REXT_PROFILE
+        });
     }
-    return bitDepthsByProfile;
+    return definitions;
 }
 
 /**
- * Returns a codec's routes through the decoder packages that decode it into the given formats: one route per profile with that profile's depths.
- * A codec only packages decode takes no profile condition, so its one route carries every depth.
+ * Returns a codec's package scopes: HEVC's by its profiles, AV1's and VP9's by the profile each format's streams carry, and a codec only packages decode by depth,
+ * whose chroma formats no Jellyfin condition tells apart, so a depth's scope holds every format of it the packages write.
  */
-function createCodecPackageVideoRoutes(
-    codec: CustomVideoCodec,
-    formats: readonly GPUDecoderOutputFormat[],
-    rangeTypes: readonly string[]
-): MeasuredVideoRoute[] {
-    let bitDepthsByProfile: Map<string, number[]>;
-    const profileByFormat = PACKAGE_VIDEO_PROFILE_BY_FORMAT[codec];
+function getPackageVideoScopeDefinitions(codec: CustomVideoCodec, writtenFormats: readonly GPUDecoderOutputFormat[]): PackageVideoScopeDefinition[] {
     if (codec === 'hevc') {
-        bitDepthsByProfile = getPackageHEVCProfileBitDepths(formats);
-    } else if (profileByFormat) {
-        bitDepthsByProfile = new Map<string, number[]>();
-        for (const format of formats) {
-            const profile = profileByFormat[format];
-            const bitDepths = bitDepthsByProfile.get(profile) ?? [];
-            appendUniqueValues(bitDepths, [ getGPUDecoderFormatFacts(format).bitDepth ]);
-            bitDepthsByProfile.set(profile, bitDepths);
-        }
-    } else {
-        const bitDepths: number[] = [];
-        appendUniqueValues(bitDepths, formats.map((format: GPUDecoderOutputFormat): number => getGPUDecoderFormatFacts(format).bitDepth));
-        return bitDepths.length === 0 ? [] : [ { bitDepths, codec, profiles: [], rangeTypes } ];
+        return getPackageHEVCScopeDefinitions();
     }
-    return [ ...bitDepthsByProfile ].map(([ profile, bitDepths ]: [ string, number[] ]): MeasuredVideoRoute => (
-        { bitDepths, codec, profiles: [ profile ], rangeTypes }
-    ));
+    const profileByFormat = PACKAGE_VIDEO_PROFILE_BY_FORMAT[codec];
+    const formats = profileByFormat ? Object.keys(profileByFormat).filter(isGPUDecoderOutputFormat) : writtenFormats;
+    const definitions = new Map<string, PackageVideoScopeDefinition>();
+    for (const format of formats) {
+        const profile = profileByFormat?.[format] ?? null;
+        const bitDepth = getGPUDecoderFormatFacts(format).bitDepth;
+        const key = `${profile}:${bitDepth}`;
+        const definition = definitions.get(key);
+        definitions.set(key, definition ?
+            { ...definition, formats: [ ...definition.formats, format ] } :
+            { bitDepth, formats: [ format ], monochromeFormat: null, profile });
+    }
+    return [ ...definitions.values() ];
 }
 
-/** Returns the routes of the video decoder packages a playback can use: per codec, the formats every package of it writes, SDR, and HDR when the frame pool may present it. */
-function createPackageVideoRoutes(
+/** Returns the video decoder packages by each codec they decode that the engine names, in the packages' order. */
+function groupVideoPackagesByCodec(decoderPackages: readonly DecoderPackageRouteSummary[]): Map<CustomVideoCodec, DecoderPackageRouteSummary[]> {
+    const summariesByCodec = new Map<CustomVideoCodec, DecoderPackageRouteSummary[]>();
+    for (const decoderPackage of decoderPackages.filter((summary: DecoderPackageRouteSummary): boolean => summary.kind === 'video')) {
+        for (const codec of decoderPackage.codecs.filter(isCustomVideoCodec)) {
+            summariesByCodec.set(codec, [ ...summariesByCodec.get(codec) ?? [], decoderPackage ]);
+        }
+    }
+    return summariesByCodec;
+}
+
+/**
+ * Returns the scopes of the video decoder packages a playback can use: per codec, each profile and depth whose every format, and 4:0:0 where the scope holds it,
+ * some package takes at some size, with the size steps the packages take it at; SDR, and HDR when the frame pool may present it.
+ */
+function createPackageVideoScopes(
     decoderPackages: readonly DecoderPackageRouteSummary[],
     allowFramePoolHDR: boolean
-): MeasuredVideoRoute[] {
+): PackageVideoScope[] {
     const rangeTypes: string[] = [ 'SDR' ];
     if (allowFramePoolHDR) {
         rangeTypes.push(...FRAME_POOL_HDR_VIDEO_RANGE_TYPES);
     }
-    const formatsByCodec = new Map<CustomVideoCodec, GPUDecoderOutputFormat[]>();
-    for (const decoderPackage of decoderPackages) {
-        if (decoderPackage.kind !== 'video') {
-            continue;
+    const scopes: PackageVideoScope[] = [];
+    for (const [ codec, summaries ] of groupVideoPackagesByCodec(decoderPackages)) {
+        const writtenFormats: GPUDecoderOutputFormat[] = [];
+        for (const summary of summaries) {
+            appendUniqueValues(writtenFormats, summary.outputFormats.filter(isGPUDecoderOutputFormat));
         }
-        const formats = decoderPackage.outputFormats.filter(isGPUDecoderOutputFormat);
-        for (const codec of decoderPackage.codecs.filter(isCustomVideoCodec)) {
-            const codecFormats = formatsByCodec.get(codec) ?? [];
-            appendUniqueValues(codecFormats, formats);
-            formatsByCodec.set(codec, codecFormats);
+        for (const definition of getPackageVideoScopeDefinitions(codec, writtenFormats)) {
+            const scope = { ...definition, codec };
+            // A format no package writes takes no size
+            const sizeSteps = getPackageRouteSizeSteps(summaries, scope);
+            if (sizeSteps === null || sizeSteps.length > 0) {
+                scopes.push({ ...scope, rangeTypes, sizeSteps });
+            }
         }
     }
-    const routes: MeasuredVideoRoute[] = [];
-    for (const [ codec, formats ] of formatsByCodec) {
-        routes.push(...createCodecPackageVideoRoutes(codec, formats, rangeTypes));
+    return scopes;
+}
+
+/** Returns the routes of the package scopes: one per codec and profile with that profile's depths, in the scopes' order. */
+function createPackageVideoRoutes(scopes: readonly PackageVideoScope[]): MeasuredVideoRoute[] {
+    const routes = new Map<string, MeasuredVideoRoute>();
+    for (const scope of scopes) {
+        const key = `${scope.codec}:${scope.profile}`;
+        const route = routes.get(key);
+        routes.set(key, route ?
+            { ...route, bitDepths: [ ...route.bitDepths, scope.bitDepth ] } :
+            { bitDepths: [ scope.bitDepth ], codec: scope.codec, profiles: scope.profile === null ? [] : [ scope.profile ], rangeTypes: scope.rangeTypes });
     }
-    return routes;
+    return [ ...routes.values() ];
 }
 
 /** Returns the audio codecs a decoder package a playback can use decodes. */
@@ -2228,6 +2266,146 @@ function appendMeasuredVideoRouteProfiles(
     }
 }
 
+/** Returns whether a route other than a package's takes a scope's streams of one range, so the native or raw decoder, not the package, bounds their size. */
+function takesPackageScopeRange(route: MeasuredVideoRoute, scope: PackageVideoScope, rangeType: string): boolean {
+    return route.rangeTypes.includes(rangeType)
+        && route.bitDepths.includes(scope.bitDepth)
+        && (route.profiles.length === 0 || route.profiles.some((profile: string): boolean => (
+            profile.toLowerCase() === scope.profile?.toLowerCase()
+        )));
+}
+
+/** The size steps of a codec's package scopes at one depth and in the same ranges, whose profiles share them. */
+type PackageSizeRule = {
+    bitDepth: number
+    codec: CustomVideoCodec
+    /** Empty for a codec only packages decode, whose routes take no profile condition */
+    profiles: string[]
+    rangeTypes: readonly string[]
+    sizeSteps: readonly PackageRouteSizeStep[]
+};
+
+/**
+ * Returns a size rule's profiles: the first bounds the width and the height of the narrowest step,
+ * and each wider step's applies past the step before it and bounds the height alone, so a stream matches every step up to its width and the narrowest bound holds.
+ * Each scopes itself by range, profile, and depth, and requires the range again among its conditions, which marks it as the add-on's.
+ */
+function createPackageSizeCodecProfiles(rule: PackageSizeRule): CodecProfile[] {
+    const rangeCondition: ProfileCondition = {
+        Condition: EQUALS_ANY_CONDITION,
+        IsRequired: true,
+        Property: VIDEO_RANGE_TYPE_PROPERTY,
+        Value: rule.rangeTypes.join('|')
+    };
+    const scopeConditions: ProfileCondition[] = [ rangeCondition ];
+    if (rule.profiles.length > 0) {
+        scopeConditions.push({ Condition: EQUALS_ANY_CONDITION, IsRequired: true, Property: VIDEO_PROFILE_PROPERTY, Value: rule.profiles.join('|') });
+    }
+    scopeConditions.push({ Condition: EQUALS_CONDITION, IsRequired: true, Property: VIDEO_BIT_DEPTH_PROPERTY, Value: String(rule.bitDepth) });
+    const steps = rule.sizeSteps;
+    const container = getCustomContainersForVideoCodec(rule.codec).join(',');
+    return steps.map((step: PackageRouteSizeStep, stepIndex: number): CodecProfile => {
+        const heightCondition: ProfileCondition = {
+            Condition: LESS_THAN_EQUAL_CONDITION,
+            IsRequired: true,
+            Property: VIDEO_HEIGHT_PROPERTY,
+            Value: String(step.maximumHeight)
+        };
+        return stepIndex === 0 ?
+            {
+                ApplyConditions: scopeConditions,
+                Codec: rule.codec,
+                Conditions: [
+                    rangeCondition,
+                    { Condition: LESS_THAN_EQUAL_CONDITION, IsRequired: true, Property: VIDEO_WIDTH_PROPERTY, Value: String(steps[steps.length - 1].maximumWidth) },
+                    heightCondition
+                ],
+                Container: container,
+                Type: VIDEO_CODEC_PROFILE_TYPE
+            } :
+            {
+                ApplyConditions: [
+                    ...scopeConditions,
+                    {
+                        Condition: GREATER_THAN_EQUAL_CONDITION,
+                        IsRequired: true,
+                        Property: VIDEO_WIDTH_PROPERTY,
+                        Value: String(steps[stepIndex - 1].maximumWidth + 1)
+                    }
+                ],
+                Codec: rule.codec,
+                Conditions: [ rangeCondition, heightCondition ],
+                Container: container,
+                Type: VIDEO_CODEC_PROFILE_TYPE
+            };
+    });
+}
+
+/**
+ * Returns the size rules of the package scopes, in the ranges no other route takes each scope's streams in,
+ * with the profiles of one codec, depth, and ranges that share their size steps joined into one rule.
+ */
+function createPackageSizeRules(
+    capabilities: CustomDecodeCapabilities,
+    supportedVideoCodecs: readonly CustomVideoCodec[],
+    options: MeasuredVideoRouteOptions
+): PackageSizeRule[] {
+    const rules = new Map<string, PackageSizeRule>();
+    const otherRoutesByCodec = new Map<CustomVideoCodec, MeasuredVideoRoute[]>();
+    for (const scope of options.packageVideoScopes) {
+        if (scope.sizeSteps === null || !supportedVideoCodecs.includes(scope.codec)) {
+            continue;
+        }
+        const otherRoutes = otherRoutesByCodec.get(scope.codec)
+            ?? getMeasuredVideoRoutes(scope.codec, capabilities, { ...options, packageVideoRoutes: [] });
+        otherRoutesByCodec.set(scope.codec, otherRoutes);
+        const rangeTypes = scope.rangeTypes.filter((rangeType: string): boolean => (
+            !otherRoutes.some((route: MeasuredVideoRoute): boolean => takesPackageScopeRange(route, scope, rangeType))
+        ));
+        if (rangeTypes.length === 0) {
+            continue;
+        }
+        const key = JSON.stringify([ scope.codec, scope.bitDepth, scope.profile === null, rangeTypes, scope.sizeSteps ]);
+        const rule = rules.get(key);
+        if (rule && scope.profile !== null) {
+            rule.profiles.push(scope.profile);
+        } else if (!rule) {
+            rules.set(key, {
+                bitDepth: scope.bitDepth,
+                codec: scope.codec,
+                profiles: scope.profile === null ? [] : [ scope.profile ],
+                rangeTypes,
+                sizeSteps: scope.sizeSteps
+            });
+        }
+    }
+    return [ ...rules.values() ];
+}
+
+/**
+ * Appends the size conditions of the decoder package routes: Jellyfin offers a stream of a package scope, in a range no other route takes it in,
+ * only at a size some package's `accepts` conditions take and whose frame pool and buffers fit the device's buffer limit.
+ */
+function appendPackageVideoSizeProfiles(
+    profile: DeviceProfile,
+    capabilities: CustomDecodeCapabilities,
+    supportedVideoCodecs: readonly CustomVideoCodec[],
+    options: MeasuredVideoRouteOptions
+): void {
+    const codecProfiles = profile.CodecProfiles ?? [];
+    profile.CodecProfiles = codecProfiles;
+    const existingProfileKeys = new Set(codecProfiles.map(getCodecProfileKey));
+    for (const rule of createPackageSizeRules(capabilities, supportedVideoCodecs, options)) {
+        for (const sizeProfile of createPackageSizeCodecProfiles(rule)) {
+            const profileKey = getCodecProfileKey(sizeProfile);
+            if (!existingProfileKeys.has(profileKey)) {
+                codecProfiles.push(sizeProfile);
+                existingProfileKeys.add(profileKey);
+            }
+        }
+    }
+}
+
 function getAuthorizedHEVCRangeTypes(
     authorizedRoutes: AuthorizedHDRRoutes,
     rawHEVCSupported: boolean,
@@ -3106,7 +3284,8 @@ export function augmentDeviceProfileForCustomDecode(
     const allowNativeDolbyVision = nativeDolbyVisionVideoRangeTypes.length > 0;
     const allowNativeHDR = nativeHDRVideoRangeTypes.length > 0;
     const dolbyVisionItemVideoRoute = getDolbyVisionItemVideoRoute(capabilities, options);
-    const packageVideoRoutes = createPackageVideoRoutes(options.decoderPackages ?? [], options.allowFramePoolHDR === true);
+    const packageVideoScopes = createPackageVideoScopes(options.decoderPackages ?? [], options.allowFramePoolHDR === true);
+    const packageVideoRoutes = createPackageVideoRoutes(packageVideoScopes);
     const packageAudioCodecs = getPackageAudioCodecs(options.decoderPackages ?? []);
     const measuredVideoRouteOptions: MeasuredVideoRouteOptions = {
         allowNativeDolbyVision,
@@ -3115,6 +3294,7 @@ export function augmentDeviceProfileForCustomDecode(
         nativeDolbyVisionVideoRangeTypes,
         nativeHDRVideoRangeTypes,
         packageVideoRoutes,
+        packageVideoScopes,
         rawAV1DolbyVisionVideoRangeTypes: getAV1DolbyVisionVideoRangeTypes(
             capabilities,
             options.allowDolbyVision === true
@@ -3231,6 +3411,12 @@ export function augmentDeviceProfileForCustomDecode(
         ) :
         0;
     appendMeasuredVideoRouteProfiles(
+        clonedProfile,
+        capabilities,
+        supportedVideoCodecs,
+        measuredVideoRouteOptions
+    );
+    appendPackageVideoSizeProfiles(
         clonedProfile,
         capabilities,
         supportedVideoCodecs,

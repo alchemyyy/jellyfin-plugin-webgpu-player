@@ -84,12 +84,12 @@ export function getStoredDecoderPackageIds(stored: StoredDecoderPackages): Set<s
     return new Set<string>(stored.packages.map((storedPackage: StoredDecoderPackage): string => storedPackage.decoderPackage.id));
 }
 
-/** Returns what the user's packages decode, which negotiation advertises. */
+/** Returns what the user's packages decode, which negotiation advertises, with each video package's header. */
 export function getDecoderPackageRouteSummaries(stored: StoredDecoderPackages): DecoderPackageRouteSummary[] {
     return stored.packages.map((storedPackage: StoredDecoderPackage): DecoderPackageRouteSummary => {
         const decoderPackage = storedPackage.decoderPackage;
         return decoderPackage.kind === 'video' ?
-            { codecs: decoderPackage.manifest.accepts.codecs, kind: 'video', outputFormats: decoderPackage.manifest.outputFormats } :
+            { codecs: decoderPackage.manifest.accepts.codecs, header: decoderPackage.manifest, kind: 'video', outputFormats: decoderPackage.manifest.outputFormats } :
             { codecs: decoderPackage.manifest.codecs, kind: 'audio', outputFormats: [] };
     });
 }

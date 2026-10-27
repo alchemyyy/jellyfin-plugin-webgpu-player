@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { GPUVideoDecodeTarget } from 'webgpu-player/capability/CustomPlaybackEligibility';
+import { parseGPUDecoderHeader } from 'webgpu-player/decode/video/gpu/GPUDecoderManifest';
 
 type ServerModulesModule = typeof import('addons/webGPUPlayer/ServerModules');
 
@@ -22,9 +23,33 @@ const CATALOG_REUSE_MILLISECONDS = 60_000;
 const FIRST_HASH = '1'.repeat(64);
 const SECOND_HASH = '2'.repeat(64);
 
-const HEVC_ENTRY = { byteLength: 3, codecs: [ 'hevc' ], contentHash: FIRST_HASH, id: 'hevc', kind: 'video', monochrome: true, name: 'HEVC', outputFormats: [ 'I420', 'I420P10' ] };
-const AV1_ENTRY = { byteLength: 3, codecs: [ 'av1' ], contentHash: FIRST_HASH, id: 'av1', kind: 'video', monochrome: true, name: 'AV1', outputFormats: [ 'I420' ] };
-const EAC3_ENTRY = { byteLength: 3, codecs: [ 'eac3', 'ac3' ], contentHash: FIRST_HASH, id: 'eac3', kind: 'audio', monochrome: false, name: 'E-AC-3', outputFormats: [] };
+// A video package's header as the catalog carries it, without the body whose entry points it dispatches
+const HEVC_HEADER = [
+    '//! id: hevc',
+    '//! name: HEVC',
+    '//! decoder: video',
+    '//! accepts: codec in [hevc], stream.width <= 8192, stream.height <= 4320, stream.width * stream.height <= 8912896',
+    '//! output: I420, I420P10',
+    '//! monochrome: yes',
+    '//! references: 16',
+    '//! reorder: 8',
+    '//! packet: 64 MiB',
+    '//! dispatch: main, 1'
+].join('\n');
+const HEVC_ENTRY = {
+    byteLength: 3,
+    codecs: [ 'hevc' ],
+    contentHash: FIRST_HASH,
+    header: HEVC_HEADER,
+    id: 'hevc',
+    kind: 'video',
+    monochrome: true,
+    name: 'HEVC',
+    outputFormats: [ 'I420', 'I420P10' ]
+};
+// A video package the catalog gives no header, whose routes then go by codec and format alone
+const AV1_ENTRY = { byteLength: 3, codecs: [ 'av1' ], contentHash: FIRST_HASH, header: null, id: 'av1', kind: 'video', monochrome: true, name: 'AV1', outputFormats: [ 'I420' ] };
+const EAC3_ENTRY = { byteLength: 3, codecs: [ 'eac3', 'ac3' ], contentHash: FIRST_HASH, header: null, id: 'eac3', kind: 'audio', monochrome: false, name: 'E-AC-3', outputFormats: [] };
 const SHARPEN_ENTRY = { byteLength: PASS_SOURCE.length, contentHash: FIRST_HASH, fileName: 'sharpen.wgsl', passNames: [ 'Sharpen' ] };
 const CATALOG = { decoderPackages: [ HEVC_ENTRY, AV1_ENTRY, EAC3_ENTRY ], passes: [ SHARPEN_ENTRY ] };
 const HEVC_I420P10_TARGET: GPUVideoDecodeTarget = { codec: 'hevc', format: 'I420P10' };
@@ -156,8 +181,11 @@ describe('ServerModules', () => {
     it('keeps each catalog entry of the catalog\'s shape and refuses a body that is no catalog', async () => {
         const { parseServerModuleCatalog } = await importServerModules();
 
-        expect(parseServerModuleCatalog({ decoderPackages: [ HEVC_ENTRY, { id: 'broken' } ], passes: [ SHARPEN_ENTRY, { fileName: 7 } ] }))
-            .toEqual({ decoderPackages: [ HEVC_ENTRY ], passes: [ SHARPEN_ENTRY ] });
+        // An older plugin's catalog, without the header
+        const headerlessEntry: Record<string, unknown> = { ...HEVC_ENTRY };
+        delete headerlessEntry.header;
+        expect(parseServerModuleCatalog({ decoderPackages: [ HEVC_ENTRY, { id: 'broken' }, headerlessEntry, { ...HEVC_ENTRY, header: 7 } ], passes: [ SHARPEN_ENTRY, { fileName: 7 } ] }))
+            .toEqual({ decoderPackages: [ HEVC_ENTRY, headerlessEntry ], passes: [ SHARPEN_ENTRY ] });
         expect(() => parseServerModuleCatalog([])).toThrow('catalog-invalid');
     });
 
@@ -202,11 +230,11 @@ describe('ServerModules', () => {
         await expect(loadServerAudioDecoderPackages(SERVER_ID, 'ac3', NO_EXCLUDED_IDS)).resolves.toEqual([ { contentHash: FIRST_HASH, id: 'eac3', kind: 'audio' } ]);
     });
 
-    it('summarizes what the server\'s packages decode, and offers nothing when the catalog cannot be read', async () => {
+    it('summarizes what the server\'s packages decode with each header the engine reads, and offers nothing when the catalog cannot be read', async () => {
         const { loadServerDecoderPackageSummaries } = await importServerModules();
 
         await expect(loadServerDecoderPackageSummaries(SERVER_ID)).resolves.toEqual([
-            { codecs: HEVC_ENTRY.codecs, kind: 'video', outputFormats: HEVC_ENTRY.outputFormats },
+            { codecs: HEVC_ENTRY.codecs, header: parseGPUDecoderHeader(HEVC_HEADER), kind: 'video', outputFormats: HEVC_ENTRY.outputFormats },
             { codecs: AV1_ENTRY.codecs, kind: 'video', outputFormats: AV1_ENTRY.outputFormats },
             { codecs: EAC3_ENTRY.codecs, kind: 'audio', outputFormats: [] }
         ]);
@@ -215,6 +243,14 @@ describe('ServerModules', () => {
         responses.set(CATALOG_URL, (): Response => new Response(null, { status: BAD_GATEWAY_STATUS }));
         const reloaded = await importServerModules();
         await expect(reloaded.loadServerDecoderPackageSummaries(SERVER_ID)).resolves.toEqual([]);
+    });
+
+    it('leaves out a package whose header the engine refuses, which would fail its load too', async () => {
+        responses.set(CATALOG_URL, respondJSON({ ...CATALOG, decoderPackages: [ { ...HEVC_ENTRY, header: HEVC_HEADER.replace('//! packet: 64 MiB', '//! packet: lots') }, EAC3_ENTRY ] }));
+        const { loadServerDecoderPackageSummaries } = await importServerModules();
+
+        await expect(loadServerDecoderPackageSummaries(SERVER_ID)).resolves.toEqual([ { codecs: EAC3_ENTRY.codecs, kind: 'audio', outputFormats: [] } ]);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/^WebGPU server modules: package-header-invalid: hevc packet-syntax: /));
     });
 
     it('downloads a pass file\'s source', async () => {

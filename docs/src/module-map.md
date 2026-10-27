@@ -13,6 +13,7 @@ The plugin's `README.md` maps the server plugin, and the engine's [Module map](h
 - `HTMLPlayerDelegate.ts`: owns one HTML player and forwards its events for the current generation only.
 - `backend/`: the add-on's own copy of the HTML video player and its media helper, usable as an owned backend.
 - `custom/CustomDeviceProfile.ts`: `augmentDeviceProfileForCustomDecode` and `createBitrateIndependentDeviceProfile`.
+- `custom/PackageRouteSizes.ts`: the picture sizes a decoder package route takes on the device, as steps of Width and Height bounds, by the engine's fit check of each package's header.
 - `custom/NativeDirectPlayCompatibility.ts`: checks the stock profile against the chosen source, the proof for same-session fallback.
 - `compat/`: stand-ins for the PlaybackManager seams stock Jellyfin Web lacks: the PlaybackInfo interceptor and its policies, PlaybackManager hooks, and the settings entry points.
 - `host/`, `shims/`: host singletons bound late from the plugin bag, and replacements for host modules the add-on cannot import.
