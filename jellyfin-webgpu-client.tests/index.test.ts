@@ -13,7 +13,11 @@ const testState = vi.hoisted(() => ({
     installHostCompatibleMode: vi.fn((): void => {
         testState.events.push('install');
     }),
-    installTimingTraceControl: vi.fn()
+    configureCapabilityProbeStore: vi.fn(),
+    installTimingTraceControl: vi.fn(),
+    startCapabilityProbeWarmUp: vi.fn((): void => {
+        testState.events.push('warm');
+    })
 }));
 
 vi.mock('webgpu-player/EngineAssets', () => ({ configureEngineAssets: testState.configureEngineAssets }));
@@ -27,6 +31,12 @@ vi.mock('addons/webGPUPlayer/WebGPUPlaybackPreferences', () => ({
 vi.mock('addons/webGPUPlayer/host/HostBridge', () => ({ bindHostBridge: testState.bindHostBridge }));
 vi.mock('addons/webGPUPlayer/compat/HostCompatibleMode', () => ({
     installHostCompatibleMode: testState.installHostCompatibleMode
+}));
+vi.mock('webgpu-player/capability/CapabilityProbeStore', () => ({
+    configureCapabilityProbeStore: testState.configureCapabilityProbeStore
+}));
+vi.mock('addons/webGPUPlayer/CapabilityProbeWarmUp', () => ({
+    startCapabilityProbeWarmUp: testState.startCapabilityProbeWarmUp
 }));
 vi.mock('addons/webGPUPlayer/TimingTraceControl', () => ({
     installTimingTraceControl: testState.installTimingTraceControl
@@ -57,6 +67,7 @@ describe('WebGPU player add-on entry', () => {
     beforeEach(() => {
         testState.events.length = 0;
         vi.stubGlobal('__WEBGPU_PLAYER_ASSET_KEY__', 'asset-key');
+        vi.stubGlobal('__webpack_hash__', 'webpack-hash');
     });
 
     afterEach(() => {
@@ -82,6 +93,8 @@ describe('WebGPU player add-on entry', () => {
         // The timing trace control is installed at load, so a trace requested through storage covers the first play
         expect(testState.installTimingTraceControl).toHaveBeenCalledWith({ engineAssetKey: 'asset-key' });
         expect(testState.bindHostBridge).not.toHaveBeenCalled();
+        // Stored probe verdicts are keyed by the engine assets and the add-on's own compilation
+        expect(testState.configureCapabilityProbeStore).toHaveBeenCalledWith({ buildKey: 'asset-key-webpack-hash' });
         expect(testState.events).toEqual([]);
     });
 
@@ -105,7 +118,8 @@ describe('WebGPU player add-on entry', () => {
 
         expect(testState.bindHostBridge).toHaveBeenCalledWith(bag);
         expect(testState.installHostCompatibleMode).toHaveBeenCalledWith(player);
-        expect(testState.events).toEqual([ 'bind', 'construct', 'install' ]);
+        // The warm-up starts once the bag binds the PlaybackManager it waits on
+        expect(testState.events).toEqual([ 'bind', 'warm', 'construct', 'install' ]);
         // The plugin manager reads these synchronously after construction
         expect([ player.id, player.type, player.name, player.priority ])
             .toEqual([ 'webgpuplayer', 'mediaplayer', 'WebGPU Player', 0 ]);
