@@ -2651,7 +2651,8 @@ export default class WebGPUPlayer {
 
     /**
      * Returns what the decoder packages a playback can use decode, for negotiation: the user's packages, and the server's, which are downloaded only when a playback needs one.
-     * A video package decodes only into a frame pool, so a device without one advertises none.
+     * A video package decodes only into a frame pool, so a device without one advertises none, and each video summary takes the device's buffer limit,
+     * the smaller of its largest buffer and largest storage binding, which bounds the streams its routes advertise.
      */
     private async getDeviceProfileDecoderPackages(item: unknown): Promise<DecoderPackageRouteSummary[]> {
         const [ storedPackages, serverPackages ] = await Promise.all([
@@ -2668,9 +2669,13 @@ export default class WebGPUPlayer {
         } catch (error) {
             console.warn(`WebGPU decoder packages: frame-pool-unavailable: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return framePoolByteLimit === null ?
-            summaries.filter((summary: DecoderPackageRouteSummary): boolean => summary.kind === 'audio') :
-            summaries;
+        if (framePoolByteLimit === null) {
+            return summaries.filter((summary: DecoderPackageRouteSummary): boolean => summary.kind === 'audio');
+        }
+        const maximumBufferByteLength = framePoolByteLimit;
+        return summaries.map((summary: DecoderPackageRouteSummary): DecoderPackageRouteSummary => (
+            summary.kind === 'video' ? { ...summary, maximumBufferByteLength } : summary
+        ));
     }
 
     private getCustomPresentationEligibilityOptions(backendGeneration: number): Promise<CustomPresentationEligibilityOptions | null> {

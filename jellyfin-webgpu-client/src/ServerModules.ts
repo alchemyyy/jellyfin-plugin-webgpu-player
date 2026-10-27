@@ -10,6 +10,7 @@ import {
     type VideoDecoderPackage
 } from 'webgpu-player/decode/packages/DecoderPackage';
 import DecoderPackageStore, { DecoderPackageStoreError } from 'webgpu-player/decode/packages/DecoderPackageStore';
+import { parseGPUDecoderHeader } from 'webgpu-player/decode/video/gpu/GPUDecoderManifest';
 
 import type { DecoderPackageRouteSummary } from './custom/CustomDeviceProfile';
 
@@ -31,6 +32,8 @@ export type ServerDecoderPackage = Readonly<{
     byteLength: number
     codecs: readonly string[]
     contentHash: string
+    /** A video decoder's `//!` header without its body, which judges a stream before the package downloads; an audio decoder has none, and an older plugin's catalog gives none */
+    header?: string | null
     id: string
     kind: 'audio' | 'video'
     monochrome: boolean
@@ -114,6 +117,7 @@ function isServerDecoderPackage(value: unknown): value is ServerDecoderPackage {
         && isStringArray(value.codecs)
         && isStringArray(value.outputFormats)
         && typeof value.monochrome === 'boolean'
+        && (value.header === undefined || value.header === null || typeof value.header === 'string')
         && typeof value.contentHash === 'string'
         && typeof value.byteLength === 'number';
 }
@@ -315,13 +319,25 @@ export async function loadServerAudioDecoderPackages(
     return decoderPackages.filter((decoderPackage: DecoderPackage): decoderPackage is AudioDecoderPackage => decoderPackage.kind === AUDIO_KIND);
 }
 
-/** Returns what the server's packages decode, which negotiation advertises before any of them is downloaded. */
+/**
+ * Returns what the server's packages decode, which negotiation advertises before any of them is downloaded, with each video package's header read by the engine.
+ * A package whose header the engine refuses would fail its load too, so it is logged and left out.
+ */
 export async function loadServerDecoderPackageSummaries(serverId: string | null | undefined): Promise<DecoderPackageRouteSummary[]> {
-    return (await loadPlaybackCatalog(serverId)).decoderPackages.map((entry: ServerDecoderPackage): DecoderPackageRouteSummary => ({
-        codecs: entry.codecs,
-        kind: entry.kind,
-        outputFormats: entry.outputFormats
-    }));
+    const summaries: DecoderPackageRouteSummary[] = [];
+    for (const entry of (await loadPlaybackCatalog(serverId)).decoderPackages) {
+        const summary: DecoderPackageRouteSummary = { codecs: entry.codecs, kind: entry.kind, outputFormats: entry.outputFormats };
+        if (entry.header === undefined || entry.header === null) {
+            summaries.push(summary);
+            continue;
+        }
+        try {
+            summaries.push({ ...summary, header: parseGPUDecoderHeader(entry.header) });
+        } catch (error) {
+            console.warn(`${WARNING_PREFIX}: package-header-invalid: ${entry.id} ${getErrorMessage(error)}`);
+        }
+    }
+    return summaries;
 }
 
 /** Downloads a pass file the server offers; rejects with the failed request. */
