@@ -548,6 +548,8 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
         notifyFramePresented = vi.fn(() => true);
         setPageVisibility = vi.fn((): boolean => false);
         drainBackgroundVideo = vi.fn();
+        // The frame loop registers its presenter's preparation, which this controller never runs
+        setVideoPresentationPreparer = vi.fn(() => (): void => undefined);
         canSetAudioStreamIndex = vi.fn(() => true);
         updateAudioDownmixSettings = vi.fn(() => true);
         // Null reports an unknown sink, so track switches fall back to the startup prewarm
@@ -1014,6 +1016,7 @@ type MockCustomPlaybackController = {
     isVideoDecodeEnded: MockFunction
     notifyFrameDiscarded: MockFunction
     notifyFramePresented: MockFunction
+    setVideoPresentationPreparer: MockFunction
     setPageVisibility: MockFunction
     drainBackgroundVideo: MockFunction
     canSetAudioStreamIndex: MockFunction
