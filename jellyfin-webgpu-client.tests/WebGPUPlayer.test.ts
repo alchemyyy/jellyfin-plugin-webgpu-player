@@ -671,10 +671,11 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
             videoFrameSubmissionCompleted?.(true);
             return true;
         });
-        // A progressive stream: no lookahead, and no held fields to redraw between frames
+        // A progressive stream without display-rate passes: no lookahead, and no held fields or refreshes to redraw between frames
         getFrameLookaheadMicroseconds = vi.fn((): number => NO_FRAME_LOOKAHEAD_MICROSECONDS);
         presentHeldFields = vi.fn((): boolean => false);
         awaitsLookaheadFrame = vi.fn((): boolean => false);
+        recordAnimationFrame = vi.fn();
         seek = vi.fn();
         refresh = vi.fn();
         endSession = vi.fn();
@@ -989,6 +990,7 @@ type MockPresenter = {
     getFrameLookaheadMicroseconds: MockFunction
     presentDecodedFrame: MockFunction
     presentHeldFields: MockFunction
+    recordAnimationFrame: MockFunction
     prewarmDolbyVisionPresentationAuthorization: MockFunction
     prewarmExternalHDRPresentationAuthorization: MockFunction
     setDecodedFramePushMode: MockFunction
@@ -3216,6 +3218,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(backend.play).not.toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: false,
+            frameRate: null,
             inputMode: 'raw-yuv',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -3268,6 +3271,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
             codec: 'hevc',
+            frameRate: null,
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -3432,6 +3436,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.prewarmDolbyVisionPresentationAuthorization).toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
+            frameRate: null,
             inputMode: 'raw-dolby-vision',
             profile: 8,
             rawFrameFormat: 'I420P10',
@@ -3477,6 +3482,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(backend.play).not.toHaveBeenCalled();
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
+            frameRate: 23.976025,
             inputMode: 'raw-dolby-vision',
             profile: 7,
             rawFrameFormat: 'I420P10',
@@ -3910,6 +3916,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
             codec: 'hevc',
+            frameRate: 23.976025,
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -3967,6 +3974,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
             codec: 'hevc',
+            frameRate: 23.976025,
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
@@ -4024,6 +4032,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(presenter.configureColorPipeline).toHaveBeenCalledWith({
             automaticInputPeakNits: true,
             codec: 'hevc',
+            frameRate: 23.976025,
             inputMode: 'external-hdr',
             metadata: expect.objectContaining({
                 bitDepth: 10,
