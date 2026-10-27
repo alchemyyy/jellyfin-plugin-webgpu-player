@@ -117,7 +117,7 @@ The profile advertises what the decoder packages a playback can use decode, befo
   A profile and depth is advertised only when the packages write every chroma format its streams may carry, so AV1 `professional` at 12 bits needs 4:2:0, 4:2:2, and 4:4:4.
 - HEVC takes `main` and `main 10` for 4:2:0, each named range extension profile for its format, and generic `Rext` at a depth whose every chroma format the packages write.
   Generic `Rext` is also the label of 4:0:0 streams, so it needs a package that declares `monochrome`.
-- A codec only packages decode, such as MPEG-2, VC-1, or JPEG 2000, takes one route without a profile condition, at the depths of the formats its packages write.
+- A codec only packages decode, such as MPEG-2, VC-1, JPEG 2000, MPEG-4 Part 2, H.263, or MS-MPEG4, takes one route without a profile condition, at the depths of the formats its packages write.
 - A package codec with stock CodecProfiles, AV1 or HEVC, widens their custom-container ceiling with its profiles and depths, as a raw route does (`createRawCodecProfilePlans`, `createAuthorizedHEVCProfilePlan`).
 - An audio package's codec is a decoded route at every channel count its decoded PCM path presents; DTS and TrueHD keep their exact profile routes.
   Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
@@ -139,7 +139,7 @@ A video package's route covers only the picture sizes some package takes on the 
 
 ## Interlaced video
 
-The engine deinterlaces every route but Dolby Vision's, for each codec whose decoders keep both fields in one frame: H.264, MPEG-1, MPEG-2, VC-1, WMV3, VP8, VP9, and AV1 (`presentsInterlacedVideo`, in the engine's [Interlaced video](https://alchemyyy.github.io/WebGPU-Player/routes.html#interlaced-video)).
+The engine deinterlaces every route but Dolby Vision's, for each codec whose decoders keep both fields in one frame: H.264, MPEG-1, MPEG-2, MPEG-4 Part 2, H.263, MS-MPEG4, VC-1, WMV3, VP8, VP9, and AV1 (`presentsInterlacedVideo`, in the engine's [Interlaced video](https://alchemyyy.github.io/WebGPU-Player/routes.html#interlaced-video)).
 
 - A route requires `IsInterlaced=false` only when its codec codes the fields apart, HEVC and JPEG 2000, or it presents a Dolby Vision label (`requiresProgressiveScan`).
 - A stock profile's `IsInterlaced` condition, which Jellyfin Web adds for H.264 and HEVC because a browser shows interlaced video woven, is removed in custom containers for a codec the engine deinterlaces, as the runtime ceilings are.

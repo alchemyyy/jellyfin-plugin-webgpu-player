@@ -493,11 +493,16 @@ function getDolbyVisionItemVideoRoute(
 
 const NATIVE_VIDEO_PROFILES: Readonly<Record<CustomVideoCodec, readonly string[]>> = {
     av1: [ 'main' ],
+    h263: [],
     h264: [],
     hevc: [ 'main' ],
     jpeg2000: [],
     mpeg1video: [],
     mpeg2video: [ 'main' ],
+    mpeg4: [],
+    msmpeg4v1: [],
+    msmpeg4v2: [],
+    msmpeg4v3: [],
     vc1: [ 'advanced' ],
     vp8: [],
     vp9: [ 'profile 0' ],
@@ -528,9 +533,14 @@ function supportsNativeVideoCodec(
         case 'hevc':
         case 'vp9':
             return hasSupportedNativeSDRVideoCodec(codec, capabilities);
+        case 'h263':
         case 'jpeg2000':
         case 'mpeg1video':
         case 'mpeg2video':
+        case 'mpeg4':
+        case 'msmpeg4v1':
+        case 'msmpeg4v2':
+        case 'msmpeg4v3':
         case 'vc1':
         case 'wmv3':
             // Only a decoder package decodes these
