@@ -39,6 +39,8 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - The add-on triggers a live audio layout switch when the output reports `sinkchange` with a different channel count, and when force stereo or the downmix algorithm changes.
 - Re-detect output, in the WebGPU settings, rebuilds every AudioContext sink so the browser re-reads the device.
   Chromium moves a default output to a new device without telling the page, which leaves a stale channel count until a rebuild.
+- `WebGPUPlayer.isFetching` mirrors actual backend file-loading state, not custom decoder startup or seeking.
+  This keeps "Fetching additional data" paired with `beginFetch`/`endFetch`; normal playback waiting does not leave a phantom subtitle-loading message.
 
 ## Transitions
 

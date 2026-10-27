@@ -1001,11 +1001,8 @@ export default class WebGPUPlayer {
         };
     }
 
+    /** Tracks file-loading beginFetch/endFetch events; decoder startup and seeking use the separate waiting state. */
     get isFetching(): boolean {
-        const customPlaybackState = this.customPlaybackController?.playbackState;
-        if (this.customPlaybackStartingGeneration !== null || customPlaybackState === 'starting' || customPlaybackState === 'seeking') {
-            return true;
-        }
         return this.htmlDelegate.player.isFetching;
     }
 

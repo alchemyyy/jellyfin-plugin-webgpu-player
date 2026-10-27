@@ -6379,6 +6379,59 @@ describe('WebGPUPlayer HTML delegation', () => {
         await expect(statsPromise).resolves.toBe(stats);
     });
 
+    it('does not report custom surface startup as a subtitle-file fetch', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        const surface = { container, video };
+        const prepared = createDeferred<typeof surface>();
+        backend.presentationSurface = surface;
+        backend.prepareCustomPlayback.mockReturnValueOnce(prepared.promise);
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        await vi.waitFor(() => expect(backend.prepareCustomPlayback).toHaveBeenCalledOnce());
+        try {
+            expect(player.hasPendingPlay()).toBe(true);
+            expect(player.isFetching).toBe(false);
+        } finally {
+            prepared.resolve(surface);
+            await playPromise;
+            await player.stop(false);
+        }
+    });
+
+    it.each(['starting', 'seeking', 'playing', 'paused'])('reports only actual subtitle-file fetches while custom playback is %s', async state => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        const controller = getCustomPlaybackController();
+        controller.playbackState = state;
+        const fetching: boolean[] = [];
+        Events.on(player, 'beginFetch', () => fetching.push(player.isFetching));
+        Events.on(player, 'endFetch', () => fetching.push(player.isFetching));
+        try {
+            expect(player.isFetching).toBe(false);
+            backend.isFetching = true;
+            Events.trigger(backend, 'beginFetch');
+            expect(player.isFetching).toBe(true);
+            backend.isFetching = false;
+            Events.trigger(backend, 'endFetch');
+            expect(player.isFetching).toBe(false);
+            expect(fetching).toEqual([true, false]);
+        } finally {
+            await player.stop(false);
+        }
+    });
+
     it('mirrors backend status properties and masks native-output modes without an HTML session', () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
