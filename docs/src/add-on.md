@@ -153,6 +153,7 @@ What they do:
   Only the add-on build reads them, so they build in the background while `npm ci` and the hls.js fork build run; the packages start once `npm ci` installed the esbuild their check needs.
   Before either starts, without `EMSDK`, a failed Emscripten check installs the pinned Emscripten into `bin/emsdk/` (engine) with `make -C wasm emsdk` (engine).
   Then `cargo --version` in `wasm/libdovi/` (engine) installs the Rust every engine crate pins, since two rustup installs side by side are not safe.
+- `serve_jellyfin_web_client.sh` in the plugin root runs the add-on's development build in watch mode, into a folder of its own, and serves it in a local Jellyfin Web against a Jellyfin server of your own; see [Develop against your own server](recipes.md#develop-against-your-own-server).
 
 Engine changes must also pass the engine's own checks, from its root.
 

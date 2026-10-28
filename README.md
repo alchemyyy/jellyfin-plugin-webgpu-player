@@ -102,6 +102,18 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 - For a server on another machine, package with `--source-url-base http://<host>:8000` and use that host.
 - The server rejects a zip whose MD5 differs from the manifest's `checksum`, so package again after every build.
 
+### Live Development
+
+```sh
+./serve_jellyfin_web_client.sh --server http://<host>:8096
+```
+
+Open `http://127.0.0.1:5173/web/` and sign in to your server. Jellyfin Web runs this checkout's add-on against your server's library, and the add-on builds again on every change.
+
+- Run it from the folder to work in, after one `./build.sh`. The first run there clones the Jellyfin Web commit the add-on builds against into `jellyfin-web/` and builds it, once per commit, and stores the options in `serve_jellyfin_web_client.json`, so later runs need none.
+- Jellyfin Web and the add-on are served locally, and every other request goes to the server, so the browser sees one origin. The server needs the plugin only for its decoders, passes, and client defaults.
+- Open pages reload after each successful add-on build, and a failed build shows its errors in place of Jellyfin Web. `"liveReload": false` in `serve_jellyfin_web_client.json` turns the reload off.
+
 ### Project Map
 
 | Path | Purpose |
@@ -123,6 +135,7 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 | `docs/` | The plugin's documentation, an mdBook; `docs/book/` is the built book |
 | `images/` | The plugin banner (the source SVG, and the PNG that the package carries and the repository manifest's `imageUrl` names on `main`), and the plugin logo, the source of the book's favicon |
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
+| `serve_jellyfin_web_client.sh` | Serves this checkout's add-on, built again on every change, in a local Jellyfin Web against a Jellyfin server of your own |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
 | `.github/scripts/release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
 | `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |

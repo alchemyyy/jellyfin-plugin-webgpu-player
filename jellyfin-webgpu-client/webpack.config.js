@@ -211,8 +211,15 @@ class HostClosureGuardPlugin {
                 compilation.hostModules = Array.from(hostModules).sort();
             });
         });
+        // A watch build reports them again only when they changed
+        let reportedHostModules = null;
         compiler.hooks.done.tap('HostClosureGuardPlugin', stats => {
             const hostModules = stats.compilation.hostModules || [];
+            const hostModuleList = hostModules.join('\n');
+            if (hostModuleList === reportedHostModules) {
+                return;
+            }
+            reportedHostModules = hostModuleList;
             console.log(`\nHost modules bundled into the add-on from ${JELLYFIN_WEB_DIRECTORY} (${hostModules.length}):`);
             for (const hostModule of hostModules) {
                 console.log(`  ${hostModule}`);

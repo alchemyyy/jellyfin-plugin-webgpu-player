@@ -110,3 +110,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - Jellyfin Web is vendored as a shallow submodule (10-09): `jellyfin/jellyfin-web` at `jellyfin-webgpu-client/vendor/jellyfin-web/`, read-only.
   Local and release builds read the same pinned commit, which had been pinned only in the release workflow while local builds read a sibling checkout.
   `build.sh --jellyfin-web-path` and `JELLYFIN_WEB_DIR` still name another checkout.
+- Live development proxies the developer's server under one origin (10-28).
+  `serve_jellyfin_web_client.sh` serves a clone of the pinned Jellyfin Web and the add-on's watch build on `127.0.0.1`, and forwards every other request, the WebSocket included, to the server.
+  The API, media, and the plugin's routes then stay on the page's origin, as when the server serves Jellyfin Web, rather than depending on the server's CORS policy.
+  Jellyfin Web served this way never goes past the proxy: the API client it creates from the page's own address takes only that address, not the server's LocalAddress.

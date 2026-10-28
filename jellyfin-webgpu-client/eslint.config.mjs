@@ -377,6 +377,14 @@ export default tseslint.config(
         }
     },
 
+    // Scripts and config files run in Node, so the browser compatibility check does not apply to them
+    {
+        files: [ 'scripts/**', '*.{cjs,js,mjs}' ],
+        rules: {
+            'compat/compat': 'off'
+        }
+    },
+
     // Config files are commonjs by default
     {
         files: [ '**/*.{cjs,js}' ],
