@@ -9,6 +9,7 @@
 # The browser opens http://127.0.0.1:<port>/web/, which serves Jellyfin Web from the clone, with the bootstrap the plugin
 # adds to it, and the add-on. Every other request, the API, media, and the WebSocket, goes to the server, so the browser
 # sees one origin, as when the server serves Jellyfin Web, and plays the server's library through the add-on.
+# A read the server redirects to another origin, such as a split tunnel's media host, is followed here too.
 # The server needs no plugin; with the plugin installed, its decoders, passes, and client defaults reach the add-on too.
 #
 # Needs Git, Node.js, and npm, and a checkout built once with ./build.sh, for the add-on's npm packages and the engine's
