@@ -8,3 +8,7 @@ jellyfin-webgpu-client/tsconfig.host.json
 field-tester/
 /__pycache__
 docs/book/
+# serve_jellyfin_web_client.sh run from the plugin root
+/serve_jellyfin_web_client.json
+/jellyfin-web/
+/webgpu-player-addon/
