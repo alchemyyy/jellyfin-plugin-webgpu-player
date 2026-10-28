@@ -47,6 +47,7 @@ A client downloads a decoder package only when a playback needs it, and a pass f
   Jellyfin Web loads the controller through `/web/ConfigurationPage?name=WebGPUPlayerConfig.js`, the page's `data-controller`, and constructs its default export with the page's view.
 - The page lists the decoders and the passes with their source and state, uploads files, deletes uploads, and enables or disables keys.
   It reads and changes them through the administrator's routes, signed in with the dashboard's token.
+- Above the decoders, the add-on's editor sets the client defaults (see [Client defaults from the server](client-defaults.md#the-settings-page)).
 
 ## In the client
 
@@ -62,11 +63,14 @@ A client downloads a decoder package only when a playback needs it, and a pass f
 - The user's own packages, in the `webGPUPlayerDecoders` database, come first, and the server's package of an id the user stores is left out.
 - The settings panel's shader pass section lists the server's pass files the preset does not hold.
   Adding one downloads it and stores its source like a file of the user's own, with its origin, the file name and SHA-256, in the settings.
-- When the server offers a newer version of a file the preset holds, the settings panel, or the first play of a page that presents through WebGPU, replaces its source under its key, so the file keeps its place and its parameter values.
+- When the server offers a newer version of a file the user's own preset holds, the settings panel, or the first play of a page that presents through WebGPU, replaces its source under its key, so the file keeps its place and its parameter values.
   A file the server no longer offers stays in the preset, and its entry says so.
+- A user who follows the server's [default shader preset](client-defaults.md#the-default-shader-preset-on-clients) plays its files, which `DefaultPresentationFiles.ts` downloads with `addServerPassFile` and downloads again for a new version under new keys.
 
 ## Gotchas
 
 - The data folder's name comes from the plugin assembly's file name, so renaming the assembly leaves the uploads behind.
 - The server's plugin discovery lists the data folder as a plugin folder without assemblies and leaves it alone; never put a DLL in it.
 - A server reached under another server id is another catalog: the client keys its catalog reads by server id, but its package cache by package id alone, so two servers' versions of one id replace each other.
+- Kestrel enforces a route's `RequestSizeLimit` by throwing on the read past it, which the server answers with a 500; `RequestBodyFunctions.ReadBodyAsync` turns that refusal into the routes' own 413.
+  The test host enforces no limit, so `RoleHeaderTestServer` applies a route's limit as Kestrel does.

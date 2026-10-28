@@ -25,6 +25,22 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - The settings page's state lives in the plugin's data folder, not in the plugin configuration (10-16).
   The uploads are files there already, and the disabled keys beside them in `state.json` make the store one folder, which the tests open without a server.
   The plugin still configures nothing else, so `BasePluginConfiguration` stays empty.
+- The client defaults live in the plugin's data folder too, in `client-defaults.json` beside `state.json` (10-27).
+  The server checks only the document's shape and stores each value verbatim, and the add-on normalizes every value as it normalizes a user's stored choice.
+  So the add-on stays the one owner of each setting's range and options, and a setting the add-on adds or widens needs no plugin change.
+- A user's settings store only what differs from the defaults (10-27).
+  A full snapshot, as version 4 stored, would pin every value at the defaults of its save, so a default the server sets later would never reach a user who once opened the panel.
+  So a value equal to its default follows the default, and restoring a default drops the value; version 4 snapshots load with their built-in values as following the defaults, since the user could not tell them apart from choices.
+  The page applies the server's defaults cached by the last read before it reads them again, and waits for a read in progress only where it reads the settings for a decision: opening the panel and a new negotiation.
+- The default shader preset is `null` in a user's settings, not a copy of the server's files (10-27).
+  A copied list would carry source keys the user's settings own, so a later default preset could never replace it, and an empty list could not tell "no passes" from "follow the server".
+  So a user who follows it plays the files `DefaultPresentationFiles.ts` downloads once per preset and file version into its own cache, and an edit in the panel makes a list of the user's own.
+  A new version of a default file downloads under a new key rather than replacing the source in place, since the user's own preset may share the old key after an edit.
+- The WebGPU player toggle restarts the current video through PlaybackManager rather than swapping players (10-27).
+  A player swapped in place would leave PlaybackManager's stream state, progress reports, and the OSD bound to the old one, and a page reload would lose the queue.
+  `playbackManager.play` with the queue, index, position, media source, and streams takes the host's own path for a playback that starts while another plays: it stops and destroys the old player, reports the stop, and negotiates afresh for the next.
+  With SyncPlay, a remote player, or an item not on a server, a restart could break the session, so the toggle only saves there and applies from the next playback.
+  The host's player settings menu has no seam, so the toggle is an item the add-on appends to the action sheet the OSD's settings button opens, and it runs once that sheet has closed.
 
 ## Negotiation
 

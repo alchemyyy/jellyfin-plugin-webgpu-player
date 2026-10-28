@@ -7,9 +7,12 @@ import globalize from 'lib/globalize';
 import Events from 'utils/events';
 import { MediaError } from 'types/mediaError';
 
+import { getClientDefaults, subscribeClientDefaults } from './ClientDefaults';
+import { ensureDefaultPresentationFiles } from './DefaultPresentationFiles';
 import { PLAYBACK_SUPERSEDED } from './constants/playbackResult';
 import { WebGPUPlayerEvent } from './constants/playerEvent';
 import { loadAddonStrings } from './host/globalize';
+import { whenClientDefaultsSettled } from './ServerClientDefaults';
 import {
     translateAudioPath,
     translatePlaybackState,
@@ -918,12 +921,20 @@ export default class WebGPUPlayer {
     // Counts the presets handed to the presenter, so a stored preset that loads late never replaces a newer one
     private presentationPresetRevision = 0;
     private storedPresentationPresetRequested = false;
+    // The server's default shader preset as last read, so only a change of it loads the stored preset again
+    private defaultPresentationFilesText = JSON.stringify(getClientDefaults().presentationFiles ?? null);
 
     constructor() {
         const audioOutputManager = initializeWebGPUAudioOutputManager();
         this.htmlDelegate = new HTMLPlayerDelegate(this, this.handleBackendStopped, this.handleBackendError, audioOutputManager);
         this.presenter = new WebGPUPresenter(this.handlePresentationFallback, this.handleDecodedPresentationRefresh);
         this.applyPresentationSettings(loadWebGPUUserSettings());
+        // Settings that follow the server's defaults change with them; the player lives as long as the page, so it stays subscribed
+        subscribeClientDefaults((): void => {
+            const settings = loadWebGPUUserSettings();
+            this.applyPresentationSettings(settings);
+            this.reloadDefaultPresentationPreset(settings);
+        });
         if (typeof document !== 'undefined') {
             document.addEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
@@ -997,7 +1008,9 @@ export default class WebGPUPlayer {
                     /* webpackChunkName: "webgpu-playback-settings" */
                     './ui/WebGPUPlaybackSettingsDialog'
                 ),
-                loadAddonStrings()
+                loadAddonStrings(),
+                // The panel shows the settings over the server's latest defaults, and the default shader files they resolve to
+                whenClientDefaultsSettled().then(ensureDefaultPresentationFiles)
             ]).then(([ module ]) => module.toggleWebGPUPlaybackSettingsPanel(this))
         } ];
     }
@@ -1026,8 +1039,9 @@ export default class WebGPUPlayer {
     async getDeviceProfile(item: unknown, options?: unknown): Promise<unknown> {
         const backend = this.htmlDelegate.player as unknown as HTMLPlayerSelectionContract;
         const isRetry = this.isDeviceProfileRetry(options);
-        // A new negotiation adopts the stored preferences; a retry stays with the ones its playback negotiated
+        // A new negotiation adopts the stored preferences over the server's latest defaults; a retry stays with the ones its playback negotiated
         if (!isRetry) {
+            await whenClientDefaultsSettled();
             refreshWebGPUPlaybackPreferences();
         }
         const profile = await backend.getDeviceProfile(item, options);
@@ -1784,7 +1798,7 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Hands the stored shader files to the presenter once, at the first play that presents through WebGPU, since their sources load from IndexedDB.
+     * Hands the stored shader files, or the server's default files for a user who follows them, to the presenter once, at the first play that presents through WebGPU, since their sources load from IndexedDB.
      * A file from the server takes the server's newer version first, which that play's negotiation already read the catalog for.
      * A preset the settings panel applies first is newer, so the stored one yields to it; a failed load is tried again at the next play.
      */
@@ -1794,7 +1808,9 @@ export default class WebGPUPlayer {
         }
         this.storedPresentationPresetRequested = true;
         const revision = this.presentationPresetRevision;
-        void loadUpdatedStoredPresentationFiles().then(loadStoredPresentationPreset).then((preset: StoredPresentationPreset): Promise<PlanReport> | undefined => {
+        // A user who follows the server's default preset plays its files; anyone else plays their own, with the server's newer versions
+        const files = loadWebGPUUserSettings().presentation.files === null ? ensureDefaultPresentationFiles() : loadUpdatedStoredPresentationFiles();
+        void files.then(loadStoredPresentationPreset).then((preset: StoredPresentationPreset): Promise<PlanReport> | undefined => {
             if (preset.missingSourceKeys.length > 0) {
                 console.warn(`WebGPU shader files: source-missing: keys ${preset.missingSourceKeys.join(', ')}`);
             }
@@ -1803,6 +1819,24 @@ export default class WebGPUPlayer {
             this.storedPresentationPresetRequested = false;
             console.warn(`WebGPU shader passes failed: ${error instanceof Error ? error.message : String(error)}`);
         });
+    }
+
+    /**
+     * Loads the shader files again once the server's default preset changes, for a user who follows it, when a WebGPU play loaded them already.
+     * A load still in flight yields to this one.
+     */
+    private reloadDefaultPresentationPreset(settings: WebGPUUserSettings): void {
+        const defaultPresentationFilesText = JSON.stringify(getClientDefaults().presentationFiles ?? null);
+        if (defaultPresentationFilesText === this.defaultPresentationFilesText) {
+            return;
+        }
+        this.defaultPresentationFilesText = defaultPresentationFilesText;
+        if (!this.storedPresentationPresetRequested || settings.presentation.files !== null) {
+            return;
+        }
+        this.presentationPresetRevision += 1;
+        this.storedPresentationPresetRequested = false;
+        this.loadStoredPresentationPreset();
     }
 
     /** Replaces the user's shader files, in order; resolves with the report of the passes that run and those left out. */

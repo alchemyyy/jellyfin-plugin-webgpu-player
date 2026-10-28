@@ -110,7 +110,8 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 | `Jellyfin.Plugin.WebGPUPlayer/Transformations/` | The `index.html` and `config.json` rewrites: File Transformation registration and callbacks, the choice of rewriter, and the fallback middleware |
 | `Jellyfin.Plugin.WebGPUPlayer/Addon/` | Embedded add-on catalog and the asset route |
 | `Jellyfin.Plugin.WebGPUPlayer/Modules/` | The decoder packages and pass files the server offers: the store of bundled files, uploads, and disabled keys in the plugin's data folder, the readers of package and pass headers, and their routes |
-| `Jellyfin.Plugin.WebGPUPlayer/Configuration/` | The plugin's dashboard settings page and its controller, which manage the server's decoders and passes |
+| `Jellyfin.Plugin.WebGPUPlayer/ClientDefaults/` | The administrator's defaults for every client setting: the store of `client-defaults.json` in the plugin's data folder, its shape check, and its routes |
+| `Jellyfin.Plugin.WebGPUPlayer/Configuration/` | The plugin's dashboard settings page and its controller, which mount the add-on's client defaults editor and manage the server's decoders and passes |
 | `bin/` | Build output, one folder per project (generated, gitignored): the two .NET projects, and the client add-on in `bin/jellyfin-webgpu-client/` |
 | `jellyfin-webgpu-client/` | Client add-on: a private npm package with the add-on sources in `src/` and their webpack, Vitest, ESLint and stylelint configuration |
 | `jellyfin-webgpu-client/src/strings/` | The add-on's text: `en-us.json` is the source, and each translation is a `<locale>.json` beside it, written by Weblate |
@@ -148,4 +149,4 @@ The Weblate component:
 | Language code style | BCP style using hyphen as a separator, lower cased |
 | Source language | English |
 
-Nothing else needs translating. The server plugin's settings page is English only, as Jellyfin's plugin pages are, and Jellyfin does not translate plugin names or descriptions. The engine renders no text either: the add-on translates the codes it reports.
+Nothing else needs translating. The server plugin's settings page is English only, as Jellyfin's plugin pages are, and Jellyfin does not translate plugin names or descriptions. Its client defaults editor is the exception: the add-on renders it, in the user's language. The engine renders no text either: the add-on translates the codes it reports.

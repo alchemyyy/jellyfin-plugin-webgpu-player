@@ -6,7 +6,9 @@ import 'webgpu-player/style.css';
 import { startCapabilityProbeWarmUp } from './CapabilityProbeWarmUp';
 import { installHostCompatibleMode } from './compat/HostCompatibleMode';
 import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
+import { loadAddonStrings } from './host/globalize';
 import HostCompatibleWebGPUPlayer from './HostCompatibleWebGPUPlayer';
+import { startClientDefaultsSync } from './ServerClientDefaults';
 import { installTimingTraceControl } from './TimingTraceControl';
 import { getWebGPUHDRToneMappingEnabled } from './WebGPUPlaybackPreferences';
 
@@ -44,11 +46,28 @@ installTimingTraceControl({ engineAssetKey: __WEBGPU_PLAYER_ASSET_KEY__ });
  */
 function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWebGPUPlayer {
     bindHostBridge(bag);
+    // The host's ServerConnections is bound now; the settings start from the server's defaults cached by the last page
+    startClientDefaultsSync();
     // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks
     startCapabilityProbeWarmUp();
     const player = new HostCompatibleWebGPUPlayer();
     installHostCompatibleMode(player);
     return player;
 }
+
+/**
+ * Renders the administrator's editor of the server's client defaults into an element of the plugin's settings page, replacing its content.
+ * The editor loads in its own chunk with the strings of the host's locale.
+ */
+WebGPUPlayerAddon.renderClientDefaultsEditor = async (element: HTMLElement): Promise<void> => {
+    const [ editor ] = await Promise.all([
+        import(
+            /* webpackChunkName: "webgpu-client-defaults-editor" */
+            './ui/ClientDefaultsEditor'
+        ),
+        loadAddonStrings()
+    ]);
+    await editor.renderClientDefaultsEditor(element);
+};
 
 export default WebGPUPlayerAddon;

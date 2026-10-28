@@ -9,8 +9,9 @@ import {
 } from 'addons/webGPUPlayer/ServerPresentationPasses';
 import {
     createDefaultWebGPUUserSettings,
-    type StoredPresentationFile,
-    type WebGPUUserSettings
+    loadWebGPUUserSettings,
+    WEBGPU_USER_SETTINGS_STORAGE_KEY,
+    type StoredPresentationFile
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
 
 import { installIndexedDBFake } from './indexedDBFake';
@@ -28,14 +29,15 @@ const PASS_SOURCE_STORE_NAME = 'passSources';
 const testState = vi.hoisted(() => ({
     catalog: null as ServerModuleCatalog | null,
     passSources: new Map<string, string>(),
-    settingsValue: null as string | null
+    // The user's local settings by name
+    storage: new Map<string, string>()
 }));
 
 vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: {
-        get: vi.fn((): string | null => testState.settingsValue),
-        set: vi.fn((_name: string, value: string): void => {
-            testState.settingsValue = value;
+        get: vi.fn((name: string): string | null => testState.storage.get(name) ?? null),
+        set: vi.fn((name: string, value: string): void => {
+            testState.storage.set(name, value);
         })
     }
 }));
@@ -62,11 +64,11 @@ function createCatalog(passes: readonly ServerPassFile[]): ServerModuleCatalog {
 
 function storeFiles(files: readonly StoredPresentationFile[]): void {
     const settings = createDefaultWebGPUUserSettings();
-    testState.settingsValue = JSON.stringify({ ...settings, presentation: { ...settings.presentation, files } });
+    testState.storage.set(WEBGPU_USER_SETTINGS_STORAGE_KEY, JSON.stringify({ ...settings, presentation: { ...settings.presentation, files } }));
 }
 
-function readSavedFiles(): readonly StoredPresentationFile[] {
-    return (JSON.parse(testState.settingsValue ?? '{}') as WebGPUUserSettings).presentation.files;
+function readSavedFiles(): readonly StoredPresentationFile[] | null {
+    return loadWebGPUUserSettings().presentation.files;
 }
 
 beforeEach(() => {
@@ -74,7 +76,7 @@ beforeEach(() => {
     indexedDBFake.clear();
     testState.catalog = null;
     testState.passSources.clear();
-    testState.settingsValue = null;
+    testState.storage.clear();
     vi.mocked(loadServerModuleCatalog).mockClear();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });

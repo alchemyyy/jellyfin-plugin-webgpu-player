@@ -1,4 +1,5 @@
-// The WebGPU Player settings page: the decoder packages and pass files the server offers, which an administrator uploads, deletes, enables, and disables.
+// The WebGPU Player settings page: the client defaults, whose editor the add-on renders in the user's language,
+// and the decoder packages and pass files the server offers, which an administrator uploads, deletes, enables, and disables.
 // The server's ModuleController answers every change with the new listing, so the page renders whatever the server holds afterwards.
 
 const ROUTE = 'WebGPUPlayer';
@@ -11,6 +12,7 @@ const BYTES_PER_KIBIBYTE = 1024;
 const SIZE_FRACTION_DIGITS = 1;
 const DETAIL_SEPARATOR = ' · ';
 const LIST_SEPARATOR = ', ';
+const ADDON_MISSING_MESSAGE = 'The WebGPU Player add-on is not loaded in this page, so the client defaults cannot be edited. Reload the page to load it.';
 
 // Each module kind's listing property, route, and how an entry describes what it holds
 const KINDS = {
@@ -145,6 +147,26 @@ function createEntryElement(kindName, entry) {
     return item;
 }
 
+/** Renders the add-on's client defaults editor into its container; without the add-on, or when the editor fails, the container shows a message instead. */
+async function mountClientDefaultsEditor(container) {
+    try {
+        // The bootstrap script the plugin adds to index.html defines the factory, which resolves to the add-on's entry
+        const factory = window.WebGPUPlayer;
+        if (typeof factory !== 'function') {
+            container.textContent = ADDON_MISSING_MESSAGE;
+            return;
+        }
+        const Addon = await factory();
+        if (typeof Addon?.renderClientDefaultsEditor !== 'function') {
+            container.textContent = ADDON_MISSING_MESSAGE;
+            return;
+        }
+        await Addon.renderClientDefaultsEditor(container);
+    } catch (error) {
+        container.textContent = `${ADDON_MISSING_MESSAGE} (${error instanceof Error ? error.message : String(error)})`;
+    }
+}
+
 export default function (view) {
     const statusElement = view.querySelector('[data-status]');
     // Changes run one at a time, so each renders the listing its own answer carries
@@ -245,5 +267,8 @@ export default function (view) {
         }
     });
 
-    view.addEventListener('viewshow', refresh);
+    view.addEventListener('viewshow', () => {
+        void mountClientDefaultsEditor(view.querySelector('[data-client-defaults]'));
+        refresh();
+    });
 }

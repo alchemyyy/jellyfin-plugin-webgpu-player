@@ -8,6 +8,7 @@
 - [Playback in Jellyfin Web](playback.md)
 - [Negotiation](negotiation.md)
 - [Decoders and passes from the server](server-modules.md)
+- [Client defaults from the server](client-defaults.md)
 - [Direct play support](direct-play-support.md)
 - [Module map](module-map.md)
 

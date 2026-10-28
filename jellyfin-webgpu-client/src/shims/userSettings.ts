@@ -1,10 +1,13 @@
 import { ServerConnections } from 'lib/jellyfin-apiclient';
 import appSettings from 'scripts/settings/appSettings';
 import {
+    DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM,
+    isCustomAudioDownmixAlgorithm,
     normalizeCustomAudioDownmixAlgorithm,
     type CustomAudioDownmixAlgorithm
 } from 'webgpu-player/audio/processing/CustomAudioDownmixAlgorithm';
 
+import { getClientDefaults } from '../ClientDefaults';
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
 
 // Shim for scripts/settings/userSettings: the host instance is not in the plugin bag
@@ -16,6 +19,9 @@ const DEFAULT_AUDIO_NORMALIZATION = 'TrackGain';
 // The fork's storage key, so a preference saved by the fork carries over
 export const PREFERRED_VIDEO_PLAYER_KEY = 'preferredVideoPlayer';
 const WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY = 'webGPUAudioDownmixAlgorithm';
+// Marks a user whose player preference and downmix algorithm were read since a choice equal to its default started to follow the default
+const LEGACY_CHOICES_MIGRATED_KEY = 'webGPULegacyChoicesMigrated';
+const LEGACY_CHOICES_MIGRATED = 'true';
 
 type SubtitleAppearanceSettings = Record<string, unknown>;
 
@@ -28,6 +34,50 @@ const DEFAULT_SUBTITLE_APPEARANCE_SETTINGS: Readonly<SubtitleAppearanceSettings>
 function getCurrentUserId(): string | undefined {
     const apiClient = ServerConnections.currentApiClient();
     return apiClient?.getCurrentUserId() || undefined;
+}
+
+/** Returns the video player new playback sessions use unless the user chose one: the server's default, else automatic selection. */
+export function getDefaultVideoPlayerPreference(): VideoPlayerPreference {
+    return normalizeVideoPlayerPreference(getClientDefaults().preferredVideoPlayer);
+}
+
+/** Returns the WebGPU stereo downmix algorithm unless the user chose one: the server's default, else the engine's. */
+export function getDefaultAudioDownmixAlgorithm(): CustomAudioDownmixAlgorithm {
+    return normalizeCustomAudioDownmixAlgorithm(getClientDefaults().audioDownmixAlgorithm);
+}
+
+/**
+ * Empties, once per user, a stored player preference or downmix algorithm that holds the built-in default.
+ * Earlier versions stored the built-in value itself on a restore, a reset, or a save of the Playback page, which the user could not tell from a choice;
+ * so it follows the default, as version 4 settings migrate, and a choice made from now on stays the user's.
+ */
+function migrateLegacyChoices(userId: string | undefined): void {
+    if (appSettings.get(LEGACY_CHOICES_MIGRATED_KEY, userId) === LEGACY_CHOICES_MIGRATED) {
+        return;
+    }
+    if (appSettings.get(PREFERRED_VIDEO_PLAYER_KEY, userId) === VideoPlayerPreference.Auto) {
+        appSettings.set(PREFERRED_VIDEO_PLAYER_KEY, '', userId);
+    }
+    if (appSettings.get(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY, userId) === DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM) {
+        appSettings.set(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY, '', userId);
+    }
+    appSettings.set(LEGACY_CHOICES_MIGRATED_KEY, LEGACY_CHOICES_MIGRATED, userId);
+}
+
+/** Reads a user's video player preference: the stored choice, else the default. */
+export function readVideoPlayerPreference(userId: string | undefined): VideoPlayerPreference {
+    migrateLegacyChoices(userId);
+    const storedValue = appSettings.get(PREFERRED_VIDEO_PLAYER_KEY, userId);
+    const preference = normalizeVideoPlayerPreference(storedValue);
+    return preference === storedValue ? preference : getDefaultVideoPlayerPreference();
+}
+
+/** Stores a user's video player preference; a choice equal to the default is stored empty, so it follows the default. */
+export function writeVideoPlayerPreference(value: unknown, userId: string | undefined): VideoPlayerPreference {
+    migrateLegacyChoices(userId);
+    const preference = normalizeVideoPlayerPreference(value);
+    appSettings.set(PREFERRED_VIDEO_PLAYER_KEY, preference === getDefaultVideoPlayerPreference() ? '' : preference, userId);
+    return preference;
 }
 
 /**
@@ -64,24 +114,25 @@ export class UserSettings {
         return this.get(AUDIO_NORMALIZATION_KEY) || DEFAULT_AUDIO_NORMALIZATION;
     }
 
-    /** Gets or sets the local video player used for new playback sessions. */
+    /** Gets or sets the local video player used for new playback sessions; a choice equal to the default follows the default. */
     preferredVideoPlayer(value?: unknown): VideoPlayerPreference {
         if (value !== undefined) {
-            const preference = normalizeVideoPlayerPreference(value);
-            this.set(PREFERRED_VIDEO_PLAYER_KEY, preference);
-            return preference;
+            return writeVideoPlayerPreference(value, getCurrentUserId());
         }
-        return normalizeVideoPlayerPreference(this.get(PREFERRED_VIDEO_PLAYER_KEY) ?? VideoPlayerPreference.Auto);
+        return readVideoPlayerPreference(getCurrentUserId());
     }
 
-    /** Gets or sets the local WebGPU stereo downmix algorithm. */
+    /** Gets or sets the local WebGPU stereo downmix algorithm; a choice equal to the default follows the default. */
     webGPUAudioDownmixAlgorithm(value?: unknown): CustomAudioDownmixAlgorithm {
+        // A write follows the migration too, so a later first read never takes the new choice for an earlier version's built-in value
+        migrateLegacyChoices(getCurrentUserId());
         if (value !== undefined) {
             const algorithm = normalizeCustomAudioDownmixAlgorithm(value);
-            this.set(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY, algorithm);
+            this.set(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY, algorithm === getDefaultAudioDownmixAlgorithm() ? '' : algorithm);
             return algorithm;
         }
-        return normalizeCustomAudioDownmixAlgorithm(this.get(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY));
+        const storedValue = this.get(WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY);
+        return isCustomAudioDownmixAlgorithm(storedValue) ? storedValue : getDefaultAudioDownmixAlgorithm();
     }
 }
 

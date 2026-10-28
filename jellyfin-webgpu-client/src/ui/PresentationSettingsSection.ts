@@ -7,6 +7,7 @@ import { getPresetPassPosition, PASS_FILE_EXTENSION } from 'webgpu-player/presen
 import { parsePassFile, type PassFileEntry } from 'webgpu-player/presentation/passes/PassManifest';
 import type { PassManifest, PassParameter, PassRejection, PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 
+import { ensureDefaultPresentationFiles, getDefaultPresentationFiles } from '../DefaultPresentationFiles';
 import {
     addPassSource,
     createStoredPresentationPreset,
@@ -33,20 +34,16 @@ import {
     type StoredPresentationFile,
     type WebGPUUserSettings
 } from '../WebGPUUserSettings';
+import { createSettingOptionsHTML, DEINTERLACE_MODE_OPTIONS } from './SettingDefinitions';
 import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
 // The presentation and shader pass sections of the playback settings panel: HDR output, deinterlacing, and the user's WGSL shader files in this browser.
 // A file comes from this device or from the passes the server offers, which download when the user adds one.
+// Until the user edits the list, it shows the server's default preset, and any edit makes the list the user's own; restoring the default follows the server's preset again.
 // The files' sources live in the pass source store in IndexedDB, and the settings hold each file's key
 
 const HDR_OUTPUT_SETTING_KEY = 'hdrOutput';
 const DEINTERLACE_MODE_SETTING_KEY = 'deinterlaceMode';
-// Each deinterlacing mode's option label: Jellyfin Web's own word for off
-const DEINTERLACE_MODE_OPTIONS: ReadonlyArray<readonly [ DeinterlaceMode, string ]> = [
-    [ 'double-rate', 'WebGPUDeinterlaceDoubleRate' ],
-    [ 'single-rate', 'WebGPUDeinterlaceSingleRate' ],
-    [ 'off', 'Off' ]
-];
 // The pass files the picker offers: WGSL sources, which are plain text
 const PASS_FILE_TYPES = `${PASS_FILE_EXTENSION},text/plain`;
 // A float parameter steps freely; integer parameters step by whole numbers
@@ -282,7 +279,7 @@ export function createPresentationSectionHTML(): string {
                         is="emby-select"
                         label="${translateToHTML('WebGPUDeinterlace')}"
                     >
-                        ${DEINTERLACE_MODE_OPTIONS.map(([ mode, labelKey ]): string => `<option value="${mode}">${translateToHTML(labelKey)}</option>`).join('')}
+                        ${createSettingOptionsHTML(DEINTERLACE_MODE_OPTIONS)}
                     </select>
                 </div>
                 ${createDefaultButtonHTML(DEINTERLACE_MODE_SETTING_KEY, globalize.translate('WebGPUSettingNameDeinterlace'))}
@@ -334,6 +331,11 @@ export function createPresentationSectionHTML(): string {
                     is="emby-button"
                     type="button"
                 >${translateToHTML('WebGPURemoveShaderPasses')}</button>
+                <button
+                    class="raised webgpuSettingsRestoreDefaultPasses"
+                    is="emby-button"
+                    type="button"
+                >${translateToHTML('WebGPURestoreDefaultShaderPasses')}</button>
             </div>
         </section>`;
 }
@@ -348,6 +350,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const statusElement = requireSectionElement<HTMLElement>(panel, '[data-presentation-status]');
     const addFilesButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsAddPasses');
     const removeFilesButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsRemovePasses');
+    const restoreDefaultFilesButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsRestoreDefaultPasses');
     const serverPassSelect = requireSectionElement<HTMLSelectElement>(panel, '[data-server-passes]');
     const addServerPassButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsAddServerPass');
     const HDROutputDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${HDR_OUTPUT_SETTING_KEY}"]`);
@@ -368,8 +371,10 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     let serverCatalogFailure: string | null = null;
     // A server pass downloads one at a time
     let serverPassPending = false;
-    // The store keys the settings held while the panel was open, whose sources go once neither these nor the stored settings hold them
-    const knownSourceKeys = new Set<number>(getStoredFileSourceKeys(context.getSettings().presentation.files));
+    /** Returns the files the panel's settings resolve to: the user's own preset, else the server's default files. */
+    const getEffectiveFiles = (): readonly StoredPresentationFile[] => context.getSettings().presentation.files ?? getDefaultPresentationFiles();
+    // The store keys the settings held while the panel was open, whose sources go once neither these, the stored settings, nor the default files hold them
+    const knownSourceKeys = new Set<number>(getStoredFileSourceKeys(getEffectiveFiles()));
 
     /** Returns where a file came from when that was the server, and whether the server still offers it once its catalog is read. */
     const describeOrigin = (file: StoredPresentationFile): string | null => {
@@ -385,7 +390,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const renderServerPasses = (): void => {
         const addable = serverCatalog === null || sources === null ?
             [] :
-            getAddableServerPassFiles(serverCatalog, context.getSettings().presentation.files);
+            getAddableServerPassFiles(serverCatalog, getEffectiveFiles());
         const selectedFileName = serverPassSelect.value;
         serverPassSelect.innerHTML = addable.length === 0 ?
             `<option value="">${escapeHtml(serverCatalogFailure ?? globalize.translate('WebGPUServerPassesNone'))}</option>` :
@@ -398,10 +403,11 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     };
 
     const renderFiles = (): void => {
-        const files = context.getSettings().presentation.files;
+        const files = getEffectiveFiles();
         // The buttons and the list wait for the sources
         addFilesButton.disabled = sources === null;
         removeFilesButton.disabled = sources === null || files.length === 0;
+        restoreDefaultFilesButton.disabled = sources === null || context.getSettings().presentation.files === null;
         renderServerPasses();
         if (sources === null) {
             return;
@@ -452,11 +458,14 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         });
     };
 
-    /** Deletes the sources of files that neither these settings nor the stored ones hold, so a refused save never loses a source the stored settings need. */
+    /**
+     * Deletes the sources of files that neither these settings, the stored ones, nor the default files hold, so a refused save never loses a source the stored settings need.
+     */
     const releaseDroppedSources = (): void => {
         const heldKeys = new Set<number>([
-            ...getStoredFileSourceKeys(context.getSettings().presentation.files),
-            ...getStoredFileSourceKeys(loadWebGPUUserSettings().presentation.files)
+            ...getStoredFileSourceKeys(getEffectiveFiles()),
+            ...getStoredFileSourceKeys(loadWebGPUUserSettings().presentation.files ?? []),
+            ...getStoredFileSourceKeys(getDefaultPresentationFiles())
         ]);
         const droppedKeys = [ ...knownSourceKeys ].filter((key: number): boolean => !heldKeys.has(key));
         if (droppedKeys.length > 0) {
@@ -465,7 +474,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     };
 
     const describeReport = (planReport: PlanReport): string => {
-        if (context.getSettings().presentation.files.length === 0) {
+        if (getEffectiveFiles().length === 0) {
             return globalize.translate('WebGPUShaderPassesNone');
         }
         return globalize.translate('WebGPUShaderPassesSummary', planReport.activePasses.length, planReport.inactivePasses.length);
@@ -475,12 +484,15 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         context.saveSettings(normalizeWebGPUUserSettings({ ...context.getSettings(), presentation }))
     );
 
-    /** Reads the stored files' sources; the list shows once they are read. */
+    /** Reads the sources of the stored files and of the default files, which restoring the default shows; the list shows once they are read. */
     const loadSources = async (): Promise<void> => {
         let loadedSources = new Map<number, string>();
         let failure: string | null = null;
         try {
-            loadedSources = await readPassSources(getStoredFileSourceKeys(context.getSettings().presentation.files));
+            loadedSources = await readPassSources([
+                ...getStoredFileSourceKeys(context.getSettings().presentation.files ?? []),
+                ...getStoredFileSourceKeys(getDefaultPresentationFiles())
+            ]);
         } catch (error) {
             failure = describeStorageFailure(error);
         }
@@ -496,13 +508,31 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     };
     const sourcesLoaded = loadSources();
 
+    /**
+     * Returns the files the settings resolve to once the sources are read.
+     * Following the default makes sure the default files match the server's default preset first, and reads the sources of new default files.
+     */
+    const loadEffectiveFiles = async (): Promise<readonly StoredPresentationFile[]> => {
+        await sourcesLoaded;
+        const ownFiles = context.getSettings().presentation.files;
+        if (ownFiles !== null) {
+            return ownFiles;
+        }
+        const files = await ensureDefaultPresentationFiles();
+        const unreadKeys = getStoredFileSourceKeys(files).filter((key: number): boolean => !sources?.has(key));
+        for (const [ key, source ] of await readPassSources(unreadKeys)) {
+            sources?.set(key, source);
+        }
+        return files;
+    };
+
     /** Hands the files with sources to the player once the sources are read; a file without one stays out, and its entry says so. */
     const applyPreset = (notice: string | null): void => {
         presetRevision += 1;
         const revision = presetRevision;
         setStatus(statusElement, globalize.translate('WebGPUShaderPassesApplying'));
-        void sourcesLoaded.then((): Promise<PlanReport> => {
-            const preset = createStoredPresentationPreset(context.getSettings().presentation.files, sources ?? new Map<number, string>());
+        void loadEffectiveFiles().then((files: readonly StoredPresentationFile[]): Promise<PlanReport> => {
+            const preset = createStoredPresentationPreset(files, sources ?? new Map<number, string>());
             return player.setPresentationPreset(preset.files);
         }).then((planReport: PlanReport): void => {
             if (!context.isActive() || revision !== presetRevision) {
@@ -546,14 +576,15 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         });
     };
 
-    const updateFiles = (files: readonly StoredPresentationFile[], notice: string | null): void => {
+    /** Saves the files as the user's own preset, or null to follow the server's default preset, then applies them. */
+    const updateFiles = (files: readonly StoredPresentationFile[] | null, notice: string | null): void => {
         const saveFailure = savePresentation({ ...context.getSettings().presentation, files });
         applyPreset(joinSentences(notice, describeSaveFailure(saveFailure)));
     };
 
     /**
-     * Reads what the server offers once the sources are read, then replaces the sources of the preset's server files the server now has newer versions of.
-     * A server that cannot be reached leaves every file as stored, and the picker says why it offers nothing.
+     * Reads what the server offers once the sources are read, then replaces the sources of the user's own preset's server files the server now has newer versions of.
+     * The default files follow the server's versions themselves; a server that cannot be reached leaves every file as stored, and the picker says why it offers nothing.
      */
     const loadServerPasses = async (): Promise<void> => {
         await sourcesLoaded;
@@ -572,7 +603,11 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         }
         serverCatalog = catalog;
         renderFiles();
-        const update = await updateServerPassFiles(context.getSettings().presentation.files, catalog);
+        const ownFiles = context.getSettings().presentation.files;
+        if (ownFiles === null) {
+            return;
+        }
+        const update = await updateServerPassFiles(ownFiles, catalog);
         if (!context.isActive() || (update.updatedFileNames.length === 0 && update.failures.length === 0)) {
             return;
         }
@@ -586,9 +621,14 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             setStatus(statusElement, failureNotice ?? '');
             return;
         }
+        // The default restored meanwhile no longer holds the user's preset, whose versions then matter no more
+        const currentFiles = context.getSettings().presentation.files;
+        if (currentFiles === null) {
+            return;
+        }
         // Each updated file keeps its key, place, and parameters; only its version changes
         const updatedOrigins = new Map<number, StoredPresentationFile>(update.files.map((file: StoredPresentationFile): [ number, StoredPresentationFile ] => [ file.sourceKey, file ]));
-        const files = context.getSettings().presentation.files.map((file: StoredPresentationFile): StoredPresentationFile => {
+        const files = currentFiles.map((file: StoredPresentationFile): StoredPresentationFile => {
             const updatedFile = updatedOrigins.get(file.sourceKey);
             return updatedFile?.server ? { ...file, server: updatedFile.server } : file;
         });
@@ -597,7 +637,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
 
     /** Downloads the chosen server pass and adds it after the preset's files; a failure, or a full preset, is named in the status. */
     const addServerPass = async (entry: ServerPassFile): Promise<void> => {
-        if (context.getSettings().presentation.files.length >= MAXIMUM_PRESENTATION_FILE_COUNT) {
+        if (getEffectiveFiles().length >= MAXIMUM_PRESENTATION_FILE_COUNT) {
             setStatus(statusElement, globalize.translate(
                 'WebGPUShaderPassFilesSkipped',
                 entry.fileName,
@@ -617,7 +657,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             }
             sources?.set(added.file.sourceKey, added.source);
             knownSourceKeys.add(added.file.sourceKey);
-            updateFiles([ ...context.getSettings().presentation.files, added.file ], globalize.translate('WebGPUServerPassAdded', entry.fileName));
+            updateFiles([ ...getEffectiveFiles(), added.file ], globalize.translate('WebGPUServerPassAdded', entry.fileName));
         } catch (error) {
             console.warn(`WebGPU shader files: server-pass-unavailable: ${entry.fileName} ${getErrorMessage(error)}`);
             if (context.isActive()) {
@@ -637,7 +677,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         const skippedNames: string[] = [];
         let failureNotice: string | null = null;
         for (const chosenFile of chosenFiles) {
-            const fileCount = context.getSettings().presentation.files.length + addedFiles.length;
+            const fileCount = getEffectiveFiles().length + addedFiles.length;
             // The size check comes before the read, so a mistaken pick, such as a media file, is never read
             if (fileCount >= MAXIMUM_PRESENTATION_FILE_COUNT || chosenFile.size > MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH) {
                 skippedNames.push(chosenFile.name);
@@ -671,7 +711,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
                 MAXIMUM_PRESENTATION_FILE_COUNT,
                 MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH
             );
-        updateFiles([ ...context.getSettings().presentation.files, ...addedFiles ], joinSentences(skippedNotice, failureNotice));
+        updateFiles([ ...getEffectiveFiles(), ...addedFiles ], joinSentences(skippedNotice, failureNotice));
     };
 
     const onHDROutputChange = (): void => {
@@ -711,6 +751,12 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         updateFiles([], null);
     };
 
+    const onRestoreDefaultFiles = (): void => {
+        // The default files may hold the user's sources under other parameter values, so the list renders anew
+        renderedReport = null;
+        updateFiles(null, null);
+    };
+
     const onAddServerPass = (): void => {
         const entry = serverCatalog?.passes.find((candidate: ServerPassFile): boolean => candidate.fileName === serverPassSelect.value);
         if (entry && !serverPassPending) {
@@ -725,7 +771,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             return;
         }
         const removedIndex = Number(removeButton.dataset.removeFile);
-        updateFiles(context.getSettings().presentation.files.filter(
+        updateFiles(getEffectiveFiles().filter(
             (_file: StoredPresentationFile, index: number): boolean => index !== removedIndex
         ), null);
     };
@@ -738,7 +784,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         const fileIndex = Number(input.dataset.fileIndex);
         const parameterName = input.dataset.parameterName;
         const value = Number(input.value);
-        const files = context.getSettings().presentation.files;
+        const files = getEffectiveFiles();
         const changedFile = files.at(fileIndex);
         if (!changedFile || !Number.isFinite(value)) {
             return;
@@ -777,6 +823,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         [ addFilesButton, 'click', onAddFiles ],
         [ passFileInput, 'change', onPassFilesChosen ],
         [ removeFilesButton, 'click', onRemoveFiles ],
+        [ restoreDefaultFilesButton, 'click', onRestoreDefaultFiles ],
         [ addServerPassButton, 'click', onAddServerPass ],
         [ fileList, 'click', onFileListClick ],
         [ fileList, 'change', onFileListChange ]
@@ -796,6 +843,8 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         apply: (): void => {
             applyHDROutput(null);
             applyDeinterlaceMode(null);
+            // A reset's default files may hold the user's sources under other parameter values, so the list renders anew
+            renderedReport = null;
             applyPreset(null);
         },
         synchronize: (): void => {

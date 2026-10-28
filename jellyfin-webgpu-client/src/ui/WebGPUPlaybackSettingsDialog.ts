@@ -4,9 +4,10 @@ import layoutManager from 'components/layoutManager';
 import globalize from 'lib/globalize';
 import { handleCommand } from 'scripts/inputManager';
 
+import { applySettingsButtonPlacement } from '../compat/SettingsEntryPoints';
 import type { AddonStringKey } from '../host/globalize';
 import { loadServerModuleCatalog } from '../ServerModules';
-import { webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
+import { getDefaultAudioDownmixAlgorithm, webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
 import { bindDecoderPackageSection, createDecoderPackageSectionHTML } from './DecoderPackageSection';
 import { scheduleSelectLabelFallback } from './SelectLabelFallback';
 import {
@@ -14,6 +15,15 @@ import {
     createPresentationSectionHTML,
     type PresentationSectionController
 } from './PresentationSettingsSection';
+import {
+    AUDIO_DOWNMIX_ALGORITHM_OPTIONS,
+    createSettingOptionsHTML,
+    NUMERIC_CONTROL_CONFIGURATIONS,
+    SETTINGS_BUTTON_PLACEMENT_OPTIONS,
+    TONE_MAP_OPERATOR_OPTIONS,
+    type NumericControlConfiguration,
+    type NumericSettingKey
+} from './SettingDefinitions';
 import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
 import 'elements/emby-button/emby-button';
@@ -25,10 +35,7 @@ import 'elements/emby-slider/emby-slider';
 import 'material-design-icons-iconfont';
 
 import { clearStoredCapabilityProbeVerdicts } from 'webgpu-player/capability/CapabilityProbeStore';
-import {
-    HDR_RENDER_SETTING_RANGES,
-    type RenderSettings
-} from 'webgpu-player/presentation/RenderSettings';
+import type { RenderSettings } from 'webgpu-player/presentation/RenderSettings';
 import type WebGPUPlayer from '../WebGPUPlayer';
 import {
     getWebGPUAudioOutputManager,
@@ -45,28 +52,12 @@ import {
     saveWebGPUUserSettings,
     type WebGPUUserSettings
 } from '../WebGPUUserSettings';
-import { AUDIO_DOWNMIX_SETTING_RANGES } from 'webgpu-player/audio/processing/CustomAudioDownmix';
 import {
-    CUSTOM_AUDIO_DOWNMIX_ALGORITHMS,
-    DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM,
     normalizeCustomAudioDownmixAlgorithm,
     type CustomAudioDownmixAlgorithm
 } from 'webgpu-player/audio/processing/CustomAudioDownmixAlgorithm';
 
 import './WebGPUPlaybackSettingsDialog.scss';
-
-type NumericSettingKey =
-    | 'brightness'
-    | 'centerLevel'
-    | 'contrast'
-    | 'desaturationStrength'
-    | 'exposure'
-    | 'inputPeakNits'
-    | 'outputGain'
-    | 'outputPeakNits'
-    | 'paperWhiteNits'
-    | 'saturation'
-    | 'surroundLevel';
 
 type DefaultSettingKey =
     | NumericSettingKey
@@ -76,22 +67,8 @@ type DefaultSettingKey =
     | 'enableGPUDecodeSlicing'
     | 'enableHDRToneMapping'
     | 'forceStereoDownmix'
-    | 'operator';
-
-type NumericSettingRange = Readonly<{
-    maximum: number
-    minimum: number
-    step: number
-}>;
-
-type NumericControlConfiguration = Readonly<{
-    descriptionKey: AddonStringKey
-    key: NumericSettingKey
-    labelKey: AddonStringKey
-    range: NumericSettingRange
-    section: 'audio' | 'render'
-    unitKey?: AddonStringKey
-}>;
+    | 'operator'
+    | 'settingsButtonPlacement';
 
 type ActivePanel = {
     close: () => void
@@ -120,91 +97,6 @@ const OSD_CONTROLS_SELECTOR = '.videoOsdBottom-maincontrols .osdControls';
 const OSD_CONTROLS_GAP_PX = 8;
 const PANEL_TOP_PROPERTY = '--webgpu-settings-top';
 const PANEL_MAXIMUM_HEIGHT_PROPERTY = '--webgpu-settings-max-height';
-
-const NUMERIC_CONTROL_CONFIGURATIONS: NumericControlConfiguration[] = [];
-NUMERIC_CONTROL_CONFIGURATIONS.push(
-    {
-        descriptionKey: 'WebGPUManualInputPeakHelp',
-        key: 'inputPeakNits',
-        labelKey: 'WebGPUManualInputPeak',
-        range: HDR_RENDER_SETTING_RANGES.inputPeakNits,
-        section: 'render',
-        unitKey: 'WebGPUUnitNits'
-    },
-    {
-        descriptionKey: 'WebGPUOutputPeakHelp',
-        key: 'outputPeakNits',
-        labelKey: 'WebGPUOutputPeak',
-        range: HDR_RENDER_SETTING_RANGES.outputPeakNits,
-        section: 'render',
-        unitKey: 'WebGPUUnitNits'
-    },
-    {
-        descriptionKey: 'WebGPUPaperWhiteHelp',
-        key: 'paperWhiteNits',
-        labelKey: 'WebGPUPaperWhite',
-        range: HDR_RENDER_SETTING_RANGES.paperWhiteNits,
-        section: 'render',
-        unitKey: 'WebGPUUnitNits'
-    },
-    {
-        descriptionKey: 'WebGPUExposureHelp',
-        key: 'exposure',
-        labelKey: 'WebGPUExposure',
-        range: HDR_RENDER_SETTING_RANGES.exposure,
-        section: 'render',
-        unitKey: 'WebGPUUnitStops'
-    },
-    {
-        descriptionKey: 'WebGPUHighlightDesaturationHelp',
-        key: 'desaturationStrength',
-        labelKey: 'WebGPUHighlightDesaturation',
-        range: HDR_RENDER_SETTING_RANGES.desaturationStrength,
-        section: 'render'
-    },
-    {
-        descriptionKey: 'WebGPUBrightnessHelp',
-        key: 'brightness',
-        labelKey: 'WebGPUBrightness',
-        range: HDR_RENDER_SETTING_RANGES.brightness,
-        section: 'render'
-    },
-    {
-        descriptionKey: 'WebGPUContrastHelp',
-        key: 'contrast',
-        labelKey: 'WebGPUContrast',
-        range: HDR_RENDER_SETTING_RANGES.contrast,
-        section: 'render'
-    },
-    {
-        descriptionKey: 'WebGPUSaturationHelp',
-        key: 'saturation',
-        labelKey: 'WebGPUSaturation',
-        range: HDR_RENDER_SETTING_RANGES.saturation,
-        section: 'render'
-    },
-    {
-        descriptionKey: 'WebGPUCenterLevelHelp',
-        key: 'centerLevel',
-        labelKey: 'WebGPUCenterLevel',
-        range: AUDIO_DOWNMIX_SETTING_RANGES.centerLevel,
-        section: 'audio'
-    },
-    {
-        descriptionKey: 'WebGPUSurroundLevelHelp',
-        key: 'surroundLevel',
-        labelKey: 'WebGPUSurroundLevel',
-        range: AUDIO_DOWNMIX_SETTING_RANGES.surroundLevel,
-        section: 'audio'
-    },
-    {
-        descriptionKey: 'WebGPUDownmixOutputGainHelp',
-        key: 'outputGain',
-        labelKey: 'WebGPUDownmixOutputGain',
-        range: AUDIO_DOWNMIX_SETTING_RANGES.outputGain,
-        section: 'audio'
-    }
-);
 
 let activePanel: ActivePanel | null = null;
 
@@ -366,6 +258,28 @@ function createPanelHTML(): string {
         ><span class="material-icons close" aria-hidden="true"></span></button>
         <div class="webgpuSettingsContent">
                 <h2 class="webgpuSettingsTitle" id="webgpu-settings-title">${translateToHTML('WebGPUSettings')}</h2>
+                <section class="webgpuSettingsSection" aria-labelledby="webgpu-player-controls-title">
+                    <h3 class="webgpuSettingsSectionTitle" id="webgpu-player-controls-title">
+                        ${translateToHTML('WebGPUPlayerControls')}
+                    </h3>
+                    <div class="webgpuSettingsSelectRow">
+                        <div class="selectContainer webgpuSettingsSelectContainer">
+                            <select
+                                aria-describedby="webgpu-settings-button-placement-description"
+                                data-setting-select="settingsButtonPlacement"
+                                id="webgpu-settings-button-placement"
+                                is="emby-select"
+                                label="${translateToHTML('WebGPUSettingsButtonPlacement')}"
+                            >${createSettingOptionsHTML(SETTINGS_BUTTON_PLACEMENT_OPTIONS)}</select>
+                        </div>
+                        ${createDefaultButtonHTML('settingsButtonPlacement', globalize.translate('WebGPUSettingNameSettingsButtonPlacement'))}
+                    </div>
+                    <div
+                        class="fieldDescription"
+                        id="webgpu-settings-button-placement-description"
+                    >${translateToHTML('WebGPUSettingsButtonPlacementHelp')}</div>
+                </section>
+
                 <section class="webgpuSettingsSection" aria-labelledby="webgpu-playback-title">
                     <h3 class="webgpuSettingsSectionTitle" id="webgpu-playback-title">
                         ${translateToHTML('WebGPUPlayback')}
@@ -438,11 +352,7 @@ function createPanelHTML(): string {
                                 id="webgpu-tone-map-operator"
                                 is="emby-select"
                                 label="${translateToHTML('WebGPUToneMapOperator')}"
-                            >
-                                <option value="spline">${translateToHTML('WebGPUToneMapOperatorSpline')}</option>
-                                <option value="aces">ACES</option>
-                                <option value="reinhard">Reinhard</option>
-                            </select>
+                            >${createSettingOptionsHTML(TONE_MAP_OPERATOR_OPTIONS)}</select>
                         </div>
                         ${createDefaultButtonHTML('operator', globalize.translate('WebGPUSettingNameToneMapOperator'))}
                     </div>
@@ -517,24 +427,7 @@ function createPanelHTML(): string {
                                 id="webgpu-audio-downmix-algorithm"
                                 is="emby-select"
                                 label="${translateToHTML('WebGPUDownmixAlgorithm')}"
-                            >
-                                <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.StandardLORO}">
-                                    ${translateToHTML('WebGPUDownmixAlgorithmStandardLORO')}
-                                </option>
-                                <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.PeakNormalizedLORO}">
-                                    ${translateToHTML('WebGPUDownmixAlgorithmPeakNormalizedLORO')}
-                                </option>
-                                <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4}">AC-4</option>
-                                <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845}">
-                                    RFC 7845
-                                </option>
-                                <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750}">
-                                    Dave750
-                                </option>
-                                <option value="${CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.NightModeDialogue}">
-                                    ${translateToHTML('WebGPUDownmixAlgorithmNightModeDialogue')}
-                                </option>
-                            </select>
+                            >${createSettingOptionsHTML(AUDIO_DOWNMIX_ALGORITHM_OPTIONS)}</select>
                         </div>
                         ${createDefaultButtonHTML('audioDownmixAlgorithm', globalize.translate('WebGPUSettingNameDownmixAlgorithm'))}
                     </div>
@@ -757,6 +650,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const playbackStatus = requireElement<HTMLElement>(panel, '[data-playback-status]');
     const operatorSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="operator"]');
     const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
+    const settingsButtonPlacementSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="settingsButtonPlacement"]');
     let settings = loadWebGPUUserSettings();
     const audioOutputManager = getWebGPUAudioOutputManager();
     let audioDownmixAlgorithm: CustomAudioDownmixAlgorithm = webGPUAudioDownmixAlgorithm();
@@ -833,6 +727,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         GPUDecodeSlicingCheckbox.disabled = !settings.playback.enableCustomDecode;
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
         operatorSelect.value = settings.render.settings.toneMapping.operator;
+        settingsButtonPlacementSelect.value = settings.osd.settingsButtonPlacement;
         const inputPeakSlider = requireElement<HTMLInputElement>(panel, '[data-setting-slider="inputPeakNits"]');
         const inputPeakNumber = requireElement<HTMLInputElement>(panel, '[data-setting-number="inputPeakNits"]');
         inputPeakSlider.disabled = settings.render.automaticInputPeakNits;
@@ -1132,7 +1027,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         audioDownmixAlgorithmSelect.removeEventListener('change', onAudioDownmixAlgorithmChange);
     });
     bindDefaultButton('audioDownmixAlgorithm', (): void => {
-        persistAudioDownmixAlgorithm(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+        persistAudioDownmixAlgorithm(getDefaultAudioDownmixAlgorithm());
     });
 
     const onOperatorChange = (): void => {
@@ -1160,6 +1055,24 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         onOperatorChange();
     });
 
+    // The video OSD places its entry to this panel anew at once
+    const onSettingsButtonPlacementChange = (): void => {
+        settings = normalizeWebGPUUserSettings({
+            ...settings,
+            osd: { settingsButtonPlacement: settingsButtonPlacementSelect.value }
+        });
+        persistSettings();
+        applySettingsButtonPlacement();
+    };
+    settingsButtonPlacementSelect.addEventListener('change', onSettingsButtonPlacementChange);
+    cleanupCallbacks.push((): void => {
+        settingsButtonPlacementSelect.removeEventListener('change', onSettingsButtonPlacementChange);
+    });
+    bindDefaultButton('settingsButtonPlacement', (): void => {
+        settingsButtonPlacementSelect.value = createDefaultWebGPUUserSettings().osd.settingsButtonPlacement;
+        onSettingsButtonPlacementChange();
+    });
+
     const resetRenderButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetRender');
     const onResetRender = (): void => {
         settings = resetWebGPURenderSettings(settings);
@@ -1184,7 +1097,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const onResetAudio = (): void => {
         invalidatePendingAudioOutputSelection();
         settings = resetWebGPUAudioSettings(settings);
-        audioDownmixAlgorithm = DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM;
+        audioDownmixAlgorithm = getDefaultAudioDownmixAlgorithm();
         webGPUAudioDownmixAlgorithm(audioDownmixAlgorithm);
         persistSettings();
         void audioOutputManager.setSelectedDeviceId(settings.audio.outputDeviceId);
@@ -1200,7 +1113,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const onResetAll = (): void => {
         invalidatePendingAudioOutputSelection();
         settings = createDefaultWebGPUUserSettings();
-        audioDownmixAlgorithm = DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM;
+        audioDownmixAlgorithm = getDefaultAudioDownmixAlgorithm();
         webGPUAudioDownmixAlgorithm(audioDownmixAlgorithm);
         persistSettings();
         void audioOutputManager.setSelectedDeviceId(settings.audio.outputDeviceId);
@@ -1208,6 +1121,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         scheduleRenderSettings();
         applyAudioDownmixSettings(true);
         presentationSection?.apply();
+        applySettingsButtonPlacement();
         setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
     };
     resetAllButton.addEventListener('click', onResetAll);

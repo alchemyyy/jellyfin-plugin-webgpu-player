@@ -34,5 +34,6 @@ The plugin's `README.md` covers the server plugin, its rewrites, and its asset r
 | Follow a playback session through Jellyfin Web | [Playback in Jellyfin Web](playback.md) |
 | Learn why the server direct-plays a source or not | [Negotiation](negotiation.md), [Direct play support](direct-play-support.md), and the engine's [support matrix](https://alchemyyy.github.io/WebGPU-Player/codec-support.html) |
 | Offer or manage the server's decoders and passes | [Decoders and passes from the server](server-modules.md) |
+| Set the defaults of the client settings for every user | [Client defaults from the server](client-defaults.md) |
 | Find an add-on file | [Module map](module-map.md) |
 | Avoid repeating an investigation | [Decisions](decisions.md) |

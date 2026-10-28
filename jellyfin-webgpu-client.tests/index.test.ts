@@ -17,6 +17,18 @@ const testState = vi.hoisted(() => ({
     installTimingTraceControl: vi.fn(),
     startCapabilityProbeWarmUp: vi.fn((): void => {
         testState.events.push('warm');
+    }),
+    startClientDefaultsSync: vi.fn((): void => {
+        testState.events.push('defaults');
+    }),
+    // Resolves the add-on strings' load when a test lets it
+    finishStringsLoad: null as (() => void) | null,
+    loadAddonStrings: vi.fn((): Promise<void> => new Promise<void>((resolve: () => void): void => {
+        testState.finishStringsLoad = resolve;
+    })),
+    renderClientDefaultsEditor: vi.fn((element: HTMLElement): Promise<void> => {
+        element.textContent = 'editor';
+        return Promise.resolve();
     })
 }));
 
@@ -40,6 +52,13 @@ vi.mock('addons/webGPUPlayer/CapabilityProbeWarmUp', () => ({
 }));
 vi.mock('addons/webGPUPlayer/TimingTraceControl', () => ({
     installTimingTraceControl: testState.installTimingTraceControl
+}));
+vi.mock('addons/webGPUPlayer/ServerClientDefaults', () => ({
+    startClientDefaultsSync: testState.startClientDefaultsSync
+}));
+vi.mock('addons/webGPUPlayer/host/globalize', () => ({ loadAddonStrings: testState.loadAddonStrings }));
+vi.mock('addons/webGPUPlayer/ui/ClientDefaultsEditor', () => ({
+    renderClientDefaultsEditor: testState.renderClientDefaultsEditor
 }));
 // The player itself is covered by its own suites
 vi.mock('addons/webGPUPlayer/HostCompatibleWebGPUPlayer', () => ({
@@ -118,10 +137,28 @@ describe('WebGPU player add-on entry', () => {
 
         expect(testState.bindHostBridge).toHaveBeenCalledWith(bag);
         expect(testState.installHostCompatibleMode).toHaveBeenCalledWith(player);
-        // The warm-up starts once the bag binds the PlaybackManager it waits on
-        expect(testState.events).toEqual([ 'bind', 'warm', 'construct', 'install' ]);
+        // The warm-up starts once the bag binds the PlaybackManager it waits on, and the server's defaults sync once it binds ServerConnections,
+        // so the settings the player reads at construction start from the cached defaults
+        expect(testState.events).toEqual([ 'bind', 'defaults', 'warm', 'construct', 'install' ]);
         // The plugin manager reads these synchronously after construction
         expect([ player.id, player.type, player.name, player.priority ])
             .toEqual([ 'webgpuplayer', 'mediaplayer', 'WebGPU Player', 0 ]);
+    });
+
+    it('renders the client defaults editor once the add-on strings have loaded', async () => {
+        window.WebGPUPlayerConfig = { assetBaseURL: '/WebGPUPlayer/assets/' };
+        const entry = await loadEntry() as unknown as { renderClientDefaultsEditor: (element: HTMLElement) => Promise<void> };
+        const container = document.createElement('div');
+
+        const rendered = entry.renderClientDefaultsEditor(container);
+        await vi.waitFor(() => expect(testState.loadAddonStrings).toHaveBeenCalled());
+        // The editor waits on the strings even once its own module has loaded
+        await import('addons/webGPUPlayer/ui/ClientDefaultsEditor');
+        expect(testState.renderClientDefaultsEditor).not.toHaveBeenCalled();
+        testState.finishStringsLoad?.();
+        await rendered;
+
+        expect(testState.renderClientDefaultsEditor).toHaveBeenCalledWith(container);
+        expect(container.textContent).toBe('editor');
     });
 });

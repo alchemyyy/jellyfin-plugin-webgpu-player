@@ -4,34 +4,23 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Security.Claims;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.WebGPUPlayer.Modules;
-using MediaBrowser.Common.Api;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Xunit;
+using static Jellyfin.Plugin.WebGPUPlayer.Tests.RoleHeaderTestServer;
 using HeaderNames = Microsoft.Net.Http.Headers.HeaderNames;
 
 namespace Jellyfin.Plugin.WebGPUPlayer.Tests;
 
 public sealed class ModuleControllerTests : IDisposable
 {
-    private const string TestScheme = "Test";
-    // The request header that names the test user's role; a request without it is anonymous
-    private const string RoleHeader = "X-Test-Role";
-    private const string AdministratorRole = "Administrator";
-    private const string UserRole = "User";
     private const string Route = "/" + ModuleController.RoutePrefix + "/";
     private const string CatalogPath = Route + "Catalog";
     private const string ListingPath = Route + "Catalog/All";
@@ -175,13 +164,6 @@ public sealed class ModuleControllerTests : IDisposable
         Assert.Equal(ModuleProblem.UnknownModuleCode, await ReadCodeAsync(unknown, cancellationToken));
     }
 
-    private static HttpClient CreateClient(WebApplication application, string role)
-    {
-        HttpClient client = application.GetTestClient();
-        client.DefaultRequestHeaders.Add(RoleHeader, role);
-        return client;
-    }
-
     private static ByteArrayContent CreateBody(byte[] bytes)
     {
         ByteArrayContent content = new ByteArrayContent(bytes);
@@ -219,43 +201,15 @@ public sealed class ModuleControllerTests : IDisposable
         return problem.RootElement.GetProperty("code").GetString();
     }
 
-    private async Task<WebApplication> StartServerAsync(CancellationToken cancellationToken)
+    private Task<WebApplication> StartServerAsync(CancellationToken cancellationToken)
     {
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-        builder.Logging.ClearProviders();
-        builder.Services.AddSingleton(new ModuleStore(
-            dataFolder.FullName,
-            ModuleTestFiles.DecoderSection,
-            [("hevc.wasm", ModuleTestFiles.CreatePackage(ModuleTestFiles.VideoHeader))],
-            [(ModuleTestFiles.SharpenFileName, Encoding.UTF8.GetBytes(ModuleTestFiles.SharpenSource))],
-            NullLogger<ModuleStore>.Instance));
-        // The server's own policies elevate administrators; the test scheme stands in for its authentication
-        builder.Services.AddAuthentication(TestScheme).AddScheme<AuthenticationSchemeOptions, RoleHeaderAuthenticationHandler>(TestScheme, null);
-        builder.Services.AddAuthorization(options => options.AddPolicy(Policies.RequiresElevation, policy => policy.RequireRole(AdministratorRole)));
-        builder.Services.AddControllers().AddApplicationPart(typeof(ModuleController).Assembly);
-        WebApplication application = builder.Build();
-        application.UseAuthentication();
-        application.UseAuthorization();
-        application.MapControllers();
-        await application.StartAsync(cancellationToken);
-        return application;
-    }
-
-    // Signs a request in with the role its header names
-    private sealed class RoleHeaderAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
-        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
-    {
-        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-        {
-            string? role = Request.Headers[RoleHeader];
-            if (string.IsNullOrEmpty(role))
-            {
-                return Task.FromResult(AuthenticateResult.NoResult());
-            }
-
-            ClaimsIdentity identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, role), new Claim(ClaimTypes.Role, role)], TestScheme);
-            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), TestScheme)));
-        }
+        return RoleHeaderTestServer.StartAsync(
+            services => services.AddSingleton(new ModuleStore(
+                dataFolder.FullName,
+                ModuleTestFiles.DecoderSection,
+                [("hevc.wasm", ModuleTestFiles.CreatePackage(ModuleTestFiles.VideoHeader))],
+                [(ModuleTestFiles.SharpenFileName, Encoding.UTF8.GetBytes(ModuleTestFiles.SharpenSource))],
+                NullLogger<ModuleStore>.Instance)),
+            cancellationToken);
     }
 }

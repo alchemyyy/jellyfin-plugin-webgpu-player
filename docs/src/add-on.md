@@ -48,17 +48,43 @@ The add-on supplies each one itself:
 | Bitrate-free selection, the stream-copy veto, and the second request that sizes a transcode | `compat/PlaybackInfoInterceptor.ts`, an interceptor on the server's axios instance, applying `PlaybackInfoPolicy.ts`, `PlaybackBitratePolicy.ts`, and `PlaybackStreamCopyPolicy.ts`. `MediaSourceSelection.ts` replicates PlaybackManager's choice of source |
 | Request generations and superseded starts | `compat/PlaybackManagerHooks.ts` wraps `play`, `nextTrack`, `previousTrack`, `setCurrentPlaylistItem`, and `stop` to cancel a pending WebGPU start. A `play` whose options match the pending request's, comparing items by ID, instead returns that request's promise while its start is pending, so a second click does not restart it. `HostCompatibleWebGPUPlayer.play` never settles a superseded start, and stops the server encodings it requested |
 | Player preference ordering | `HostCompatibleWebGPUPlayer.canPlayItem` declines when the user prefers the HTML player, and inside a native app shell |
-| The player settings menu and the preference control | `compat/SettingsEntryPoints.ts` adds the "WebGPU Settings" button to the player's OSD and the preferred player control to the Playback settings page, through the DOM |
+| The player settings menu and the preference control | `compat/SettingsEntryPoints.ts` adds the "WebGPU Settings" button to the player's OSD, where the user setting `osd.settingsButtonPlacement` places it, and the preferred player control to the Playback settings page, through the DOM. `compat/PlayerSettingsMenu.ts` adds the WebGPU player toggle, and with the `settings-menu` placement the "WebGPU Settings" item, to the OSD's settings menu |
 | A listener for source renegotiation | None: the player raises `PlayerEvent.Error`, and PlaybackManager's error retry ladder asks for a transcode |
+
+The OSD button sits before the host's settings button (`before-settings`, the default), after it (`after-settings`), at the end of the control bar (`controls-end`), or not in the bar (`settings-menu`).
+`applySettingsButtonPlacement()` places it anew on every OSD page; the settings panel calls it on a change, and a change of the server defaults runs it too.
+The button shows only while the WebGPU player is PlaybackManager's current player.
+
+The host's player settings menu has no seam for other items, so a click on the OSD's settings button arms an observer of `document.body`.
+The next dialog container that holds an action sheet with the host's `stats` item gets the add-on's items, built with the host's action sheet markup and the classes of the sheet's own items, so the TV and mobile variants match.
+The observer stops at that sheet, or after 10 seconds, and a positioned sheet the items grew is moved back inside the viewport by the host's own margins.
+"WebGPU player" (On or Off) shows for local video playback outside a native app shell; "WebGPU Settings" shows with the `settings-menu` placement while the WebGPU player is current.
+The host closes the sheet on any item click and rejects its menu promise for an id it does not know, as for a cancel; the add-on runs its item once the sheet's `close` event fires.
+
+The toggle stores the video player preference: on is anything but `html`, and a change stores `webgpu` or `html` (`''` when it equals the server's default).
+When the WebGPU player's `canPlayItem` now decides the current video differently than the current player, the add-on calls `playbackManager.play` with the queue (`PartCount` cleared, since the queue already holds the parts), the current index, the position (at least one tick, so cinema mode skips the intros), the media source, and the audio and subtitle stream indexes.
+PlaybackManager's `onPlaybackChanging` then stops and destroys the current player and reports the stop before the next player starts with a fresh negotiation.
+The old player's teardown makes the page's background opaque, and the OSD makes it transparent only as it shows, so once the restart resolves while the OSD still shows, the add-on makes it transparent again; without that, the next player's video stays hidden behind the background.
+A live channel tunes again with no position, media source, or stream indexes, and a video without a runtime starts from no position.
+Otherwise the toggle only saves, and with SyncPlay, a remote player, an item not on a server, or nothing playing it reports that the change applies from the next playback.
 
 `src/host/` binds the host's singletons from the plugin bag at construction, so evaluating the add-on's modules never touches them.
 `src/shims/` replaces host modules the add-on cannot import directly.
 
 ## Settings
 
-Every setting is local to the browser profile; the server's decoders and passes are managed on the plugin's settings page (see [Decoders and passes from the server](server-modules.md)).
+Every setting is the user's own in the browser profile, else the default an administrator sets on the server, else the add-on's built-in default; the server's decoders and passes are managed on the plugin's settings page (see [Decoders and passes from the server](server-modules.md)).
 
-- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, and the presentation settings in localStorage under `<userId>-webGPUPlaybackSettings` (version 4).
+- `ServerClientDefaults.ts` reads the server's defaults from `GET WebGPUPlayer/ClientDefaults` once a user is signed in, at plugin load and on each `localusersignedin`, and keeps the last read per server in localStorage under `webGPUPlayerClientDefaults-<serverId>`, bound to no user.
+  The plugin applies that cached read first, so the page's first settings already follow the server's defaults, and a server with none cached starts from none, so another server's defaults never carry over; a failed read keeps the defaults it has.
+  `ClientDefaults.ts` holds them as one flat map, a key per setting, and each setting reads its key's value as it reads a stored value of its own, so a value it refuses leaves the built-in default.
+  The settings panel opens, and a new playback negotiates, once a read in progress settles.
+- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, the presentation settings, and the settings button placement in localStorage under `<userId>-webGPUPlaybackSettings` (version 5).
+  A save stores only the values that differ from the defaults at that moment, arrays whole, so every other setting follows the defaults, and a later default the server sets reaches it.
+  Restoring a setting's default drops it from storage; a value set equal to its default also follows the default from then on.
+- Not defaultable: the audio output device, whose id belongs to the browser, the user's own decoder packages, and the decoder test results, which are a cache.
+- The settings button placement says where the video OSD offers the settings panel: before the host's settings button, the default, after it, at the end of the OSD's controls, or as an item of the host's player settings menu.
+  A change applies at once through `applySettingsButtonPlacement` of `compat/SettingsEntryPoints.ts`.
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
 - GPU decode slicing defaults to off, and a playback keeps the value it started with.
@@ -69,21 +95,29 @@ Every setting is local to the browser profile; the server's decoders and passes 
   The panel offers a field for each parameter and each constant the file's passes declare, since the engine takes values for both; a constant's change plans the passes again, as a DEFINE's does in mpv.
   A file added from the server's passes also keeps its origin, the server's file name and SHA-256, so a newer version on the server replaces its source.
   A preset holds at most 16 files of at most 16,777,216 characters each; the limit only keeps a mistaken pick, such as a media file, out of storage.
+  Stored files of `null` follow the server's [default shader preset](client-defaults.md#the-default-shader-preset-on-clients), which is also the built-in default; any stored list, even an empty one, is the user's own preset.
 - The sources live in IndexedDB, in the `passSources` store of the `webGPUPlayerPresentation` database (`PresentationPassStore.ts`), since localStorage holds about 5 MB for everything on the origin.
-  Each added file's source gets a key that counts up from 1, and a source goes once neither the panel's settings nor the stored settings hold its key.
-- Settings of any other version are not read, so a stored value from another version loads as the defaults.
-- HDR output and deinterlacing apply when `WebGPUPlayer` is constructed, at plugin load, through the presenter's `setHDROutputEnabled` and `setDeinterlaceMode`, so every playback starts with them; the stored files load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
+  Each added file's source gets a key that counts up from 1, and a source goes once neither the panel's settings, the stored settings, nor the default shader files hold its key.
+- Version 4 stored every setting; it loads with its values equal to the built-in defaults following the defaults, and the rest as the user's; its empty shader file list was the default then, so it follows the server's default preset.
+  Settings of any other version are not read, so they load as the defaults.
+- HDR output and deinterlacing apply when `WebGPUPlayer` is constructed, at plugin load, through the presenter's `setHDROutputEnabled` and `setDeinterlaceMode`, so every playback starts with them; the stored files, or the default shader files for a user who follows them, load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
   Every change in the settings panel applies live, and the presenter keeps the preset, HDR output, and deinterlacing across sessions; a stored preset that loads after a panel change yields to it.
-- The settings panel's sections are playback, tone mapping and display, presentation (HDR output and deinterlacing), shader passes, audio, and decoders.
-  Each setting restores its default from an icon button beside it.
+  When the server's defaults change, the player applies HDR output and deinterlacing again, and loads the default shader files again when the default shader preset changed.
+- The settings panel's sections are player controls (the settings button placement), playback, tone mapping and display, presentation (HDR output and deinterlacing), shader passes, audio, and decoders.
+  Each setting restores its default, the server's when it sets one, from an icon button beside it, and the audio and full resets restore the defaults the same way.
+  The controls render from `ui/SettingDefinitions.ts`, which holds each numeric setting's label, description, range, and unit, and each select's options.
 - The playback section's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again.
   The engine keeps those verdicts in localStorage under its own key, apart from these settings.
 - The shader pass section adds files from this device, or from the passes the server offers, which download when added.
+  It shows the default shader files while the user follows them; any change stores the list as the user's own, and "Restore default shader passes" follows the default again.
+  The panel opens once `ensureDefaultPresentationFiles()` settles, and only the user's own preset takes the server's newer file versions in place.
   The decoder section lists the user's own packages and names the server's.
 - The settings panel shows each file with the state of each of its passes from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
   A file whose source the store does not hold shows `source-missing` with its key, stays out of the preset, and can be removed.
   A source the store refuses, or a settings save the browser refuses, is reported in the section's status with the browser's error.
-- The player preference (Auto, WebGPU, or HTML) is the user setting `preferredVideoPlayer`, stored as `<userId>-preferredVideoPlayer`.
+- The player preference (Auto, WebGPU, or HTML) is the user setting `preferredVideoPlayer`, stored as `<userId>-preferredVideoPlayer`, and the WebGPU downmix algorithm is `<userId>-webGPUAudioDownmixAlgorithm`.
+  Both are read through the `userSettings` shim: the stored value, else the server's default, else Auto and standard Lo/Ro; a value equal to the default is stored empty, so it follows the default.
+  Earlier versions stored the built-in value itself on a restore, a reset, or a save of the Playback page, so the shim's first read or write for a user empties a stored Auto or standard Lo/Ro, as version 4 settings migrate, and marks the user with `<userId>-webGPULegacyChoicesMigrated`.
 
 ## Build and check
 
