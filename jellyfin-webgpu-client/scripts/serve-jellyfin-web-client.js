@@ -29,7 +29,7 @@ const HEAD_END_PATTERN = /<\/head>/i;
 // The settings file's settings, with their defaults, in the order the file lists them
 const DEFAULT_CONFIG = Object.freeze({
     server: '',
-    port: 5173,
+    dev_client_port: 5173,
     liveReload: true
 });
 const PORT_PATTERN = /^\d+$/;
@@ -188,15 +188,15 @@ function checkConfig(config, configFile) {
     if (config.server !== '') {
         parseServer(config.server);
     }
-    if (!Number.isInteger(config.port) || config.port < 1 || config.port > MAXIMUM_PORT) {
-        throw new Error(`"port" in ${configFile} is not a port number from 1 to ${MAXIMUM_PORT}`);
+    if (!Number.isInteger(config.dev_client_port) || config.dev_client_port < 1 || config.dev_client_port > MAXIMUM_PORT) {
+        throw new Error(`"dev_client_port" in ${configFile} is not a port number from 1 to ${MAXIMUM_PORT}`);
     }
     if (typeof config.liveReload !== 'boolean') {
         throw new Error(`"liveReload" in ${configFile} is not true or false`);
     }
 }
 
-/** Stores the server and port given on the command line, writes the file with the defaults when there is none, and returns the settings. */
+/** Stores the server and the port given on the command line, writes the file with the defaults when there is none, and returns the settings. */
 function configure(configFile, options) {
     const stored = readConfigFile(configFile);
     const config = { ...DEFAULT_CONFIG, ...stored };
@@ -207,7 +207,7 @@ function configure(configFile, options) {
         if (!PORT_PATTERN.test(options.port)) {
             throw new Error(`--port takes a port number, not ${options.port}`);
         }
-        config.port = Number(options.port);
+        config.dev_client_port = Number(options.port);
     }
     checkConfig(config, configFile);
     if (stored === null || Object.keys(DEFAULT_CONFIG).some(name => stored[name] !== config[name])) {
@@ -538,8 +538,8 @@ async function serve(options) {
     }
     const server = parseServer(config.server);
     const serverPort = Number(server.url.port) || (server.url.protocol === 'https:' ? 443 : 80);
-    if (LOOPBACK_HOST_NAMES.has(server.url.hostname) && serverPort === config.port) {
-        throw new Error(`"server" names this server itself, port ${config.port}`);
+    if (LOOPBACK_HOST_NAMES.has(server.url.hostname) && serverPort === config.dev_client_port) {
+        throw new Error(`"server" names this server itself, port ${config.dev_client_port}`);
     }
     const webDirectory = path.resolve(options['web-client']);
     for (const fileName of WEB_CLIENT_FILE_NAMES) {
@@ -564,8 +564,8 @@ async function serve(options) {
     httpServer.on('upgrade', (request, socket, head) => {
         proxyUpgrade(request, socket, head, server);
     });
-    await listen(httpServer, config.port);
-    console.log(`\nJellyfin Web with the live WebGPU Player add-on: http://${LOOPBACK_ADDRESS}:${config.port}${WEB_PATH}`);
+    await listen(httpServer, config.dev_client_port);
+    console.log(`\nJellyfin Web with the live WebGPU Player add-on: http://${LOOPBACK_ADDRESS}:${config.dev_client_port}${WEB_PATH}`);
     console.log(`Every other request goes to ${server.url.href}`);
     console.log(config.liveReload ?
         'The add-on builds again on every change, and open pages reload after each successful build.' :

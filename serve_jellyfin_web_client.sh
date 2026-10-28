@@ -41,7 +41,7 @@ serve_jellyfin_web_client.json there, which later runs read, so they need none.
 Options:
   --server <url>  The Jellyfin server's address, with its base URL when it has one,
                   such as http://<host>:8096 or https://<host>/jellyfin.
-  --port <port>   The port to serve on, on 127.0.0.1 only (default: 5173).
+  --port <port>   The port to serve on, on 127.0.0.1 only, stored as "dev_client_port" (default: 5173).
   -h, --help      Show this help.
 
 serve_jellyfin_web_client.json also holds "liveReload" (default: true): whether open pages reload
