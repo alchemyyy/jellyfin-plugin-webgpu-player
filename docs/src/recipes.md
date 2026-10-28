@@ -19,6 +19,7 @@ Check: the terminal reports each build, and a video that plays through the add-o
 
 The page's origin is a secure context, so WebGPU runs over plain HTTP.
 The script serves Jellyfin Web and the add-on itself, and forwards every other request to the server: the API, media, the WebSocket, and the dashboard's plugin pages.
+A read the server redirects to another origin, such as a split tunnel's media host, is followed by the script, without the page's credentials, as a browser follows it; the browser could not read that answer itself, since such a host's CORS allows only the server's own web client.
 The decoders, passes, and client defaults come from the plugin installed on the server, and a server without it offers none.
 The engine's workers come from its asset build, which runs at the script's start, so a change to them takes effect at the next start.
 The add-on build the plugin embeds, in `bin/jellyfin-webgpu-client/`, stays as it is.

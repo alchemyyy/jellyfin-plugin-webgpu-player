@@ -114,3 +114,5 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   `serve_jellyfin_web_client.sh` serves a clone of the pinned Jellyfin Web and the add-on's watch build on `127.0.0.1`, and forwards every other request, the WebSocket included, to the server.
   The API, media, and the plugin's routes then stay on the page's origin, as when the server serves Jellyfin Web, rather than depending on the server's CORS policy.
   Jellyfin Web served this way never goes past the proxy: the API client it creates from the page's own address takes only that address, not the server's LocalAddress.
+  A read the server redirects to another origin, such as a split tunnel's media host, is followed by the proxy, not the browser, without the page's credentials, as a browser follows it.
+  Such a host's CORS allows the server's own web client, so the browser could not read its answer from `127.0.0.1`; navigations and writes keep their redirects.

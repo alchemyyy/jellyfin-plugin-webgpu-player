@@ -36,6 +36,11 @@ const PORT_PATTERN = /^\d+$/;
 const MAXIMUM_PORT = 65535;
 // The headers of one connection (RFC 9110, section 7.6.1), which a proxy does not forward
 const HOP_BY_HOP_HEADERS = [ 'connection', 'keep-alive', 'proxy-connection', 'te', 'trailer', 'upgrade' ];
+// The redirect statuses a browser follows, and how many redirects it follows for one request
+const REDIRECT_STATUSES = new Set([ 301, 302, 303, 307, 308 ]);
+const MAXIMUM_REDIRECTS = 20;
+// The page origin's credentials, which a browser leaves out of a request it follows to another origin
+const CREDENTIAL_HEADERS = [ 'authorization', 'cookie' ];
 const NO_STORE = 'no-store';
 const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -397,6 +402,12 @@ function getForwardedHeaders(headers, target) {
     return forwarded;
 }
 
+/** Whether a URL is the server's: its origin, below its base path. */
+function isServerURL(url, server) {
+    const { basePath } = server;
+    return url.origin === server.origin && (basePath === '' || url.pathname === basePath || url.pathname.startsWith(`${basePath}/`));
+}
+
 /**
  * Points a redirect into the server at this server instead, without the server's base path; any other redirect stays as it is.
  * A relative reference stays too, since it resolves the same here.
@@ -406,11 +417,10 @@ function rewriteLocation(location, server) {
         return location;
     }
     const target = new URL(location, server.origin);
-    const { basePath } = server;
-    if (target.origin !== server.origin || (basePath !== '' && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`))) {
+    if (!isServerURL(target, server)) {
         return location;
     }
-    return (target.pathname.slice(basePath.length) || '/') + target.search + target.hash;
+    return (target.pathname.slice(server.basePath.length) || '/') + target.search + target.hash;
 }
 
 /** Returns an answer's headers for the browser: no headers of the server's connection, and its redirect into the server pointed here. */
@@ -425,26 +435,75 @@ function getReturnedHeaders(headers, server) {
     return returned;
 }
 
-/** Forwards a request to the server, and its answer back; a browser that goes away, as from a video it leaves, ends the server's request too. */
+/**
+ * Returns the target of a read's redirect out of the server, such as to a split tunnel's media host, which this server follows as a browser would.
+ * The browser itself could not read that origin's answer from this one, since its CORS allows the server's own web client.
+ * Null for an answer that goes to the browser: a redirect into the server, which the browser follows through this one,
+ * a navigation's redirect, a write's redirect, whose body is gone, and a redirect past the browser's limit.
+ */
+function getFollowedRedirect(request, answer, url, redirectCount, server) {
+    const { location } = answer.headers;
+    const isRead = request.method === 'GET' || request.method === 'HEAD';
+    if (!REDIRECT_STATUSES.has(answer.statusCode) || typeof location !== 'string' || !isRead
+        || request.headers['sec-fetch-mode'] === 'navigate' || redirectCount === MAXIMUM_REDIRECTS) {
+        return null;
+    }
+    let target;
+    try {
+        target = new URL(location, url);
+    } catch {
+        return null;
+    }
+    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || (redirectCount === 0 && isServerURL(target, server))) {
+        return null;
+    }
+    return target;
+}
+
+/** Returns a read's headers for a redirect's target, as a browser sends them once a request leaves its origin: without the page's credentials. */
+function getRedirectedHeaders(headers, target) {
+    const redirected = getForwardedHeaders(headers, target);
+    for (const name of CREDENTIAL_HEADERS) {
+        delete redirected[name];
+    }
+    return redirected;
+}
+
+/**
+ * Forwards a request to the server, and its answer back; a browser that goes away, as from a video it leaves, ends the server's request too.
+ * A read's redirect out of the server is followed here (getFollowedRedirect), so its target's answer comes back instead.
+ */
 function proxyRequest(request, response, server) {
-    const target = getServerURL(server, request.url);
-    const serverRequest = getClient(target).request(target, { headers: getForwardedHeaders(request.headers, target), method: request.method }, serverResponse => {
-        response.writeHead(serverResponse.statusCode, serverResponse.statusMessage, getReturnedHeaders(serverResponse.headers, server));
-        pipeline(serverResponse, response, () => undefined);
-    });
-    serverRequest.on('error', error => {
-        if (response.headersSent) {
-            response.destroy();
-            return;
-        }
-        sendText(request, response, HTTP_BAD_GATEWAY, TEXT_CONTENT_TYPE, `The Jellyfin server at ${server.origin} did not answer: ${error.message}`);
-    });
+    // The request in progress: the server's, then each redirect's
+    let outgoing = null;
+    const send = (url, headers, redirectCount) => {
+        outgoing = getClient(url).request(url, { headers, method: request.method }, answer => {
+            const redirect = getFollowedRedirect(request, answer, url, redirectCount, server);
+            if (redirect !== null) {
+                answer.resume();
+                send(redirect, getRedirectedHeaders(request.headers, redirect), redirectCount + 1).end();
+                return;
+            }
+            response.writeHead(answer.statusCode, answer.statusMessage, getReturnedHeaders(answer.headers, server));
+            pipeline(answer, response, () => undefined);
+        });
+        outgoing.on('error', error => {
+            if (response.headersSent) {
+                response.destroy();
+                return;
+            }
+            const host = redirectCount === 0 ? `The Jellyfin server at ${server.origin}` : `${url.origin}, where the Jellyfin server redirected,`;
+            sendText(request, response, HTTP_BAD_GATEWAY, TEXT_CONTENT_TYPE, `${host} did not answer: ${error.message}`);
+        });
+        return outgoing;
+    };
     response.on('close', () => {
         if (!response.writableFinished) {
-            serverRequest.destroy();
+            outgoing.destroy();
         }
     });
-    pipeline(request, serverRequest, () => undefined);
+    const target = getServerURL(server, request.url);
+    pipeline(request, send(target, getForwardedHeaders(request.headers, target), 0), () => undefined);
 }
 
 function formatResponseHead(response) {
