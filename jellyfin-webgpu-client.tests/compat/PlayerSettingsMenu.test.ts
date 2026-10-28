@@ -43,6 +43,7 @@ vi.mock('components/backdrop/backdrop', () => ({
     setBackdropTransparency: (level: string): void => {
         testState.transparencyLevels.push(level);
     },
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- the host module's export name
     TRANSPARENCY_LEVEL: { Backdrop: 'backdrop', Full: 'full', None: 'none' }
 }));
 vi.mock('components/playback/playbackmanager', () => ({ playbackManager: playbackManagerMock }));
