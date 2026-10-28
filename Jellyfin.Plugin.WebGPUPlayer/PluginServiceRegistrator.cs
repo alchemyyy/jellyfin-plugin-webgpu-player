@@ -1,4 +1,5 @@
 using System;
+using Jellyfin.Plugin.WebGPUPlayer.ClientDefaults;
 using Jellyfin.Plugin.WebGPUPlayer.Modules;
 using Jellyfin.Plugin.WebGPUPlayer.Transformations;
 using MediaBrowser.Controller;
@@ -21,9 +22,17 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHostedService<FileTransformationRegistrar>();
         serviceCollection.AddTransient<IStartupFilter, WebClientRewriteStartupFilter>();
 
-        // NOTE: The server registers services before it creates plugins, so the store opens at its first request, once the plugin knows its data folder
+        // NOTE: The server registers services before it creates plugins, so the stores open at their first request, once the plugin knows its data folder
         serviceCollection.AddSingleton(provider => ModuleStore.OpenBundled(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The WebGPU Player plugin is not created"),
+            GetDataFolderPath(),
             provider.GetRequiredService<ILogger<ModuleStore>>()));
+        serviceCollection.AddSingleton(provider => new ClientDefaultsStore(
+            GetDataFolderPath(),
+            provider.GetRequiredService<ILogger<ClientDefaultsStore>>()));
+    }
+
+    private static string GetDataFolderPath()
+    {
+        return Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The WebGPU Player plugin is not created");
     }
 }

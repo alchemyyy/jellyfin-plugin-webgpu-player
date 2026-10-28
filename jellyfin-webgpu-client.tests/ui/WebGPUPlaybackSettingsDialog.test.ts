@@ -4,10 +4,15 @@ import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 import { createHDRToSDRRenderSettings } from 'webgpu-player/presentation/RenderSettings';
 import type { PresentationPresetFile } from 'webgpu-player/presentation/WebGPUPresenter';
 import type WebGPUPlayer from 'addons/webGPUPlayer/WebGPUPlayer';
+import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
+import { ensureDefaultPresentationFiles } from 'addons/webGPUPlayer/DefaultPresentationFiles';
+import { applySettingsButtonPlacement } from 'addons/webGPUPlayer/compat/SettingsEntryPoints';
 import {
     createDefaultWebGPUUserSettings,
+    loadWebGPUUserSettings,
     MAXIMUM_PRESENTATION_FILE_COUNT,
     MAXIMUM_PRESENTATION_PASS_SOURCE_LENGTH,
+    WEBGPU_USER_SETTINGS_VERSION,
     type StoredPresentationFile,
     type WebGPUUserSettings
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
@@ -44,8 +49,12 @@ type AudioOutputSnapshotMock = {
 
 const storageMockState = vi.hoisted(() => ({
     audioDownmixAlgorithm: 'standard-lo-ro',
+    defaultAudioDownmixAlgorithm: 'standard-lo-ro',
+    // Every local setting but the panel's settings, such as the default shader files, by name
+    otherValues: new Map<string, string>(),
     // Makes local storage refuse writes, as a full quota does
     refusedWriteError: null as DOMException | null,
+    settingsKey: 'webGPUPlaybackSettings',
     value: null as string | null
 }));
 
@@ -125,24 +134,36 @@ vi.mock('lib/globalize', async () => {
 // WebGPUUserSettings persists through the host user settings, which the add-on build redirects to its shim
 vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: {
-        get: vi.fn((): string | null => storageMockState.value),
-        set: vi.fn((_name: string, value: string): void => {
+        get: vi.fn((name: string): string | null => (
+            name === storageMockState.settingsKey ? storageMockState.value : storageMockState.otherValues.get(name) ?? null
+        )),
+        set: vi.fn((name: string, value: string): void => {
             if (storageMockState.refusedWriteError) {
                 throw storageMockState.refusedWriteError;
             }
-            storageMockState.value = value;
+            if (name === storageMockState.settingsKey) {
+                storageMockState.value = value;
+            } else {
+                storageMockState.otherValues.set(name, value);
+            }
         })
     }
 }));
 
-// The dialog reads the downmix algorithm from the add-on shim directly
+// The dialog reads the downmix algorithm from the add-on shim directly; the default is the server's when it sets one
 vi.mock('addons/webGPUPlayer/shims/userSettings', () => ({
+    getDefaultAudioDownmixAlgorithm: vi.fn((): string => storageMockState.defaultAudioDownmixAlgorithm),
     webGPUAudioDownmixAlgorithm: vi.fn((value?: string): string => {
         if (value !== undefined) {
             storageMockState.audioDownmixAlgorithm = value;
         }
         return storageMockState.audioDownmixAlgorithm;
     })
+}));
+
+// The OSD places its entry to the panel as the settings say; these tests count the requests to place it anew
+vi.mock('addons/webGPUPlayer/compat/SettingsEntryPoints', () => ({
+    applySettingsButtonPlacement: vi.fn()
 }));
 
 vi.mock('elements/emby-button/emby-button', () => ({}));
@@ -367,8 +388,8 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-// One default button per setting the panel offers, HDR output, deinterlacing, and GPU decode slicing included
-const DEFAULT_SETTING_BUTTON_COUNT = 20;
+// One default button per setting the panel offers, the settings button placement, HDR output, deinterlacing, and GPU decode slicing included
+const DEFAULT_SETTING_BUTTON_COUNT = 21;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -460,9 +481,14 @@ function storePresentation(presentation: Partial<WebGPUUserSettings['presentatio
     });
 }
 
+/** Reads the settings the panel saved, over the defaults they follow. */
+function readSavedSettings(): WebGPUUserSettings {
+    return loadWebGPUUserSettings();
+}
+
 /** Reads the presentation settings the panel saved. */
 function readSavedPresentation(): WebGPUUserSettings['presentation'] {
-    return (JSON.parse(storageMockState.value ?? '{}') as WebGPUUserSettings).presentation;
+    return readSavedSettings().presentation;
 }
 
 /** Reads each file the panel lists, in order. */
@@ -484,7 +510,19 @@ function readStoredSources(): ReadonlyMap<number, unknown> {
 
 /** Returns each saved file's store key. */
 function readSavedSourceKeys(): number[] {
-    return readSavedPresentation().files.map((file: StoredPresentationFile): number => file.sourceKey);
+    return (readSavedPresentation().files ?? []).map((file: StoredPresentationFile): number => file.sourceKey);
+}
+
+/** Returns the panel's restore-default shader passes button. */
+function getRestoreDefaultPassesButton(panel: HTMLElement): HTMLButtonElement {
+    return requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsRestoreDefaultPasses');
+}
+
+/** Sets the server's default preset to the saturation file the server offers, with a parameter value, as an administrator would. */
+function setDefaultSaturationPreset(): void {
+    serverModuleMockState.catalog = { decoderPackages: [], passes: [ SERVER_SATURATION_PASS ] };
+    serverModuleMockState.passSources.set(SATURATION_PASS_FILE_NAME, SATURATION_PASS_SOURCE);
+    setClientDefaults({ presentationFiles: [ { fileName: SATURATION_PASS_FILE_NAME, parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION } } ] });
 }
 
 /** Opens the panel and lets it read the shader sources, which its pass list waits for. */
@@ -546,8 +584,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         // The suite unstubs its globals after each test
         indexedDBFake.install();
         indexedDBFake.clear();
+        storageMockState.otherValues.clear();
         storageMockState.refusedWriteError = null;
         storageMockState.audioDownmixAlgorithm = DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM;
+        storageMockState.defaultAudioDownmixAlgorithm = DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM;
         storageMockState.value = JSON.stringify({
             ...defaults,
             render: {
@@ -564,6 +604,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         document.querySelector<HTMLButtonElement>('.webgpuSettingsPanel .webgpuSettingsClose')?.click();
         await flushMicrotasks();
         vi.unstubAllGlobals();
+        setClientDefaults({});
         document.documentElement.removeAttribute('dir');
         for (const placementStyle of document.head.querySelectorAll(`[${PLACEMENT_STYLE_ATTRIBUTE}]`)) {
             placementStyle.remove();
@@ -673,14 +714,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             true
         );
 
-        const savedSettings = JSON.parse(storageMockState.value ?? '{}') as {
-            audio?: { forceStereoDownmix?: boolean }
-            render?: {
-                automaticInputPeakNits?: boolean
-                settings?: { display?: { brightness?: number } }
-            }
-        };
-        expect(savedSettings).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { forceStereoDownmix: true },
             render: {
                 automaticInputPeakNits: true,
@@ -709,19 +743,9 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ).click();
         }
 
-        const defaultedSettings = JSON.parse(storageMockState.value ?? '{}') as {
-            audio?: { forceStereoDownmix?: boolean }
-            render?: {
-                automaticInputPeakNits?: boolean
-                settings?: {
-                    display?: { brightness?: number }
-                    toneMapping?: { operator?: string }
-                }
-            }
-        };
         // Each restores the plugin's default, whatever it is, over the value the test set
         const defaultSettings = createDefaultWebGPUUserSettings();
-        expect(defaultedSettings).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { forceStereoDownmix: defaultSettings.audio.forceStereoDownmix },
             render: {
                 automaticInputPeakNits: defaultSettings.render.automaticInputPeakNits,
@@ -758,10 +782,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             updateRenderSettings: vi.fn(() => true),
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
-        type SavedPlayback = { playback?: { enableCustomDecode?: boolean, enableGPUDecodeSlicing?: boolean, enableHDRToneMapping?: boolean } };
-        const readSavedPlayback = (): SavedPlayback['playback'] => (
-            JSON.parse(storageMockState.value ?? '{}') as SavedPlayback
-        ).playback;
+        const readSavedPlayback = (): WebGPUUserSettings['playback'] => readSavedSettings().playback;
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
@@ -1301,7 +1322,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(audioStatus.textContent).toBe(
             createLayoutChangeStatus(AUDIO_OUTPUT_LAYOUT_PENDING_STATUS)
         );
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { forceStereoDownmix: true }
         });
 
@@ -1520,7 +1541,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
         outputSelect.value = 'speaker-b';
         outputSelect.dispatchEvent(new Event('change'));
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { outputDeviceId: 'speaker-b' }
         });
 
@@ -1547,7 +1568,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         audioOutputManagerMockState.requestResult = 'rotated-output';
         requirePanelElement<HTMLButtonElement>(panel, '[data-audio-output-picker]').click();
         await vi.waitFor(() => expect(
-            JSON.parse(storageMockState.value ?? '{}')
+            readSavedSettings()
         ).toMatchObject({ audio: { outputDeviceId: 'rotated-output' } }));
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
@@ -1603,7 +1624,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         resolvePicker('late-success');
         await Promise.resolve();
         await Promise.resolve();
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { outputDeviceId: 'speaker-b' }
         });
         expect(requirePanelElement<HTMLElement>(
@@ -1625,7 +1646,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         rejectPicker(new DOMException('Late denial', 'NotAllowedError'));
         await Promise.resolve();
         await Promise.resolve();
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { outputDeviceId: 'speaker-a' }
         });
         expect(requirePanelElement<HTMLElement>(
@@ -1681,7 +1702,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         resolvePicker('late-success');
         await Promise.resolve();
         await Promise.resolve();
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { outputDeviceId: null }
         });
 
@@ -1698,7 +1719,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         rejectPicker(new DOMException('Late denial', 'NotAllowedError'));
         await Promise.resolve();
         await Promise.resolve();
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { outputDeviceId: null }
         });
         expect(requirePanelElement<HTMLElement>(
@@ -1799,7 +1820,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(JSON.parse(storageMockState.value ?? '{}')).toMatchObject({
+        expect(readSavedSettings()).toMatchObject({
             audio: { outputDeviceId: null }
         });
         expect(requirePanelElement<HTMLSelectElement>(
@@ -1851,7 +1872,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
         expect(presentationMethods.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
-        expect(readSavedPresentation().files[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
+        expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
         expect(presentationStatus.textContent).toBe(translateSourceString('WebGPUShaderPassParameterApplied'));
         // The save keeps the list as it is, so the edited input keeps its focus
         expect(parameterInput.isConnected).toBe(true);
@@ -1862,7 +1883,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         });
         parameterInput.value = String(SATURATION_PARAMETER_MAXIMUM);
         parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
-        expect(readSavedPresentation().files[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: SATURATION_PARAMETER_MAXIMUM });
+        expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: SATURATION_PARAMETER_MAXIMUM });
         expect(presentationStatus.textContent)
             .toBe(translateSourceString('WebGPUShaderPassParameterPending', PARAMETER_PENDING_ERROR));
 
@@ -1894,7 +1915,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(presentationMethods.setPresentationParameter).toHaveBeenCalledTimes(1);
         expect(presentationMethods.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
-        expect(readSavedPresentation().files[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
+        expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
@@ -2000,6 +2021,65 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         await panelPromise;
     });
 
+    it('offers the settings button placements, places the button anew on a change, and restores the server\'s default placement', async () => {
+        storageMockState.value = JSON.stringify({ osd: { settingsButtonPlacement: 'after-settings' }, version: WEBGPU_USER_SETTINGS_VERSION });
+        setClientDefaults({ settingsButtonPlacement: 'settings-menu' });
+        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const placementSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="settingsButtonPlacement"]');
+        expect(Array.from(placementSelect.options, (option: HTMLOptionElement): string => option.value))
+            .toEqual([ 'before-settings', 'after-settings', 'controls-end', 'settings-menu' ]);
+        expect(Array.from(placementSelect.options, (option: HTMLOptionElement): string => option.textContent)).toEqual([
+            translateSourceString('WebGPUSettingsButtonPlacementBeforeSettings'),
+            translateSourceString('WebGPUSettingsButtonPlacementAfterSettings'),
+            translateSourceString('WebGPUSettingsButtonPlacementControlsEnd'),
+            translateSourceString('WebGPUSettingsButtonPlacementSettingsMenu')
+        ]);
+        expect(placementSelect.value).toBe('after-settings');
+        expect(applySettingsButtonPlacement).not.toHaveBeenCalled();
+
+        placementSelect.value = 'controls-end';
+        placementSelect.dispatchEvent(new Event('change'));
+        expect(readSavedSettings().osd.settingsButtonPlacement).toBe('controls-end');
+        expect(applySettingsButtonPlacement).toHaveBeenCalledTimes(1);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="settingsButtonPlacement"]').click();
+        expect(placementSelect.value).toBe('settings-menu');
+        expect(applySettingsButtonPlacement).toHaveBeenCalledTimes(2);
+        // The restored placement is not stored, so it follows the server's default from now on
+        expect(JSON.parse(storageMockState.value ?? '')).not.toHaveProperty('osd');
+        setClientDefaults({ settingsButtonPlacement: 'controls-end' });
+        expect(readSavedSettings().osd.settingsButtonPlacement).toBe('controls-end');
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('restores the server\'s default downmix algorithm alone, on an audio reset, and on a full reset', async () => {
+        storageMockState.defaultAudioDownmixAlgorithm = CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750;
+        storageMockState.audioDownmixAlgorithm = CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4;
+        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const algorithmSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
+        expect(algorithmSelect.value).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="audioDownmixAlgorithm"]').click();
+        expect(algorithmSelect.value).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750);
+        expect(storageMockState.audioDownmixAlgorithm).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750);
+        for (const resetSelector of [ '.webgpuSettingsResetAudio', '.webgpuSettingsResetAll' ]) {
+            algorithmSelect.value = CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845;
+            algorithmSelect.dispatchEvent(new Event('change'));
+            expect(storageMockState.audioDownmixAlgorithm).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845);
+
+            requirePanelElement<HTMLButtonElement>(panel, resetSelector).click();
+            expect(algorithmSelect.value).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750);
+            expect(storageMockState.audioDownmixAlgorithm).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750);
+        }
+        // A full reset also returns the settings button to its default placement
+        expect(applySettingsButtonPlacement).toHaveBeenCalledTimes(1);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
     it('saves HDR output, applies it live, and restores its default', async () => {
         const presentationMethods = createPresentationPlayerMethods();
         const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
@@ -2074,11 +2154,69 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(defaultPresentation.hdrOutput);
         expect(presentationMethods.setDeinterlaceMode).toHaveBeenLastCalledWith(defaultPresentation.deinterlaceMode);
         expect(requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="deinterlaceMode"]').value).toBe(defaultPresentation.deinterlaceMode);
-        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith(defaultPresentation.files);
+        // No default preset on the server resolves to no files
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([]);
         expect(HDROutputCheckbox.checked).toBe(defaultPresentation.hdrOutput);
         expect(readPassRows(panel)).toEqual([]);
         // The reset files' sources go with them
         expect(readStoredSources().size).toBe(0);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('hands the server\'s default files to the player on reset all, and keeps their sources', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        storePresentation({ files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ] });
+        setDefaultSaturationPreset();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ INVERT_PASS_NAME ]);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll').click();
+        await vi.waitFor(() => expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([
+            { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE }
+        ]));
+        await flushMicrotasks();
+
+        expect(readSavedPresentation().files).toBeNull();
+        expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ SATURATION_PASS_NAME ]);
+        // The user's file goes, and the default file the reset made stays
+        expect(readStoredSources()).toEqual(new Map([ [ SECOND_SOURCE_KEY, SATURATION_PASS_SOURCE ] ]));
+        expect(getRestoreDefaultPassesButton(panel).disabled).toBe(true);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('shows the server\'s default files while the user follows them, makes an edit the user\'s own preset, and restores the default', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        setDefaultSaturationPreset();
+        // The player makes sure of the default files before it opens the panel
+        const [ defaultFile ] = await ensureDefaultPresentationFiles();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-file-index="0"][data-parameter-name="${SATURATION_PARAMETER_NAME}"]`);
+        expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ SATURATION_PASS_NAME ]);
+        expect(parameterInput.value).toBe(String(STORED_SATURATION));
+        expect(getRestoreDefaultPassesButton(panel).disabled).toBe(true);
+
+        parameterInput.value = String(CHANGED_SATURATION);
+        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(readSavedPresentation().files).toEqual([ { ...defaultFile, parameters: { [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION } } ]);
+        expect(getRestoreDefaultPassesButton(panel).disabled).toBe(false);
+
+        getRestoreDefaultPassesButton(panel).click();
+        await flushMicrotasks();
+        expect(readSavedPresentation().files).toBeNull();
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([
+            { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE }
+        ]);
+        expect(requirePanelElement<HTMLInputElement>(panel, `[data-parameter-name="${SATURATION_PARAMETER_NAME}"]`).value).toBe(String(STORED_SATURATION));
+        expect(getRestoreDefaultPassesButton(panel).disabled).toBe(true);
+
+        // Removing the default file stores an empty preset of the user's own, and the default file keeps its source
+        requirePanelElement<HTMLButtonElement>(panel, '[data-remove-file="0"]').click();
+        await flushMicrotasks();
+        expect(readSavedPresentation().files).toEqual([]);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([]);
+        expect(readStoredSources()).toEqual(new Map([ [ defaultFile.sourceKey, SATURATION_PASS_SOURCE ] ]));
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
     });

@@ -1,7 +1,4 @@
-using System;
-using System.IO;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -30,8 +27,6 @@ public sealed class ModuleController(ModuleStore store) : ControllerBase
     /// The cache policy of the catalog and the files: each response revalidates, since an administrator may replace a file at any time.
     /// </summary>
     public const string RevalidateCacheControl = "private, no-cache";
-
-    private const int BodyBufferByteLength = 81920;
 
     private static readonly JsonSerializerOptions ResponseJsonOptions = new JsonSerializerOptions
     {
@@ -82,7 +77,7 @@ public sealed class ModuleController(ModuleStore store) : ControllerBase
     [RequestSizeLimit(DecoderPackageFunctions.MaximumByteLength)]
     public async Task<IActionResult> AddDecoderPackage()
     {
-        byte[]? bytes = await ReadBodyAsync(DecoderPackageFunctions.MaximumByteLength, HttpContext.RequestAborted).ConfigureAwait(false);
+        byte[]? bytes = await RequestBodyFunctions.ReadBodyAsync(Request.Body, DecoderPackageFunctions.MaximumByteLength, HttpContext.RequestAborted).ConfigureAwait(false);
         return bytes is null ? CreateTooLargeResult() : CreateChangeResult(store.AddDecoderPackage(bytes));
     }
 
@@ -151,7 +146,7 @@ public sealed class ModuleController(ModuleStore store) : ControllerBase
             return CreateChangeResult(fileNameProblem);
         }
 
-        byte[]? bytes = await ReadBodyAsync(PassFileFunctions.MaximumByteLength, HttpContext.RequestAborted).ConfigureAwait(false);
+        byte[]? bytes = await RequestBodyFunctions.ReadBodyAsync(Request.Body, PassFileFunctions.MaximumByteLength, HttpContext.RequestAborted).ConfigureAwait(false);
         return bytes is null ? CreateTooLargeResult() : CreateChangeResult(store.AddPass(fileName!, bytes));
     }
 
@@ -228,29 +223,5 @@ public sealed class ModuleController(ModuleStore store) : ControllerBase
         {
             StatusCode = StatusCodes.Status413PayloadTooLarge
         };
-    }
-
-    /// <summary>
-    /// Reads the request body, or returns <c>null</c> once it passes the limit, which hosts without a request size limit also need.
-    /// </summary>
-    private async Task<byte[]?> ReadBodyAsync(int maximumByteLength, CancellationToken cancellationToken)
-    {
-        using MemoryStream body = new MemoryStream();
-        byte[] buffer = new byte[BodyBufferByteLength];
-        while (true)
-        {
-            int readByteLength = await Request.Body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (readByteLength == 0)
-            {
-                return body.ToArray();
-            }
-
-            if (body.Length + readByteLength > maximumByteLength)
-            {
-                return null;
-            }
-
-            await body.WriteAsync(buffer.AsMemory(0, readByteLength), cancellationToken).ConfigureAwait(false);
-        }
     }
 }

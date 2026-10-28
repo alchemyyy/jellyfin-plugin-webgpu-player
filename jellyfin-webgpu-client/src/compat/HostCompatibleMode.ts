@@ -2,10 +2,11 @@ import loading from 'components/loading/loading';
 import { playbackManager } from 'components/playback/playbackmanager';
 
 import { installPlaybackManagerHooks } from './PlaybackManagerHooks';
-import { installSettingsEntryPoints, type SettingsEntryPlayer } from './SettingsEntryPoints';
+import { installPlayerSettingsMenu, type PlayerSettingsMenuPlayer } from './PlayerSettingsMenu';
+import { installSettingsEntryPoints } from './SettingsEntryPoints';
 
 /** Player members the host-compatible hooks use */
-export type HostCompatiblePlayer = SettingsEntryPlayer & {
+export type HostCompatiblePlayer = PlayerSettingsMenuPlayer & {
     cancelPendingPlayForNewRequest: () => boolean
     isRequestStartPending: () => boolean
 };
@@ -35,9 +36,10 @@ function hideLoading(): void {
     loading.hide();
 }
 
-/** Installs the PlaybackManager hooks and settings entry points once; call after the host bridge is bound. */
+/** Installs the PlaybackManager hooks, settings entry points, and player settings menu items once; call after the host bridge is bound. */
 export function installHostCompatibleMode(player: HostCompatiblePlayer): void {
     hostCompatiblePlayers.add(player);
     installPlaybackManagerHooks(playbackManager, { cancelPendingPlays, hideLoading, isRequestStartPending });
     installSettingsEntryPoints(player);
+    installPlayerSettingsMenu(player);
 }

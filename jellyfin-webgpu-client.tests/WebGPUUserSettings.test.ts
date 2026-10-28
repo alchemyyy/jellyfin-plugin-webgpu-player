@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: {
@@ -9,12 +9,14 @@ vi.mock('scripts/settings/userSettings', () => ({
 
 import { DEINTERLACE_MODES } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
+import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
 import {
     MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH,
     MAXIMUM_PRESENTATION_FILE_COUNT,
     MAXIMUM_SERVER_PASS_FILE_NAME_LENGTH,
     WEBGPU_USER_SETTINGS_STORAGE_KEY,
     WEBGPU_USER_SETTINGS_VERSION,
+    createBuiltInWebGPUUserSettings,
     createConfiguredHDRRenderSettings,
     createDefaultWebGPUUserSettings,
     loadWebGPUUserSettings,
@@ -28,8 +30,10 @@ import {
 import { INVERT_PASS_SOURCE, SATURATION_PARAMETER_NAME, STORED_SATURATION } from './presentationPassSources';
 
 const SELECTED_OUTPUT_DEVICE_ID = 'selected-output';
-// Settings of any other version are not read
-const EARLIER_SETTINGS_VERSION = WEBGPU_USER_SETTINGS_VERSION - 1;
+// The full snapshot each save stored before the settings followed the server's defaults
+const FULL_SNAPSHOT_SETTINGS_VERSION = 4;
+// Versions that store no choice of the user's: earlier ones, a later one, and none
+const UNREAD_SETTINGS_VERSIONS: readonly unknown[] = [ 3, WEBGPU_USER_SETTINGS_VERSION + 1, String(WEBGPU_USER_SETTINGS_VERSION), undefined ];
 // Stored parameter names and values that no pass parameter can have
 const BLANK_PARAMETER_NAME = ' ';
 const OVERSIZED_PARAMETER_NAME = 'p'.repeat(MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH + 1);
@@ -62,6 +66,10 @@ function createStorage(initialValue: string | null = null): WebGPUUserSettingsSt
 }
 
 describe('WebGPUUserSettings', () => {
+    afterEach(() => {
+        setClientDefaults({});
+    });
+
     it('uses independent qualified defaults for missing and malformed storage', () => {
         const first = loadWebGPUUserSettings(createStorage());
         const second = loadWebGPUUserSettings(createStorage('{bad json'));
@@ -140,7 +148,7 @@ describe('WebGPUUserSettings', () => {
         });
     });
 
-    it('round-trips a normalized versioned snapshot in local storage', () => {
+    it('stores only the settings that differ from the defaults, and reads them back over the defaults', () => {
         const storage = createStorage();
         const settings = createDefaultWebGPUUserSettings();
         const changedSettings = {
@@ -159,21 +167,112 @@ describe('WebGPUUserSettings', () => {
 
         const saved = saveWebGPUUserSettings(changedSettings, storage);
 
-        expect(storage.set).toHaveBeenCalledWith(WEBGPU_USER_SETTINGS_STORAGE_KEY, JSON.stringify(saved), false);
+        expect(storage.set).toHaveBeenCalledWith(WEBGPU_USER_SETTINGS_STORAGE_KEY, expect.any(String), false);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({
+            audio: { forceStereoDownmix: true, outputDeviceId: 'per-origin-output-id' },
+            presentation: changedSettings.presentation,
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
         expect(loadWebGPUUserSettings(storage)).toEqual(saved);
         expect(saved.presentation).toEqual(changedSettings.presentation);
     });
 
-    it('loads settings of any other version as the defaults', () => {
-        const defaults = createDefaultWebGPUUserSettings();
-        const earlierSettings = normalizeWebGPUUserSettings({
-            ...defaults,
-            audio: { ...defaults.audio, forceStereoDownmix: true, outputDeviceId: SELECTED_OUTPUT_DEVICE_ID },
-            render: { ...defaults.render, automaticInputPeakNits: false },
-            version: EARLIER_SETTINGS_VERSION
+    it('follows the server\'s default for each setting the user did not choose, and keeps the user\'s own choices', () => {
+        const storage = createStorage(JSON.stringify({
+            render: { settings: { display: { brightness: 0.75 } } },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        }));
+        const builtIn = createBuiltInWebGPUUserSettings();
+        setClientDefaults({
+            brightness: 0.5,
+            contrast: 1.25,
+            enableCustomDecode: false,
+            settingsButtonPlacement: 'controls-end',
+            toneMapOperator: 'aces'
         });
 
-        expect(earlierSettings).toEqual(defaults);
+        const settings = loadWebGPUUserSettings(storage);
+
+        expect(settings.render.settings.display).toEqual({ ...builtIn.render.settings.display, brightness: 0.75, contrast: 1.25 });
+        expect(settings.render.settings.toneMapping).toEqual({ ...builtIn.render.settings.toneMapping, operator: 'aces' });
+        expect(settings.playback).toEqual({ ...builtIn.playback, enableCustomDecode: false });
+        expect(settings.osd.settingsButtonPlacement).toBe('controls-end');
+        expect(settings.audio).toEqual(builtIn.audio);
+    });
+
+    it('reads a server default as a stored value: one out of range is clamped, and one the setting refuses leaves the built-in default', () => {
+        const builtIn = createBuiltInWebGPUUserSettings();
+        setClientDefaults({
+            brightness: 5,
+            centerLevel: 1.5,
+            deinterlaceMode: 'bob',
+            enableHDRToneMapping: 'false',
+            exposure: 'bright',
+            settingsButtonPlacement: 'top',
+            toneMapOperator: 'hable'
+        });
+
+        const defaults = createDefaultWebGPUUserSettings();
+
+        expect(defaults.render.settings.display.brightness).toBe(1);
+        expect(defaults.audio.downmix.centerLevel).toBe(1.5);
+        expect(defaults.presentation.deinterlaceMode).toBe(builtIn.presentation.deinterlaceMode);
+        expect(defaults.playback.enableHDRToneMapping).toBe(builtIn.playback.enableHDRToneMapping);
+        expect(defaults.render.settings.toneMapping.exposure).toBe(builtIn.render.settings.toneMapping.exposure);
+        expect(defaults.osd.settingsButtonPlacement).toBe('before-settings');
+        expect(defaults.render.settings.toneMapping.operator).toBe(builtIn.render.settings.toneMapping.operator);
+    });
+
+    it('drops a setting saved equal to its default, which then follows the default', () => {
+        const storage = createStorage();
+        setClientDefaults({ hdrOutput: true });
+        const defaults = createDefaultWebGPUUserSettings();
+
+        saveWebGPUUserSettings({ ...defaults, presentation: { ...defaults.presentation, hdrOutput: false } }, storage);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({
+            presentation: { hdrOutput: false },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        saveWebGPUUserSettings({ ...defaults, presentation: { ...defaults.presentation, hdrOutput: true } }, storage);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({ version: WEBGPU_USER_SETTINGS_VERSION });
+        setClientDefaults({ hdrOutput: false });
+
+        expect(loadWebGPUUserSettings(storage).presentation.hdrOutput).toBe(false);
+    });
+
+    it('reads a full snapshot of version 4 as the user\'s choices where it differs from the built-in defaults', () => {
+        const builtIn = createBuiltInWebGPUUserSettings();
+        const storage = createStorage(JSON.stringify({
+            ...builtIn,
+            audio: { ...builtIn.audio, forceStereoDownmix: true },
+            osd: undefined,
+            version: FULL_SNAPSHOT_SETTINGS_VERSION
+        }));
+        setClientDefaults({ brightness: 0.5, forceStereoDownmix: false, hdrOutput: true });
+
+        const settings = loadWebGPUUserSettings(storage);
+
+        expect(settings.version).toBe(WEBGPU_USER_SETTINGS_VERSION);
+        expect(settings.audio.forceStereoDownmix).toBe(true);
+        // The snapshot held the built-in values, which follow the server's defaults now
+        expect(settings.render.settings.display.brightness).toBe(0.5);
+        expect(settings.presentation.hdrOutput).toBe(true);
+    });
+
+    it('loads settings of any other version as the defaults', () => {
+        setClientDefaults({ brightness: 0.5 });
+        const defaults = createDefaultWebGPUUserSettings();
+
+        for (const version of UNREAD_SETTINGS_VERSIONS) {
+            const storage = createStorage(JSON.stringify({
+                ...defaults,
+                audio: { ...defaults.audio, forceStereoDownmix: true, outputDeviceId: SELECTED_OUTPUT_DEVICE_ID },
+                render: { ...defaults.render, automaticInputPeakNits: false },
+                version
+            }));
+
+            expect(loadWebGPUUserSettings(storage)).toEqual(defaults);
+        }
     });
 
     it('keeps valid stored shader files in order and drops invalid files and parameters', () => {
@@ -219,6 +318,41 @@ describe('WebGPUUserSettings', () => {
         expect(malformed.presentation).toEqual(defaults.presentation);
     });
 
+    it('follows the server\'s default shader preset until the user stores a preset of their own, even an empty one', () => {
+        const storage = createStorage();
+        const defaults = createDefaultWebGPUUserSettings();
+        expect(defaults.presentation.files).toBeNull();
+
+        saveWebGPUUserSettings({ ...defaults, presentation: { ...defaults.presentation, files: [] } }, storage);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({
+            presentation: { files: [] },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        expect(loadWebGPUUserSettings(storage).presentation.files).toEqual([]);
+
+        saveWebGPUUserSettings({ ...defaults, presentation: { ...defaults.presentation, files: null } }, storage);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({ version: WEBGPU_USER_SETTINGS_VERSION });
+        expect(loadWebGPUUserSettings(storage).presentation.files).toBeNull();
+        // A stored value that is no list of files follows the default too
+        expect(normalizeWebGPUUserSettings({
+            ...defaults,
+            presentation: { files: { parameters: {}, sourceKey: SATURATION_SOURCE_KEY } }
+        }).presentation.files).toBeNull();
+    });
+
+    it('reads an empty preset of a version 4 snapshot as following the server\'s default preset, and a preset with files as the user\'s own', () => {
+        const builtIn = createBuiltInWebGPUUserSettings();
+        const loadSnapshotFiles = (files: unknown): unknown => loadWebGPUUserSettings(createStorage(JSON.stringify({
+            ...builtIn,
+            presentation: { ...builtIn.presentation, files },
+            version: FULL_SNAPSHOT_SETTINGS_VERSION
+        }))).presentation.files;
+        const files = [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, sourceKey: SATURATION_SOURCE_KEY } ];
+
+        expect(loadSnapshotFiles([])).toBeNull();
+        expect(loadSnapshotFiles(files)).toEqual(files);
+    });
+
     it('keeps a stored file\'s server origin only when it names one server file version', () => {
         const origin = { contentHash: SERVER_CONTENT_HASH, fileName: SERVER_PASS_FILE_NAME };
         const normalized = normalizeWebGPUUserSettings({
@@ -236,9 +370,10 @@ describe('WebGPUUserSettings', () => {
             }
         });
 
-        expect(normalized.presentation.files[0]).toEqual({ parameters: {}, server: origin, sourceKey: SATURATION_SOURCE_KEY });
-        expect(normalized.presentation.files.slice(1).every((file: StoredPresentationFile): boolean => file.server === undefined)).toBe(true);
-        expect(normalized.presentation.files).toHaveLength(INVALID_SERVER_ORIGINS.length + 1);
+        const files = normalized.presentation.files ?? [];
+        expect(files[0]).toEqual({ parameters: {}, server: origin, sourceKey: SATURATION_SOURCE_KEY });
+        expect(files.slice(1).every((file: StoredPresentationFile): boolean => file.server === undefined)).toBe(true);
+        expect(files).toHaveLength(INVALID_SERVER_ORIGINS.length + 1);
     });
 
     it('caps stored shader files and their parameters at the first ones within the limits', () => {
@@ -256,10 +391,11 @@ describe('WebGPUUserSettings', () => {
             presentation: { files, hdrOutput: false }
         });
 
-        expect(normalized.presentation.files).toHaveLength(MAXIMUM_PRESENTATION_FILE_COUNT);
-        expect(normalized.presentation.files.map((file: StoredPresentationFile): number => file.sourceKey))
+        const normalizedFiles = normalized.presentation.files ?? [];
+        expect(normalizedFiles).toHaveLength(MAXIMUM_PRESENTATION_FILE_COUNT);
+        expect(normalizedFiles.map((file: StoredPresentationFile): number => file.sourceKey))
             .toEqual(files.slice(0, MAXIMUM_PRESENTATION_FILE_COUNT).map((file: StoredPresentationFile): number => file.sourceKey));
-        expect(Object.keys(normalized.presentation.files[0].parameters))
+        expect(Object.keys(normalizedFiles[0].parameters))
             .toEqual(Object.keys(parameters).slice(0, MAXIMUM_PARAMETER_COUNT));
     });
 

@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.WebGPUPlayer;
 
 /// <summary>
 /// The WebGPU Player plugin.
-/// The client add-on keeps the player's preferences per browser; the plugin's settings page manages the decoder packages and pass files the server offers, which the module store keeps in the plugin's data folder.
+/// The client add-on keeps the player's preferences per browser, over the defaults an administrator sets for every client setting; the plugin's settings page edits those defaults and manages the decoder packages and pass files the server offers, and the plugin's data folder keeps both.
 /// </summary>
 /// <remarks>
 /// The empty configuration base is still required: only it records the assembly path and version, which the server dereferences when it creates and lists plugins.

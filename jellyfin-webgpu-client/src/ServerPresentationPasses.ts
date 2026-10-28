@@ -51,7 +51,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 /** Server pass file names are one identity whatever their case, as the server plugin keys them. */
-function getServerFileKey(fileName: string): string {
+export function getServerFileKey(fileName: string): string {
     return fileName.toLowerCase();
 }
 
@@ -126,14 +126,14 @@ export async function updateServerPassFiles(
 }
 
 /**
- * Returns the stored preset's files once the server's newer versions replaced their sources, saving the new versions.
+ * Returns the user's own preset once the server's newer versions replaced their sources, saving the new versions; a user who follows the server's default preset has no files of their own.
  * A preset without server files reads no catalog, and a server that cannot be reached leaves every file as stored.
  */
 export async function loadUpdatedStoredPresentationFiles(): Promise<readonly StoredPresentationFile[]> {
     const settings = loadWebGPUUserSettings();
     const files = settings.presentation.files;
-    if (!files.some((file: StoredPresentationFile): boolean => file.server !== undefined)) {
-        return files;
+    if (files === null || !files.some((file: StoredPresentationFile): boolean => file.server !== undefined)) {
+        return files ?? [];
     }
     let catalog: ServerModuleCatalog;
     try {

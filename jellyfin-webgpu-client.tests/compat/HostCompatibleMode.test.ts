@@ -9,6 +9,7 @@ type HookCallbacks = {
 const testState = vi.hoisted(() => ({
     hide: vi.fn(),
     installHooks: vi.fn(),
+    installPlayerSettingsMenu: vi.fn(),
     installSettingsEntryPoints: vi.fn(),
     playbackManager: { name: 'playbackManager' }
 }));
@@ -21,11 +22,15 @@ vi.mock('addons/webGPUPlayer/compat/PlaybackManagerHooks', () => ({
 vi.mock('addons/webGPUPlayer/compat/SettingsEntryPoints', () => ({
     installSettingsEntryPoints: testState.installSettingsEntryPoints
 }));
+vi.mock('addons/webGPUPlayer/compat/PlayerSettingsMenu', () => ({
+    installPlayerSettingsMenu: testState.installPlayerSettingsMenu
+}));
 
 import { installHostCompatibleMode, type HostCompatiblePlayer } from 'addons/webGPUPlayer/compat/HostCompatibleMode';
 
 function createPlayer(pending: boolean, requestStartPending = true): HostCompatiblePlayer {
     return {
+        canPlayItem: () => true,
         cancelPendingPlayForNewRequest: vi.fn(() => pending),
         getSettingsMenuItems: () => [],
         isRequestStartPending: vi.fn(() => requestStartPending)

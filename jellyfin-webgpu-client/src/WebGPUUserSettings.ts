@@ -19,7 +19,17 @@ import {
     type DeinterlaceMode
 } from 'webgpu-player/presentation/DeinterlaceTimeline';
 
-export const WEBGPU_USER_SETTINGS_VERSION = 4;
+import { getClientDefaults } from './ClientDefaults';
+import {
+    DEFAULT_SETTINGS_BUTTON_PLACEMENT,
+    isSettingsButtonPlacement,
+    type SettingsButtonPlacement
+} from './SettingsButtonPlacement';
+
+// Each save stores only the settings that differ from the defaults, so the others follow the defaults the server sets
+export const WEBGPU_USER_SETTINGS_VERSION = 5;
+// The full snapshot each save stored before; its values equal to the built-in defaults are read as following the defaults
+const FULL_SNAPSHOT_SETTINGS_VERSION = 4;
 export const WEBGPU_USER_SETTINGS_STORAGE_KEY = 'webGPUPlaybackSettings';
 const MAXIMUM_AUDIO_OUTPUT_DEVICE_ID_LENGTH = 1_024;
 /** The shader files a preset holds at most. */
@@ -54,6 +64,10 @@ export type WebGPUUserSettings = Readonly<{
         forceStereoDownmix: boolean
         outputDeviceId: string | null
     }>
+    // Applies live: the video OSD places its entry to the settings panel anew
+    osd: Readonly<{
+        settingsButtonPlacement: SettingsButtonPlacement
+    }>
     // Each applies from the next playback: custom decode and HDR tone mapping shape what the player negotiates with the server,
     // and GPU decode slicing how a decoder package's GPU decoder submits its work
     playback: Readonly<{
@@ -65,7 +79,8 @@ export type WebGPUUserSettings = Readonly<{
     presentation: Readonly<{
         /** How interlaced video presents: a frame per field, a frame per frame, or woven frames as decoded */
         deinterlaceMode: DeinterlaceMode
-        files: readonly StoredPresentationFile[]
+        /** The user's own shader preset; null follows the server's default preset */
+        files: readonly StoredPresentationFile[] | null
         hdrOutput: boolean
     }>
     render: Readonly<{
@@ -134,7 +149,7 @@ export function isPresentationPassSourceKey(value: unknown): value is number {
 }
 
 /** Keeps a pass's finite parameter values under nonblank names, up to the parameters a pass declares at most. */
-function normalizePresentationParameters(value: unknown): Readonly<Record<string, number>> {
+export function normalizePresentationParameters(value: unknown): Readonly<Record<string, number>> {
     const parameterEntries: Array<[string, number]> = [];
     if (!isRecord(value)) {
         return Object.fromEntries(parameterEntries);
@@ -168,7 +183,7 @@ function normalizePresentationFileOrigin(value: unknown): StoredPresentationFile
 }
 
 /** Keeps the stored files with a valid source key, in order, up to the files a preset holds at most; an origin that names no server file version is dropped. */
-function normalizePresentationFiles(value: unknown): StoredPresentationFile[] {
+export function normalizePresentationFiles(value: unknown): StoredPresentationFile[] {
     const files: StoredPresentationFile[] = [];
     if (!Array.isArray(value)) {
         return files;
@@ -200,13 +215,16 @@ function normalizeToneMapOperator(value: unknown, fallback: ToneMapOperator): To
     }
 }
 
-/** Returns independent plugin defaults backed by renderer and downmix defaults. */
-export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
+/** Returns the add-on's own defaults, independent objects backed by renderer and downmix defaults. */
+export function createBuiltInWebGPUUserSettings(): WebGPUUserSettings {
     return {
         audio: {
             downmix: createDefaultAudioDownmixSettings(),
             forceStereoDownmix: false,
             outputDeviceId: null
+        },
+        osd: {
+            settingsButtonPlacement: DEFAULT_SETTINGS_BUTTON_PLACEMENT
         },
         playback: {
             enableCustomDecode: true,
@@ -215,7 +233,7 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
         },
         presentation: {
             deinterlaceMode: DEFAULT_DEINTERLACE_MODE,
-            files: [],
+            files: null,
             hdrOutput: false
         },
         render: {
@@ -226,14 +244,65 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
     };
 }
 
-/** Normalizes persisted input through the same ranges consumed by renderer validation. */
+/**
+ * Returns the defaults the user's settings follow: the built-in defaults, each overlaid with the server's default for it.
+ * A server default is read as a stored value is, so one the setting refuses leaves the built-in default.
+ */
+export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
+    const serverDefaults = getClientDefaults();
+    return normalizeSettingsOver({
+        audio: {
+            downmix: {
+                centerLevel: serverDefaults.centerLevel,
+                outputGain: serverDefaults.outputGain,
+                surroundLevel: serverDefaults.surroundLevel
+            },
+            forceStereoDownmix: serverDefaults.forceStereoDownmix
+        },
+        osd: {
+            settingsButtonPlacement: serverDefaults.settingsButtonPlacement
+        },
+        playback: {
+            enableCustomDecode: serverDefaults.enableCustomDecode,
+            enableGPUDecodeSlicing: serverDefaults.enableGPUDecodeSlicing,
+            enableHDRToneMapping: serverDefaults.enableHDRToneMapping
+        },
+        presentation: {
+            deinterlaceMode: serverDefaults.deinterlaceMode,
+            hdrOutput: serverDefaults.hdrOutput
+        },
+        render: {
+            automaticInputPeakNits: serverDefaults.automaticInputPeakNits,
+            settings: {
+                display: {
+                    brightness: serverDefaults.brightness,
+                    contrast: serverDefaults.contrast,
+                    saturation: serverDefaults.saturation
+                },
+                toneMapping: {
+                    desaturationStrength: serverDefaults.desaturationStrength,
+                    exposure: serverDefaults.exposure,
+                    inputPeakNits: serverDefaults.inputPeakNits,
+                    operator: serverDefaults.toneMapOperator,
+                    outputPeakNits: serverDefaults.outputPeakNits,
+                    paperWhiteNits: serverDefaults.paperWhiteNits
+                }
+            }
+        }
+    }, createBuiltInWebGPUUserSettings());
+}
+
+/** Normalizes the current version's settings through the same ranges consumed by renderer validation; another version is not read. */
 export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings {
     const defaults = createDefaultWebGPUUserSettings();
-    // Settings of any other version are not read
     if (!isRecord(value) || value.version !== WEBGPU_USER_SETTINGS_VERSION) {
         return defaults;
     }
+    return normalizeSettingsOver(value, defaults);
+}
 
+/** Reads each setting a value holds, a missing or refused one taking the given default. */
+function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUUserSettings): WebGPUUserSettings {
     const render = getRecord(value, 'render');
     const persistedRenderSettings = getRecord(render, 'settings');
     const display = getRecord(persistedRenderSettings, 'display');
@@ -303,6 +372,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
     const audio = getRecord(value, 'audio');
     const downmix = getRecord(audio, 'downmix');
     const defaultDownmix = defaults.audio.downmix;
+    const osd = getRecord(value, 'osd');
     const playback = getRecord(value, 'playback');
     const presentation = getRecord(value, 'presentation');
     return {
@@ -334,6 +404,11 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
             ),
             outputDeviceId: normalizeAudioOutputDeviceId(audio.outputDeviceId)
         },
+        osd: {
+            settingsButtonPlacement: isSettingsButtonPlacement(osd.settingsButtonPlacement) ?
+                osd.settingsButtonPlacement :
+                defaults.osd.settingsButtonPlacement
+        },
         playback: {
             enableCustomDecode: normalizeBoolean(
                 playback.enableCustomDecode,
@@ -351,7 +426,7 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
         presentation: {
             deinterlaceMode: DEINTERLACE_MODES.find((mode: DeinterlaceMode): boolean => mode === presentation.deinterlaceMode)
                 ?? defaults.presentation.deinterlaceMode,
-            files: normalizePresentationFiles(presentation.files),
+            files: Array.isArray(presentation.files) ? normalizePresentationFiles(presentation.files) : defaults.presentation.files,
             hdrOutput: normalizeBoolean(presentation.hdrOutput, defaults.presentation.hdrOutput)
         },
         render: {
@@ -365,20 +440,64 @@ export function normalizeWebGPUUserSettings(value: unknown): WebGPUUserSettings 
     };
 }
 
-/** Loads local player settings without adding server-side profile state. */
+/** Returns the leaves of settings that differ from the defaults, nested as in the settings; an array is one leaf. */
+function getChangedSettings(settings: Record<string, unknown>, defaults: Record<string, unknown>): Record<string, unknown> {
+    const changedSettings: Record<string, unknown> = {};
+    for (const [ key, value ] of Object.entries(settings)) {
+        const defaultValue = defaults[key];
+        if (isRecord(value) && isRecord(defaultValue)) {
+            const changedChild = getChangedSettings(value, defaultValue);
+            if (Object.keys(changedChild).length > 0) {
+                changedSettings[key] = changedChild;
+            }
+        } else if (Array.isArray(value) ? JSON.stringify(value) !== JSON.stringify(defaultValue) : value !== defaultValue) {
+            changedSettings[key] = value;
+        }
+    }
+    return changedSettings;
+}
+
+/** Reads stored settings over the current defaults; a version that stores no choice of the user's reads as the defaults. */
+function readStoredSettings(value: unknown): WebGPUUserSettings {
+    if (!isRecord(value)) {
+        return createDefaultWebGPUUserSettings();
+    }
+    switch (value.version) {
+        case WEBGPU_USER_SETTINGS_VERSION:
+            return normalizeSettingsOver(value, createDefaultWebGPUUserSettings());
+        case FULL_SNAPSHOT_SETTINGS_VERSION: {
+            // A snapshot held every setting, so only its values that differ from the built-in defaults were the user's own choices
+            const builtInSettings = createBuiltInWebGPUUserSettings();
+            const snapshot = normalizeSettingsOver(value, builtInSettings);
+            // Its empty preset was the default then, so it follows the server's default preset now
+            const files = snapshot.presentation.files?.length === 0 ? null : snapshot.presentation.files;
+            return normalizeSettingsOver(
+                getChangedSettings({ ...snapshot, presentation: { ...snapshot.presentation, files } }, builtInSettings),
+                createDefaultWebGPUUserSettings()
+            );
+        }
+        default:
+            return createDefaultWebGPUUserSettings();
+    }
+}
+
+/** Loads local player settings: the user's own choices over the defaults. */
 export function loadWebGPUUserSettings(storage: WebGPUUserSettingsStorage = currentSettings): WebGPUUserSettings {
     try {
         const serializedSettings = storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY, false);
         if (!serializedSettings) {
             return createDefaultWebGPUUserSettings();
         }
-        return normalizeWebGPUUserSettings(JSON.parse(serializedSettings));
+        return readStoredSettings(JSON.parse(serializedSettings));
     } catch {
         return createDefaultWebGPUUserSettings();
     }
 }
 
-/** Persists a normalized local snapshot and returns that detached snapshot. */
+/**
+ * Persists only the settings that differ from the current defaults, so the others keep following the defaults, and returns the normalized settings.
+ * A setting equal to its default at save time follows the default from then on.
+ */
 export function saveWebGPUUserSettings(
     settings: WebGPUUserSettings,
     storage: WebGPUUserSettingsStorage = currentSettings
@@ -386,7 +505,10 @@ export function saveWebGPUUserSettings(
     const normalizedSettings = normalizeWebGPUUserSettings(settings);
     storage.set(
         WEBGPU_USER_SETTINGS_STORAGE_KEY,
-        JSON.stringify(normalizedSettings),
+        JSON.stringify({
+            version: WEBGPU_USER_SETTINGS_VERSION,
+            ...getChangedSettings(normalizedSettings, createDefaultWebGPUUserSettings())
+        }),
         false
     );
     return normalizedSettings;

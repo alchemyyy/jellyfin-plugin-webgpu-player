@@ -11,7 +11,8 @@ import {
 } from 'webgpu-player/presentation/RenderSettings';
 import {
     createConfiguredHDRRenderSettings,
-    createDefaultWebGPUUserSettings
+    createDefaultWebGPUUserSettings,
+    type StoredPresentationFile
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
 import { createDefaultAudioDownmixSettings } from 'webgpu-player/audio/processing/CustomAudioDownmix';
 import type {
@@ -105,6 +106,14 @@ const userSettingsMockState = vi.hoisted(() => ({
     audioDownmixAlgorithm: 'standard-lo-ro',
     audioNormalizationMode: 'TrackGain',
     webGPUPlaybackSettings: null as string | null
+}));
+// The read of the server's defaults the player waits for before it reads the settings
+const clientDefaultsMockState = vi.hoisted(() => ({
+    settled: Promise.resolve() as Promise<void>
+}));
+// The server's default shader files the player makes sure of before it opens the panel, and which a user who follows them plays with
+const defaultPresentationFilesMockState = vi.hoisted(() => ({
+    files: Promise.resolve([]) as Promise<readonly StoredPresentationFile[]>
 }));
 const customDecodeMockState = vi.hoisted(() => ({
     audioEligibilityOverride: null as ((
@@ -213,6 +222,19 @@ vi.mock('scripts/settings/userSettings', () => ({
 vi.mock('addons/webGPUPlayer/shims/userSettings', () => ({
     selectAudioNormalization: vi.fn(() => userSettingsMockState.audioNormalizationMode),
     webGPUAudioDownmixAlgorithm: vi.fn(() => userSettingsMockState.audioDownmixAlgorithm)
+}));
+
+vi.mock('addons/webGPUPlayer/ServerClientDefaults', () => ({
+    whenClientDefaultsSettled: vi.fn(() => clientDefaultsMockState.settled)
+}));
+
+vi.mock('addons/webGPUPlayer/DefaultPresentationFiles', () => ({
+    ensureDefaultPresentationFiles: vi.fn(() => defaultPresentationFilesMockState.files)
+}));
+
+// The settings panel is covered by its own suite; the player only opens it
+vi.mock('addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog', () => ({
+    toggleWebGPUPlaybackSettingsPanel: vi.fn(() => Promise.resolve())
 }));
 
 vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOriginal => {
@@ -908,6 +930,9 @@ import { CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS } from 'webgpu-p
 import WebGPUPlayer, {
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
+import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
+import { ensureDefaultPresentationFiles } from 'addons/webGPUPlayer/DefaultPresentationFiles';
+import { toggleWebGPUPlaybackSettingsPanel } from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
 import { getCustomPlaybackEligibility } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import { createGPUVideoDecodeSessionFactory } from 'webgpu-player/presentation/PresentationSetup';
 import {
@@ -1661,6 +1686,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         playbackPreferencesMockState.customDecodeEnabledPromises.length = 0;
         playbackPreferencesMockState.hdrToneMappingEnabled = false;
         playbackPreferencesMockState.refreshWebGPUPlaybackPreferences.mockReset();
+        clientDefaultsMockState.settled = Promise.resolve();
+        defaultPresentationFilesMockState.files = Promise.resolve([]);
         playbackPreferencesMockState.storedCustomDecodeEnabled = null;
         userSettingsMockState.audioNormalizationMode = 'TrackGain';
         userSettingsMockState.audioDownmixAlgorithm = 'standard-lo-ro';
@@ -1786,6 +1813,54 @@ describe('WebGPUPlayer HTML delegation', () => {
             await player.setDeinterlaceMode(liveMode);
         }
         expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ storedMode ], ...liveModes.map(mode => [ mode ]) ]);
+    });
+
+    it('applies the presentation settings again when the server\'s defaults change, unless the user chose them, also between sessions', () => {
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({
+            presentation: { deinterlaceMode: 'single-rate' },
+            version: createDefaultWebGPUUserSettings().version
+        });
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        // The presenter keeps its settings for the player's next session
+        player.destroy();
+        presenter.setHDROutputEnabled.mockClear();
+        presenter.setDeinterlaceMode.mockClear();
+
+        try {
+            setClientDefaults({ deinterlaceMode: 'off', hdrOutput: true });
+
+            expect(presenter.setHDROutputEnabled.mock.calls).toEqual([ [ true ] ]);
+            expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ 'single-rate' ] ]);
+        } finally {
+            setClientDefaults({});
+        }
+    });
+
+    it('loads the server\'s default shader files again when its default preset changes, for a user who follows it', async () => {
+        indexedDBFake.clear();
+        const saturationFile = { parameters: {}, sourceKey: await addPassSource(SATURATION_PASS_SOURCE) };
+        const invertFile = { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) };
+        defaultPresentationFilesMockState.files = Promise.resolve([ saturationFile ]);
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+
+        await player.play(createKnownSDRPlayOptions());
+        await vi.waitFor(() => expect(presenter.setPresentationPreset).toHaveBeenCalledWith([ { parameters: {}, source: SATURATION_PASS_SOURCE } ]));
+        defaultPresentationFilesMockState.files = Promise.resolve([ invertFile ]);
+
+        try {
+            // Another default leaves the shader files as they are
+            setClientDefaults({ brightness: 0.5 });
+            await waitForMacrotask();
+            expect(presenter.setPresentationPreset).toHaveBeenCalledTimes(1);
+
+            setClientDefaults({ brightness: 0.5, presentationFiles: [ { fileName: 'invert.wgsl' } ] });
+            await vi.waitFor(() => expect(presenter.setPresentationPreset).toHaveBeenLastCalledWith([ { parameters: {}, source: INVERT_PASS_SOURCE } ]));
+            expect(presenter.setPresentationPreset).toHaveBeenCalledTimes(2);
+        } finally {
+            setClientDefaults({});
+        }
     });
 
     it('lets a preset the settings panel applies before the stored one loads stand', async () => {
@@ -1945,6 +2020,27 @@ describe('WebGPUPlayer HTML delegation', () => {
             onSelect: expect.any(Function)
         }) ]);
         expect(player.getSettingsMenuItems()[0]).not.toHaveProperty('secondaryText');
+    });
+
+    it('opens the settings panel once the server\'s defaults and the default shader files they resolve to settle', async () => {
+        const player = new WebGPUPlayer();
+        const settled = createDeferred<void>();
+        const defaultFiles = createDeferred<readonly StoredPresentationFile[]>();
+        clientDefaultsMockState.settled = settled.promise;
+        defaultPresentationFilesMockState.files = defaultFiles.promise;
+
+        const selection = player.getSettingsMenuItems()[0].onSelect();
+        await vi.dynamicImportSettled();
+        // The default files resolve from the server's latest defaults
+        expect(ensureDefaultPresentationFiles).not.toHaveBeenCalled();
+        settled.resolve();
+        await waitForMacrotask();
+        expect(ensureDefaultPresentationFiles).toHaveBeenCalledOnce();
+        expect(toggleWebGPUPlaybackSettingsPanel).not.toHaveBeenCalled();
+        defaultFiles.resolve([]);
+        await selection;
+
+        expect(toggleWebGPUPlaybackSettingsPanel).toHaveBeenCalledWith(player);
     });
 
     it('keeps exact VC-1 video available while later checks own audio and subtitles', () => {
@@ -2191,6 +2287,20 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         await player.getDeviceProfile(item, { isRetry: false });
         expect(playbackPreferencesMockState.refreshWebGPUPlaybackPreferences).toHaveBeenCalledTimes(2);
+    });
+
+    it('adopts the stored playback preferences of a new negotiation once the read of the server\'s defaults settles', async () => {
+        const player = new WebGPUPlayer();
+        const settled = createDeferred<void>();
+        clientDefaultsMockState.settled = settled.promise;
+
+        const profilePromise = player.getDeviceProfile({ Id: 'item' }, { isRetry: false });
+        await waitForMacrotask();
+        expect(playbackPreferencesMockState.refreshWebGPUPlaybackPreferences).not.toHaveBeenCalled();
+        settled.resolve();
+        await profilePromise;
+
+        expect(playbackPreferencesMockState.refreshWebGPUPlaybackPreferences).toHaveBeenCalledTimes(1);
     });
 
     it('advertises locked ASS, PGS, and VobSub renderers without the HTML PGS profile flag', async () => {
