@@ -22,6 +22,7 @@ import {
     getSupportedCustomAudioInputChannelCounts,
     isCustomMediabunnyPCMAudioCodec
 } from 'webgpu-player/audio/CustomAudioOutputPolicy';
+import { CUSTOM_SEVEN_POINT_ONE_INPUT_CHANNEL_COUNT } from 'webgpu-player/audio/processing/CustomAudioChannelLayout';
 import {
     CUSTOM_CONTAINER_CODEC_RULES,
     CUSTOM_PROFILE_VIDEO_CONTAINERS,
@@ -61,6 +62,13 @@ import {
     AV1_RAW_FORMAT_VARIANTS,
     type AV1RawFormatVariant
 } from 'webgpu-player/capability/AV1RawFormatCapabilities';
+import {
+    getH264RawFormatProfileVariants,
+    H264_RAW_FORMAT_PROBE_DEFINITIONS,
+    H264_RAW_FORMAT_PROFILES,
+    type H264RawFormatProfile,
+    type H264RawFormatVariant
+} from 'webgpu-player/capability/H264RawFormatCapabilities';
 import {
     hasEligibleCustomVideoRoute,
     presentsInterlacedVideo,
@@ -964,12 +972,15 @@ function getSupportedRawHDRVideoCodecs(capabilities: CustomDecodeCapabilities): 
     return supportedCodecs;
 }
 
-/** Returns the raw-plane codecs with an authorized raw route: HDR, Dolby Vision, or 10-bit SDR. */
+// H.264 takes raw planes only for its raw format variants, never for the shared raw HDR route
+const RAW_ROUTE_VIDEO_CODECS: readonly CustomVideoCodec[] = [ ...CUSTOM_RAW_HDR_VIDEO_CODECS, 'h264' ];
+
+/** Returns the raw-plane codecs with an authorized raw route: HDR, Dolby Vision, 10-bit SDR, or a raw format variant. */
 function getRawRouteVideoCodecs(
     capabilities: CustomDecodeCapabilities,
     options: MeasuredVideoRouteOptions
 ): CustomVideoCodec[] {
-    return CUSTOM_RAW_HDR_VIDEO_CODECS.filter((codec: CustomVideoCodec): boolean => (
+    return RAW_ROUTE_VIDEO_CODECS.filter((codec: CustomVideoCodec): boolean => (
         getRawMeasuredVideoRoutes(codec, capabilities, options).length > 0
     ));
 }
@@ -2012,7 +2023,72 @@ function createAV1RawFormatMeasuredVideoRoutes(
     return routes;
 }
 
-/** Returns a codec's raw-plane routes: HDR with Dolby Vision, then 10-bit SDR, then AV1's raw format variants. */
+/** Returns whether an H.264 raw format variant decoded and copied its exact format, as the runtime requires. */
+function isQualifiedH264RawFormatVariant(capabilities: CustomDecodeCapabilities, variant: H264RawFormatVariant): boolean {
+    const capability = capabilities.h264RawFormats?.[variant];
+    const definition = H264_RAW_FORMAT_PROBE_DEFINITIONS[variant];
+    return capability?.status === 'supported'
+        && capability.format === definition.format
+        && capability.bitDepth === definition.bitDepth;
+}
+
+/**
+ * A profile name hides chroma format from negotiation, as generic Rext does, so every format the profile codes at a depth must decode and present.
+ * 8-bit 4:2:0 is no variant: the runtime refuses it under these profiles, so a depth without variants is never advertised.
+ */
+function hasCompleteH264RawFormatEnvelope(
+    capabilities: CustomDecodeCapabilities,
+    profile: H264RawFormatProfile,
+    bitDepth: number,
+    transfer: ColorTransfer,
+    routeKeys: readonly RawHDRAuthorizationRouteKey[]
+): boolean {
+    const variants = getH264RawFormatProfileVariants(profile, bitDepth);
+    return variants.length > 0 && variants.every((variant: H264RawFormatVariant): boolean => (
+        isQualifiedH264RawFormatVariant(capabilities, variant)
+        && isRawFormatPresentationAuthorized(H264_RAW_FORMAT_PROBE_DEFINITIONS[variant].format, transfer, routeKeys)
+    ));
+}
+
+const H264_RAW_FORMAT_BIT_DEPTHS = [ 8, 10 ] as const;
+
+/**
+ * Returns exact routes of the H.264 profiles beyond High, under Jellyfin's lowercase H.264 profile names; unauthorized pairs of an advertised profile become rejection rules.
+ * SDR takes both depths, and HDR10 with HDR10+ or HLG only 10 bits.
+ */
+function createH264RawFormatMeasuredVideoRoutes(
+    capabilities: CustomDecodeCapabilities,
+    routeKeys: readonly RawHDRAuthorizationRouteKey[]
+): MeasuredVideoRoute[] {
+    const routes: MeasuredVideoRoute[] = [];
+    for (const profile of H264_RAW_FORMAT_PROFILES) {
+        const profileRoutes = HEVC_RANGE_EXTENSION_RANGE_TYPES.map(
+            (rangeType: HEVCRangeExtensionRangeType): MeasuredVideoRoute => (
+                createExactMeasuredVideoRoute(
+                    'h264',
+                    profile.name.toLowerCase(),
+                    rangeType,
+                    H264_RAW_FORMAT_BIT_DEPTHS.filter((bitDepth: number): boolean => (
+                        (rangeType === 'SDR' || bitDepth === 10)
+                        && hasCompleteH264RawFormatEnvelope(
+                            capabilities,
+                            profile,
+                            bitDepth,
+                            getRangeExtensionTransfer(rangeType),
+                            routeKeys
+                        )
+                    ))
+                )
+            )
+        );
+        if (profileRoutes.some(hasAuthorizedRouteBitDepth)) {
+            routes.push(...profileRoutes);
+        }
+    }
+    return routes;
+}
+
+/** Returns a codec's raw-plane routes: HDR with Dolby Vision, then 10-bit SDR, then AV1's and H.264's raw format variants. */
 function getRawMeasuredVideoRoutes(
     codec: CustomVideoCodec,
     capabilities: CustomDecodeCapabilities,
@@ -2037,6 +2113,9 @@ function getRawMeasuredVideoRoutes(
     }
     if (codec === 'av1') {
         routes.push(...createAV1RawFormatMeasuredVideoRoutes(capabilities, options));
+    }
+    if (codec === 'h264') {
+        routes.push(...createH264RawFormatMeasuredVideoRoutes(capabilities, options.rawAuthorizationRouteKeys));
     }
     return routes;
 }
@@ -2276,7 +2355,7 @@ function createRawCodecProfilePlans(
     options: MeasuredVideoRouteOptions
 ): Map<CustomVideoCodec, AuthorizedCodecProfilePlan> {
     const plans = new Map<CustomVideoCodec, AuthorizedCodecProfilePlan>();
-    for (const codec of CUSTOM_RAW_HDR_VIDEO_CODECS) {
+    for (const codec of RAW_ROUTE_VIDEO_CODECS) {
         if (
             codec === 'hevc'
             || (getRawMeasuredVideoRoutes(codec, capabilities, options).length === 0
@@ -3192,14 +3271,18 @@ function getDecodedAudioCodecs(capabilities: CustomDecodeCapabilities, packageAu
     return decodedAudioCodecs;
 }
 
-function hasQualifiedDecodedSurroundRoute(
+/**
+ * Returns the source channel counts a codec's decoded PCM route advertises.
+ * A WebCodecs surround codec advertises 3 and 6 channels only with its 5.1 verdict, and 8 only with its 7.1 verdict.
+ */
+function getDecodedAudioRouteChannelCounts(
     codec: CustomAudioCodec,
     capabilities: CustomDecodeCapabilities,
     packageAudioCodecs: readonly CustomAudioCodec[]
-): boolean {
+): readonly number[] {
     // A package reports its decoded layout, so every layout the codec's decoded PCM path presents is a route, as eligibility checks it
     if (isCustomMediabunnyPCMAudioCodec(codec) || isPackageDecodedAudioCodec(codec, capabilities, packageAudioCodecs)) {
-        return true;
+        return getSupportedCustomAudioInputChannelCounts(codec);
     }
     switch (codec) {
         case 'ac3':
@@ -3207,20 +3290,32 @@ function hasQualifiedDecodedSurroundRoute(
         case 'eac3':
         case 'mlp':
         case 'truehd':
+        case 'wmalossless':
+        case 'wmapro':
+        case 'wmav1':
+        case 'wmav2':
+        case 'wmavoice':
             // No engine decoder decodes these to PCM
-            return false;
+            return CUSTOM_NON_SURROUND_INPUT_CHANNEL_COUNTS;
         case 'aac':
         case 'flac':
         case 'opus':
         case 'vorbis': {
-            const surroundCapability: CustomNativeSurroundAudioCodecCapability | undefined =
-                capabilities.nativeSurroundAudio?.[codec];
-            return surroundCapability?.status === 'supported'
-                && surroundCapability.inputChannelCount
-                    === CUSTOM_SURROUND_INPUT_CHANNEL_COUNT;
+            const fivePointOne: CustomNativeSurroundAudioCodecCapability | undefined = capabilities.nativeSurroundAudio?.[codec];
+            const sevenPointOne: CustomNativeSurroundAudioCodecCapability | undefined = capabilities.nativeSevenPointOneAudio?.[codec];
+            const fivePointOneSupported = fivePointOne?.status === 'supported'
+                && fivePointOne.inputChannelCount === CUSTOM_SURROUND_INPUT_CHANNEL_COUNT;
+            const sevenPointOneSupported = sevenPointOne?.status === 'supported'
+                && sevenPointOne.inputChannelCount === CUSTOM_SEVEN_POINT_ONE_INPUT_CHANNEL_COUNT;
+            return getSupportedCustomAudioInputChannelCounts(codec).filter((channelCount: number): boolean => {
+                if (channelCount === CUSTOM_SEVEN_POINT_ONE_INPUT_CHANNEL_COUNT) {
+                    return sevenPointOneSupported;
+                }
+                return fivePointOneSupported || CUSTOM_NON_SURROUND_INPUT_CHANNEL_COUNTS.includes(channelCount);
+            });
         }
         case 'mp3':
-            return false;
+            return CUSTOM_NON_SURROUND_INPUT_CHANNEL_COUNTS;
     }
 }
 
@@ -3247,9 +3342,7 @@ function appendMeasuredAudioRouteProfiles(
         if (codec === 'dts' || codec === 'mlp' || codec === 'truehd') {
             continue;
         }
-        const channelCounts = hasQualifiedDecodedSurroundRoute(codec, capabilities, packageAudioCodecs) ?
-            getSupportedCustomAudioInputChannelCounts(codec) :
-            CUSTOM_NON_SURROUND_INPUT_CHANNEL_COUNTS;
+        const channelCounts = getDecodedAudioRouteChannelCounts(codec, capabilities, packageAudioCodecs);
         const routeKey = channelCounts.join(',');
         let routeGroup = decodedAudioRouteGroups.get(routeKey);
         if (!routeGroup) {

@@ -12,7 +12,8 @@ import {
 import {
     createConfiguredHDRRenderSettings,
     createDefaultWebGPUUserSettings,
-    type StoredPresentationFile
+    type StoredPresentationFile,
+    type WebGPUUserSettings
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
 import { createDefaultAudioDownmixSettings } from 'webgpu-player/audio/processing/CustomAudioDownmix';
 import type {
@@ -45,12 +46,20 @@ const NO_FRAME_LOOKAHEAD_MICROSECONDS = vi.hoisted((): number => 0);
 const VIDEO_ROUTE_REFUSAL_REASON = vi.hoisted((): string => 'codec-unsupported');
 // The audio decoder package a track switch passes when the eligibility selected none
 const NO_AUDIO_DECODER_SELECTION = undefined;
+// A track switch's object rendering when the eligibility selected no package that renders objects
+const NO_OBJECT_RENDERING = false;
+// A track switch's binaural choice for decoded audio when the user left binaural rendering off
+const BINAURAL_OFF = false;
+// The audio output choices the settings panel applies: forced stereo, and the automatic speaker layout, both without binaural rendering
+const FORCED_STEREO_OUTPUT = { binauralHeadphones: false, forceStereoDownmix: true, speakerLayout: 'auto' } as const;
+const AUTOMATIC_OUTPUT = { binauralHeadphones: false, forceStereoDownmix: false, speakerLayout: 'auto' } as const;
 // The declared fields a color pipeline configuration carries for the 2160p progressive Dolby Vision streams;
 // a stream that declares no size or scan carries UNKNOWN_VIDEO_STREAM_FIELDS
 const PROGRESSIVE_UHD_VIDEO_FIELDS: VideoStreamFields = { frameHeight: 2_160, frameWidth: 3_840, scan: 'progressive' };
 
 type MockAudioEligibilityOverride = {
     audioOutputMode?: 'native-media'
+    audioRendersObjects?: true
     audioSourceChannelCount?: number
     audioTrackIndex?: number
     eligible: boolean
@@ -59,6 +68,7 @@ type MockAudioEligibilityOverride = {
 
 type MockEligibilityOptions = {
     audioDecoders?: readonly object[]
+    audioRenderTarget?: CustomAudioRenderTarget
     gpuVideoDecoders?: ReadonlyArray<{ decoderId: string, package: object }>
     allowDolbyVision?: boolean
     allowDolbyVisionProfile7?: boolean
@@ -87,6 +97,11 @@ const presentationTimingMockState = vi.hoisted(() => ({
     lateFrameCount: 4,
     staleFrameCount: 2,
     worstFrameLagMicroseconds: 100_400
+}));
+// The decoded audio the mocked controller reports, which the stats overlay shows once known
+const audioTelemetryMockState = vi.hoisted(() => ({
+    decodedAudioObjectCount: null as number | null,
+    decodedAudioOutputLayout: null as string | null
 }));
 const presenterMockState = vi.hoisted(() => ({
     authorizedExternalHDRRouteKeys: [] as string[],
@@ -313,6 +328,7 @@ vi.mock('webgpu-player/capability/CustomPlaybackEligibility', async importOrigin
                     ?? (customDecodeMockState.audioTrackIndex === null ?
                         null :
                         customDecodeMockState.audioOutputMode),
+                audioRendersObjects: audioEligibilityOverride?.audioRendersObjects,
                 audioSourceChannelCount: audioEligibilityOverride?.audioSourceChannelCount
                     ?? customDecodeMockState.audioSourceChannelCount,
                 audioTrackIndex: audioEligibilityOverride?.audioTrackIndex
@@ -619,6 +635,8 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
             videoDecode: {
                 activeGeneration: null,
                 audioCodec: null,
+                decodedAudioObjectCount: audioTelemetryMockState.decodedAudioObjectCount,
+                decodedAudioOutputLayout: audioTelemetryMockState.decodedAudioOutputLayout,
                 droppedFrameCount: presentationTimingMockState.droppedFrameCount,
                 failureKind: null,
                 firstFrameMediaTimeMicroseconds: null,
@@ -931,9 +949,10 @@ import WebGPUPlayer, {
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
 import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
+import { loadServerAudioDecoderPackages } from 'addons/webGPUPlayer/ServerModules';
 import { ensureDefaultPresentationFiles } from 'addons/webGPUPlayer/DefaultPresentationFiles';
 import { toggleWebGPUPlaybackSettingsPanel } from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
-import { getCustomPlaybackEligibility } from 'webgpu-player/capability/CustomPlaybackEligibility';
+import { getCustomPlaybackEligibility, type CustomAudioRenderTarget } from 'webgpu-player/capability/CustomPlaybackEligibility';
 import { createGPUVideoDecodeSessionFactory } from 'webgpu-player/presentation/PresentationSetup';
 import {
     CUSTOM_DECODE_AUDIO_PROBES,
@@ -1692,6 +1711,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         userSettingsMockState.audioNormalizationMode = 'TrackGain';
         userSettingsMockState.audioDownmixAlgorithm = 'standard-lo-ro';
         userSettingsMockState.webGPUPlaybackSettings = null;
+        audioTelemetryMockState.decodedAudioObjectCount = null;
+        audioTelemetryMockState.decodedAudioOutputLayout = null;
         customDecodeMockState.audioEligibilityOverride = null;
         customDecodeMockState.eligible = false;
         customDecodeMockState.holdPlay = false;
@@ -3249,8 +3270,10 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(backend.play).not.toHaveBeenCalled();
         expect(customPlaybackController.play).toHaveBeenCalledWith({
             audioOutputMode: undefined,
+            audioRendersObjects: undefined,
             audioTrackIndex: null,
-            decodedAudioOutputChannelCount: undefined,
+            binauralHeadphones: undefined,
+            decodedAudioOutputLayout: undefined,
             dolbyVisionProfile: null,
             durationMicroseconds: 60_000_000,
             maximumCodedHeight: 1_080,
@@ -4287,7 +4310,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                     surroundLevel: 0.25,
                     version: 1
                 },
-                decodedAudioOutputChannelCount: 2
+                binauralHeadphones: false,
+                decodedAudioOutputLayout: 'stereo'
             })
         );
     });
@@ -4354,28 +4378,45 @@ describe('WebGPUPlayer HTML delegation', () => {
             expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
                 1,
                 'decoded-pcm',
-                2,
+                'stereo',
                 {
                     centerLevel: 0.4,
                     outputGain: 0.8,
                     surroundLevel: 0.6,
                     version: 1
                 },
-                NO_AUDIO_DECODER_SELECTION
+                NO_AUDIO_DECODER_SELECTION,
+                NO_OBJECT_RENDERING,
+                BINAURAL_OFF
             )
         ));
     });
 
+    /** Stores the user's audio settings over the defaults. */
+    function storeAudioSettings(audio: Partial<Record<keyof WebGPUUserSettings['audio'], unknown>>): void {
+        const defaults = createDefaultWebGPUUserSettings();
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({
+            ...defaults,
+            audio: { ...defaults.audio, ...audio }
+        });
+    }
+
     it.each([
-        { expectedOutput: 6, maximumOutput: 6, sourceChannels: 6 },
-        { expectedOutput: 8, maximumOutput: 8, sourceChannels: 8 },
+        { expectedLayout: '5.1', maximumOutput: 6, sourceChannels: 6, speakerLayout: 'auto' },
+        { expectedLayout: '7.1', maximumOutput: 8, sourceChannels: 8, speakerLayout: 'auto' },
         // A 7.1 bed folds into a 5.1 destination, and three-channel audio selects 5.1 on a 7.1 destination
-        { expectedOutput: 6, maximumOutput: 6, sourceChannels: 8 },
-        { expectedOutput: 6, maximumOutput: 8, sourceChannels: 3 },
-        { expectedOutput: 2, maximumOutput: 2, sourceChannels: 8 }
+        { expectedLayout: '5.1', maximumOutput: 6, sourceChannels: 8, speakerLayout: 'auto' },
+        { expectedLayout: '5.1', maximumOutput: 8, sourceChannels: 3, speakerLayout: 'auto' },
+        { expectedLayout: 'stereo', maximumOutput: 2, sourceChannels: 8, speakerLayout: 'auto' },
+        // A channel bed plays within the floor of the speaker layout, which auto takes up to 7.1.4
+        { expectedLayout: '7.1', maximumOutput: 12, sourceChannels: 8, speakerLayout: 'auto' },
+        { expectedLayout: '5.1', maximumOutput: 12, sourceChannels: 8, speakerLayout: '5.1.4' },
+        // An explicit layout wider than the destination resolves as auto
+        { expectedLayout: '5.1', maximumOutput: 6, sourceChannels: 8, speakerLayout: '7.1' },
+        { expectedLayout: 'stereo', maximumOutput: 6, sourceChannels: 6, speakerLayout: 'stereo' }
     ])(
-        'selects $expectedOutput decoded channels for $sourceChannels-channel audio on a $maximumOutput-channel destination',
-        async ({ expectedOutput, maximumOutput, sourceChannels }) => {
+        'selects the $expectedLayout output for $sourceChannels-channel audio on a $maximumOutput-channel destination with the $speakerLayout speaker layout',
+        async ({ expectedLayout, maximumOutput, sourceChannels, speakerLayout }) => {
             const player = new WebGPUPlayer();
             const backend = getBackend();
             const container = document.createElement('div');
@@ -4388,17 +4429,151 @@ describe('WebGPUPlayer HTML delegation', () => {
             customDecodeMockState.audioSourceChannelCount = sourceChannels;
             audioPrewarmMockState.maximumChannelCount = maximumOutput;
             userSettingsMockState.audioDownmixAlgorithm = 'rfc-7845';
+            storeAudioSettings({ speakerLayout });
 
             await player.play(createKnownSDRAudioPlayOptions());
 
             expect(getCustomPlaybackController().play).toHaveBeenCalledWith(
                 expect.objectContaining({
                     audioDownmixAlgorithm: 'rfc-7845',
-                    decodedAudioOutputChannelCount: expectedOutput
+                    audioRendersObjects: undefined,
+                    decodedAudioOutputLayout: expectedLayout
                 })
             );
         }
     );
+
+    it.each([
+        { expectedLayout: '7.1.4', forceStereoDownmix: false, maximumOutput: 12, speakerLayout: 'auto' },
+        { expectedLayout: '7.1.2', forceStereoDownmix: false, maximumOutput: 10, speakerLayout: 'auto' },
+        // 5.1.2 and 5.1.4 only when chosen
+        { expectedLayout: '5.1.2', forceStereoDownmix: false, maximumOutput: 12, speakerLayout: '5.1.2' },
+        // A layout the destination is too narrow for resolves as auto
+        { expectedLayout: '7.1.2', forceStereoDownmix: false, maximumOutput: 10, speakerLayout: '7.1.4' },
+        { expectedLayout: 'stereo', forceStereoDownmix: false, maximumOutput: 2, speakerLayout: '5.1.4' },
+        { expectedLayout: 'stereo', forceStereoDownmix: true, maximumOutput: 12, speakerLayout: '7.1.4' }
+    ])(
+        'plays object-rendered audio to the whole $expectedLayout layout from a $maximumOutput-channel destination, the $speakerLayout layout, and force stereo $forceStereoDownmix',
+        async ({ expectedLayout, forceStereoDownmix, maximumOutput, speakerLayout }) => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            const container = document.createElement('div');
+            const video = document.createElement('video');
+            container.appendChild(video);
+            backend.presentationSurface = { container, video };
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            customDecodeMockState.audioTrackIndex = 1;
+            // The E-AC-3 core of a Dolby Atmos stream declares 5.1
+            customDecodeMockState.audioSourceChannelCount = 6;
+            customDecodeMockState.audioEligibilityOverride = () => ({ audioRendersObjects: true, eligible: true });
+            audioPrewarmMockState.maximumChannelCount = maximumOutput;
+            storeAudioSettings({ forceStereoDownmix, speakerLayout });
+
+            await player.play(createKnownSDRAudioPlayOptions());
+
+            // The eligibility chooses the decoder for the layout the audio would play to
+            expect(vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[2]).toMatchObject({
+                audioRenderTarget: { binauralHeadphones: false, speakerLayout: expectedLayout }
+            });
+            expect(getCustomPlaybackController().play).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    audioRendersObjects: true,
+                    decodedAudioOutputLayout: expectedLayout
+                })
+            );
+        }
+    );
+
+    it.each([
+        { binauralHeadphones: true, fetched: true, profile: 'Dolby Digital Plus + Dolby Atmos' },
+        { binauralHeadphones: false, fetched: false, profile: 'Dolby Digital Plus + Dolby Atmos' },
+        { binauralHeadphones: true, fetched: false, profile: 'Dolby Digital Plus' }
+    ])('fetches the server\'s E-AC-3 packages before a native route for $profile with binaural $binauralHeadphones: $fetched', async ({
+        binauralHeadphones,
+        fetched,
+        profile
+    }) => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.audioTrackIndex = 1;
+        storeAudioSettings({ binauralHeadphones });
+        vi.mocked(loadServerAudioDecoderPackages).mockClear();
+        const options = createKnownSDRNativeAudioPlayOptions(6);
+        const [ , audioStream ] = (options.mediaSource as { MediaStreams: Array<Record<string, unknown>> }).MediaStreams;
+        audioStream.Profile = profile;
+
+        await player.play(options);
+
+        if (fetched) {
+            expect(vi.mocked(loadServerAudioDecoderPackages).mock.calls.map(call => call[1])).toContain('eac3');
+        } else {
+            expect(loadServerAudioDecoderPackages).not.toHaveBeenCalled();
+        }
+    });
+
+    it('passes the binaural choice to the eligibility, decoded audio, and track switches', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.audioTrackIndex = 1;
+        customDecodeMockState.audioSourceChannelCount = 6;
+        customDecodeMockState.audioEligibilityOverride = () => ({ audioRendersObjects: true, eligible: true });
+        storeAudioSettings({ binauralHeadphones: true });
+
+        await player.play(createKnownSDRAudioPlayOptions());
+
+        expect(vi.mocked(getCustomPlaybackEligibility).mock.lastCall?.[2]).toMatchObject({
+            audioRenderTarget: { binauralHeadphones: true, speakerLayout: 'stereo' }
+        });
+        const customPlaybackController = getCustomPlaybackController();
+        expect(customPlaybackController.play).toHaveBeenCalledWith(
+            expect.objectContaining({ binauralHeadphones: true, decodedAudioOutputLayout: 'stereo' })
+        );
+        player.setAudioStreamIndex(3);
+        await vi.waitFor(() => (
+            expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
+                1,
+                'decoded-pcm',
+                'stereo',
+                createDefaultAudioDownmixSettings(),
+                NO_AUDIO_DECODER_SELECTION,
+                true,
+                true
+            )
+        ));
+    });
+
+    it('keeps binaural rendering out of native media audio', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.audioTrackIndex = 1;
+        customDecodeMockState.audioOutputMode = 'native-media';
+        storeAudioSettings({ binauralHeadphones: true });
+
+        await player.play(createKnownSDRAudioPlayOptions());
+
+        expect(getCustomPlaybackController().play).toHaveBeenCalledWith(
+            expect.objectContaining({ binauralHeadphones: undefined, decodedAudioOutputLayout: undefined })
+        );
+    });
 
     it('declines live audio output settings without an active custom playback session', async () => {
         const player = new WebGPUPlayer();
@@ -4408,7 +4583,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         container.appendChild(video);
         backend.presentationSurface = { container, video };
 
-        await expect(player.applyAudioOutputSettings(true, 'rfc-7845')).resolves.toBe(false);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'rfc-7845')).resolves.toBe(false);
 
         playbackPreferencesMockState.customDecodeEnabled = true;
         customDecodeMockState.eligible = true;
@@ -4419,7 +4594,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         customPlaybackController.getAudioOutputMaximumChannelCount.mockReturnValue(6);
         await player.stop(false);
 
-        await expect(player.applyAudioOutputSettings(true, 'rfc-7845')).resolves.toBe(false);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'rfc-7845')).resolves.toBe(false);
         // A detached controller's device change no longer reaches the player
         customPlaybackController.eventHandler({
             generation: 1,
@@ -4458,21 +4633,23 @@ describe('WebGPUPlayer HTML delegation', () => {
         const customPlaybackController = getCustomPlaybackController();
         customPlaybackController.getAudioOutputMaximumChannelCount.mockReturnValue(8);
 
-        await expect(player.applyAudioOutputSettings(true, 'rfc-7845')).resolves.toBe(true);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'rfc-7845')).resolves.toBe(true);
         expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
             audioDownmixAlgorithm: 'rfc-7845',
             audioDownmixSettings: sessionDownmixSettings,
-            decodedAudioOutputChannelCount: 2
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: 'stereo'
         });
-        await expect(player.applyAudioOutputSettings(false, 'ac-4')).resolves.toBe(true);
+        await expect(player.applyAudioOutputSettings(AUTOMATIC_OUTPUT, 'ac-4')).resolves.toBe(true);
         expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
             audioDownmixAlgorithm: 'ac-4',
             audioDownmixSettings: sessionDownmixSettings,
-            decodedAudioOutputChannelCount: 8
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: '7.1'
         });
 
         // The session keeps the applied choice over the persisted one for later switches
-        await expect(player.applyAudioOutputSettings(true, 'dave750')).resolves.toBe(true);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'dave750')).resolves.toBe(true);
         customPlaybackController.eventHandler({
             generation: 1,
             maximumChannelCount: 8,
@@ -4482,18 +4659,104 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
             audioDownmixAlgorithm: 'dave750',
             audioDownmixSettings: sessionDownmixSettings,
-            decodedAudioOutputChannelCount: 2
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: 'stereo'
         });
         player.setAudioStreamIndex(3);
         await vi.waitFor(() => (
             expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
                 1,
                 'decoded-pcm',
-                2,
+                'stereo',
                 sessionDownmixSettings,
-                NO_AUDIO_DECODER_SELECTION
+                NO_AUDIO_DECODER_SELECTION,
+                NO_OBJECT_RENDERING,
+                BINAURAL_OFF
             )
         ));
+    });
+
+    it('applies the speaker layout and binaural rendering to live object-rendered audio', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.audioTrackIndex = 1;
+        customDecodeMockState.audioSourceChannelCount = 6;
+        customDecodeMockState.audioEligibilityOverride = () => ({ audioRendersObjects: true, eligible: true });
+        audioPrewarmMockState.maximumChannelCount = 12;
+        await player.play(createKnownSDRAudioPlayOptions());
+        const customPlaybackController = getCustomPlaybackController();
+        expect(customPlaybackController.play).toHaveBeenCalledWith(
+            expect.objectContaining({ decodedAudioOutputLayout: '7.1.4' })
+        );
+        customPlaybackController.getAudioOutputMaximumChannelCount.mockReturnValue(12);
+
+        await expect(player.applyAudioOutputSettings(
+            { ...AUTOMATIC_OUTPUT, speakerLayout: '5.1.4' },
+            'standard-lo-ro'
+        )).resolves.toBe(true);
+        expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
+            audioDownmixAlgorithm: 'standard-lo-ro',
+            audioDownmixSettings: createDefaultAudioDownmixSettings(),
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: '5.1.4'
+        });
+        await expect(player.applyAudioOutputSettings(
+            { ...FORCED_STEREO_OUTPUT, binauralHeadphones: true },
+            'standard-lo-ro'
+        )).resolves.toBe(true);
+        expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
+            audioDownmixAlgorithm: 'standard-lo-ro',
+            audioDownmixSettings: createDefaultAudioDownmixSettings(),
+            binauralHeadphones: true,
+            decodedAudioOutputLayout: 'stereo'
+        });
+
+        // A device change keeps the applied choices
+        customPlaybackController.eventHandler({
+            generation: 1,
+            maximumChannelCount: 12,
+            type: 'audio-output-changed'
+        });
+        expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenCalledTimes(3);
+        expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith(
+            expect.objectContaining({ binauralHeadphones: true, decodedAudioOutputLayout: 'stereo' })
+        );
+    });
+
+    it('reports the decoded output layout and rendered objects only once known', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.audioTrackIndex = 1;
+        await player.play(createKnownSDRAudioPlayOptions());
+        type Stats = { categories: Array<{ stats: Array<{ label: string, value: string }>, type: string }> };
+        const getAudioStats = async (): Promise<Array<{ label: string, value: string }>> => (
+            (await player.getStats() as Stats).categories.find(category => category.type === 'audio')?.stats ?? []
+        );
+
+        const unknownLabels = (await getAudioStats()).map(stat => stat.label);
+        expect(unknownLabels).not.toContain('Audio output layout');
+        expect(unknownLabels).not.toContain('Rendered audio objects');
+
+        audioTelemetryMockState.decodedAudioOutputLayout = 'stereo';
+        expect(await getAudioStats()).toContainEqual({ label: 'Audio output layout', value: 'Stereo' });
+        audioTelemetryMockState.decodedAudioOutputLayout = '7.1.4';
+        audioTelemetryMockState.decodedAudioObjectCount = 15;
+        expect(await getAudioStats()).toEqual(expect.arrayContaining([
+            { label: 'Audio output layout', value: '7.1.4' },
+            { label: 'Rendered audio objects', value: '15' }
+        ]));
     });
 
     it('resolves false when the live session declines or fails the layout switch', async () => {
@@ -4517,9 +4780,9 @@ describe('WebGPUPlayer HTML delegation', () => {
             .mockRejectedValueOnce(switchError);
 
         // The controller declines a switch it cannot start, such as one during startup
-        await expect(player.applyAudioOutputSettings(true, 'ac-4')).resolves.toBe(false);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'ac-4')).resolves.toBe(false);
         expect(consoleWarning).not.toHaveBeenCalled();
-        await expect(player.applyAudioOutputSettings(false, 'ac-4')).resolves.toBe(false);
+        await expect(player.applyAudioOutputSettings(AUTOMATIC_OUTPUT, 'ac-4')).resolves.toBe(false);
         expect(consoleWarning).toHaveBeenCalledExactlyOnceWith(
             'Unable to switch the WebGPU audio output layout',
             switchError
@@ -4528,11 +4791,12 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
             audioDownmixAlgorithm: 'ac-4',
             audioDownmixSettings: createDefaultAudioDownmixSettings(),
-            decodedAudioOutputChannelCount: 6
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: '5.1'
         });
 
         // A failed switch does not block the next one
-        await expect(player.applyAudioOutputSettings(true, 'ac-4')).resolves.toBe(true);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'ac-4')).resolves.toBe(true);
     });
 
     it('re-evaluates the decoded layout when the custom audio output device changes', async () => {
@@ -4549,7 +4813,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         await player.play(createKnownSDRAudioPlayOptions());
         const customPlaybackController = getCustomPlaybackController();
         expect(customPlaybackController.play).toHaveBeenCalledWith(
-            expect.objectContaining({ decodedAudioOutputChannelCount: 2 })
+            expect.objectContaining({ decodedAudioOutputLayout: 'stereo' })
         );
         const consoleWarning = vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
         const switchError = new Error('Layout switch failed');
@@ -4565,7 +4829,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenCalledExactlyOnceWith({
             audioDownmixAlgorithm: 'standard-lo-ro',
             audioDownmixSettings: createDefaultAudioDownmixSettings(),
-            decodedAudioOutputChannelCount: 6
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: '5.1'
         });
         // A failed switch is reported instead of escaping the event path
         await vi.waitFor(() => expect(consoleWarning).toHaveBeenCalledWith(
@@ -4582,7 +4847,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.reconfigureAudioOutput).toHaveBeenLastCalledWith({
             audioDownmixAlgorithm: 'standard-lo-ro',
             audioDownmixSettings: createDefaultAudioDownmixSettings(),
-            decodedAudioOutputChannelCount: 2
+            binauralHeadphones: false,
+            decodedAudioOutputLayout: 'stereo'
         });
     });
 
@@ -4609,7 +4875,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         const customPlaybackController = getCustomPlaybackController();
         customPlaybackController.getAudioOutputMaximumChannelCount.mockReturnValue(6);
 
-        await expect(player.applyAudioOutputSettings(true, 'rfc-7845')).resolves.toBe(false);
+        await expect(player.applyAudioOutputSettings(FORCED_STEREO_OUTPUT, 'rfc-7845')).resolves.toBe(false);
         customPlaybackController.eventHandler({
             generation: 1,
             maximumChannelCount: 6,
@@ -4620,11 +4886,11 @@ describe('WebGPUPlayer HTML delegation', () => {
     });
 
     it.each([
-        { expectedOutput: 2, liveMaximum: 2, prewarmMaximum: 8 },
-        { expectedOutput: 8, liveMaximum: 8, prewarmMaximum: 2 },
-        { expectedOutput: 8, liveMaximum: null, prewarmMaximum: 8 }
+        { expectedOutput: 'stereo', liveMaximum: 2, prewarmMaximum: 8 },
+        { expectedOutput: '7.1', liveMaximum: 8, prewarmMaximum: 2 },
+        { expectedOutput: '7.1', liveMaximum: null, prewarmMaximum: 8 }
     ])(
-        'switches 8-channel audio to $expectedOutput channels from a $liveMaximum live and $prewarmMaximum prewarm maximum',
+        'switches 8-channel audio to the $expectedOutput output from a $liveMaximum live and $prewarmMaximum prewarm maximum',
         async ({ expectedOutput, liveMaximum, prewarmMaximum }) => {
             const player = new WebGPUPlayer();
             const backend = getBackend();
@@ -4650,7 +4916,9 @@ describe('WebGPUPlayer HTML delegation', () => {
                     'decoded-pcm',
                     expectedOutput,
                     createDefaultAudioDownmixSettings(),
-                    NO_AUDIO_DECODER_SELECTION
+                    NO_AUDIO_DECODER_SELECTION,
+                    NO_OBJECT_RENDERING,
+                    BINAURAL_OFF
                 )
             ));
             expect(customPlaybackController.getAudioOutputMaximumChannelCount).toHaveBeenCalled();
@@ -5856,9 +6124,11 @@ describe('WebGPUPlayer HTML delegation', () => {
             expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
                 1,
                 'decoded-pcm',
-                2,
+                'stereo',
                 createDefaultAudioDownmixSettings(),
-                NO_AUDIO_DECODER_SELECTION
+                NO_AUDIO_DECODER_SELECTION,
+                NO_OBJECT_RENDERING,
+                BINAURAL_OFF
             )
         ));
 
@@ -5878,9 +6148,11 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
             1,
             'decoded-pcm',
-            2,
+            'stereo',
             createDefaultAudioDownmixSettings(),
-            NO_AUDIO_DECODER_SELECTION
+            NO_AUDIO_DECODER_SELECTION,
+            NO_OBJECT_RENDERING,
+            BINAURAL_OFF
         );
         expect(player.getVolume()).toBe(80);
         expect(player.isMuted()).toBe(true);
@@ -6022,9 +6294,11 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
             1,
             'decoded-pcm',
-            8,
+            '7.1',
             sessionDownmixSettings,
-            NO_AUDIO_DECODER_SELECTION
+            NO_AUDIO_DECODER_SELECTION,
+            NO_OBJECT_RENDERING,
+            BINAURAL_OFF
         );
     });
 
@@ -6110,9 +6384,11 @@ describe('WebGPUPlayer HTML delegation', () => {
             expect(customPlaybackController.setAudioStreamIndex).toHaveBeenCalledWith(
                 1,
                 'decoded-pcm',
-                2,
+                'stereo',
                 createDefaultAudioDownmixSettings(),
-                NO_AUDIO_DECODER_SELECTION
+                NO_AUDIO_DECODER_SELECTION,
+                NO_OBJECT_RENDERING,
+                BINAURAL_OFF
             )
         ));
         await customPlaybackController.fallbackHook({

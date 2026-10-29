@@ -12,6 +12,11 @@ import {
     createDefaultAudioDownmixSettings,
     type AudioDownmixSettings
 } from 'webgpu-player/audio/processing/CustomAudioDownmix';
+import {
+    DEFAULT_CUSTOM_AUDIO_SPEAKER_LAYOUT,
+    isCustomAudioSpeakerLayout,
+    type CustomAudioSpeakerLayout
+} from 'webgpu-player/audio/NativeMultichannelAudioOutput';
 import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
 import {
     DEFAULT_DEINTERLACE_MODE,
@@ -60,9 +65,13 @@ export type StoredPresentationFile = Readonly<{
 
 export type WebGPUUserSettings = Readonly<{
     audio: Readonly<{
+        /** Binaural rendering of Dolby Atmos objects for headphones, when the output is stereo */
+        binauralHeadphones: boolean
         downmix: AudioDownmixSettings
         forceStereoDownmix: boolean
         outputDeviceId: string | null
+        /** The speakers decoded audio plays to: `auto` follows the output's channel count */
+        speakerLayout: CustomAudioSpeakerLayout
     }>
     // Applies live: the video OSD places its entry to the settings panel anew
     osd: Readonly<{
@@ -219,9 +228,11 @@ function normalizeToneMapOperator(value: unknown, fallback: ToneMapOperator): To
 export function createBuiltInWebGPUUserSettings(): WebGPUUserSettings {
     return {
         audio: {
+            binauralHeadphones: false,
             downmix: createDefaultAudioDownmixSettings(),
             forceStereoDownmix: false,
-            outputDeviceId: null
+            outputDeviceId: null,
+            speakerLayout: DEFAULT_CUSTOM_AUDIO_SPEAKER_LAYOUT
         },
         osd: {
             settingsButtonPlacement: DEFAULT_SETTINGS_BUTTON_PLACEMENT
@@ -252,12 +263,14 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
     const serverDefaults = getClientDefaults();
     return normalizeSettingsOver({
         audio: {
+            binauralHeadphones: serverDefaults.binauralHeadphones,
             downmix: {
                 centerLevel: serverDefaults.centerLevel,
                 outputGain: serverDefaults.outputGain,
                 surroundLevel: serverDefaults.surroundLevel
             },
-            forceStereoDownmix: serverDefaults.forceStereoDownmix
+            forceStereoDownmix: serverDefaults.forceStereoDownmix,
+            speakerLayout: serverDefaults.speakerLayout
         },
         osd: {
             settingsButtonPlacement: serverDefaults.settingsButtonPlacement
@@ -377,6 +390,10 @@ function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUU
     const presentation = getRecord(value, 'presentation');
     return {
         audio: {
+            binauralHeadphones: normalizeBoolean(
+                audio.binauralHeadphones,
+                defaults.audio.binauralHeadphones
+            ),
             downmix: {
                 centerLevel: normalizeNumber(
                     downmix.centerLevel,
@@ -402,7 +419,10 @@ function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUU
                 audio.forceStereoDownmix,
                 defaults.audio.forceStereoDownmix
             ),
-            outputDeviceId: normalizeAudioOutputDeviceId(audio.outputDeviceId)
+            outputDeviceId: normalizeAudioOutputDeviceId(audio.outputDeviceId),
+            speakerLayout: isCustomAudioSpeakerLayout(audio.speakerLayout) ?
+                audio.speakerLayout :
+                defaults.audio.speakerLayout
         },
         osd: {
             settingsButtonPlacement: isSettingsButtonPlacement(osd.settingsButtonPlacement) ?

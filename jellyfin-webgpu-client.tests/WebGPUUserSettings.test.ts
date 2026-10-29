@@ -124,6 +124,7 @@ describe('WebGPUUserSettings', () => {
         });
 
         expect(normalized.audio).toEqual({
+            binauralHeadphones: false,
             downmix: {
                 centerLevel: 2,
                 outputGain: 10,
@@ -131,7 +132,8 @@ describe('WebGPUUserSettings', () => {
                 version: 1
             },
             forceStereoDownmix: true,
-            outputDeviceId: SELECTED_OUTPUT_DEVICE_ID
+            outputDeviceId: SELECTED_OUTPUT_DEVICE_ID,
+            speakerLayout: 'auto'
         });
         expect(normalized.render.settings.display).toEqual({
             brightness: 1,
@@ -175,6 +177,42 @@ describe('WebGPUUserSettings', () => {
         });
         expect(loadWebGPUUserSettings(storage)).toEqual(saved);
         expect(saved.presentation).toEqual(changedSettings.presentation);
+    });
+
+    it('defaults to the automatic speaker layout without binaural rendering, and stores the user\'s choices of both', () => {
+        const storage = createStorage();
+        const defaults = createDefaultWebGPUUserSettings();
+        expect(defaults.audio.speakerLayout).toBe('auto');
+        expect(defaults.audio.binauralHeadphones).toBe(false);
+
+        const saved = saveWebGPUUserSettings({
+            ...defaults,
+            audio: { ...defaults.audio, binauralHeadphones: true, speakerLayout: '5.1.4' }
+        }, storage);
+
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({
+            audio: { binauralHeadphones: true, speakerLayout: '5.1.4' },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        expect(loadWebGPUUserSettings(storage).audio).toEqual(saved.audio);
+        expect(saved.audio).toMatchObject({ binauralHeadphones: true, speakerLayout: '5.1.4' });
+    });
+
+    it.each([ '7.1.6', '2.0', 'Auto', 6, null, true ])('loads a stored speaker layout of %j as the automatic layout', speakerLayout => {
+        const storage = createStorage(JSON.stringify({
+            audio: { binauralHeadphones: 'yes', speakerLayout },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        }));
+
+        expect(loadWebGPUUserSettings(storage).audio).toMatchObject({ binauralHeadphones: false, speakerLayout: 'auto' });
+    });
+
+    it('follows the server\'s speaker layout and binaural defaults, unless it sets a layout clients refuse', () => {
+        setClientDefaults({ binauralHeadphones: true, speakerLayout: '7.1.2' });
+        expect(createDefaultWebGPUUserSettings().audio).toMatchObject({ binauralHeadphones: true, speakerLayout: '7.1.2' });
+
+        setClientDefaults({ speakerLayout: 'quad' });
+        expect(createDefaultWebGPUUserSettings().audio.speakerLayout).toBe('auto');
     });
 
     it('follows the server\'s default for each setting the user did not choose, and keeps the user\'s own choices', () => {
@@ -503,7 +541,8 @@ describe('WebGPUUserSettings', () => {
                     version: 1
                 },
                 forceStereoDownmix: true,
-                outputDeviceId: SELECTED_OUTPUT_DEVICE_ID
+                outputDeviceId: SELECTED_OUTPUT_DEVICE_ID,
+                speakerLayout: '7.1.4'
             },
             render: {
                 automaticInputPeakNits: false,

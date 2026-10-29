@@ -41,6 +41,17 @@ describe('the direct-play containers of the custom path', () => {
         });
     });
 
+    it('advertises ASF with VC-1, WMV3, the MPEG-4 family, and WMA, which the fork\'s ASF demuxer reads, and no H.264', () => {
+        const profiles = createCompatibleProfiles([ 'h264', 'vc1', 'wmv3', 'msmpeg4v3', 'mpeg4' ], [ 'mp3', 'wmav2', 'wmapro', 'eac3' ]);
+
+        expect(profiles).toContainEqual({
+            AudioCodec: 'mp3,wmav2,wmapro',
+            Container: 'asf',
+            Type: 'Video',
+            VideoCodec: 'vc1,wmv3,mpeg4,msmpeg4v3'
+        });
+    });
+
     it('advertises no AIFF, since the custom path plays only items with video', () => {
         const profiles = createCompatibleProfiles(SUPPORTED_VIDEO_CODECS, SUPPORTED_AUDIO_CODECS);
 

@@ -16,12 +16,17 @@ import {
     type H264ProfileCapabilities
 } from 'webgpu-player/capability/H264ProfileCapabilities';
 import {
+    H264_RAW_FORMAT_PROBE_DEFINITIONS,
+    type H264RawFormatCapability,
+    type H264RawFormatVariant
+} from 'webgpu-player/capability/H264RawFormatCapabilities';
+import {
     HEVC_RANGE_EXTENSION_PROBE_DEFINITIONS,
     type HEVCRangeExtensionCapability,
     type HEVCRangeExtensionVariant
 } from 'webgpu-player/capability/HEVCRangeExtensionCapabilities';
 
-// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension and AV1 raw-format probe results, and the codecs the engine has no decoder of
+// Capability records shared by the custom decode suites: WebCodecs codec results, H.264 profile results, HEVC range-extension, AV1 and H.264 raw-format probe results, and the codecs the engine has no decoder of
 
 /** Builds a WebCodecs codec capability as the configuration probe alone reports it. */
 export function createConfigCodecCapability<Codec extends CustomAudioCodec | CustomVideoCodec>(
@@ -91,6 +96,23 @@ export function createAV1RawFormatCapability(variant: AV1RawFormatVariant, suppo
         bitDepth: definition.bitDepth,
         chromaFormat: definition.chromaFormat,
         codec: 'av1',
+        codecString: definition.config.codec,
+        format: definition.format,
+        jellyfinProfile: definition.jellyfinProfile,
+        pixelFormat: definition.pixelFormat,
+        reason: supported ? 'output-copy-supported' : 'output-copy-unsupported',
+        status: supported ? 'supported' : 'unsupported',
+        variant
+    };
+}
+
+/** Builds the output-copy probe result of one H.264 raw-format variant from its probe definition. */
+export function createH264RawFormatCapability(variant: H264RawFormatVariant, supported: boolean): H264RawFormatCapability {
+    const definition = H264_RAW_FORMAT_PROBE_DEFINITIONS[variant];
+    return {
+        bitDepth: definition.bitDepth,
+        chromaFormat: definition.chromaFormat,
+        codec: 'h264',
         codecString: definition.config.codec,
         format: definition.format,
         jellyfinProfile: definition.jellyfinProfile,

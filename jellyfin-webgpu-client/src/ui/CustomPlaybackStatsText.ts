@@ -1,5 +1,6 @@
 import globalize from 'lib/globalize';
 
+import type { CustomAudioOutputLayout } from 'webgpu-player/audio/processing/CustomAudioChannelLayout';
 import type {
     CustomPlaybackState,
     CustomPlaybackTelemetry
@@ -48,6 +49,11 @@ export function translateAudioPath(audioPath: CustomPlaybackTelemetry['audioPath
         case 'unavailable':
             return globalize.translate('WebGPUAudioPathUnavailable');
     }
+}
+
+/** Names the layout decoded audio plays to: stereo translated, the channel layouts as the names Jellyfin leaves untranslated. */
+export function translateAudioOutputLayout(outputLayout: CustomAudioOutputLayout): string {
+    return outputLayout === 'stereo' ? globalize.translate('WebGPUSpeakerLayoutStereo') : outputLayout;
 }
 
 /** Translates the video decoder the custom path chose. */

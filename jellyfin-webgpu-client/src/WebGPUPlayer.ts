@@ -14,6 +14,7 @@ import { WebGPUPlayerEvent } from './constants/playerEvent';
 import { loadAddonStrings } from './host/globalize';
 import { whenClientDefaultsSettled } from './ServerClientDefaults';
 import {
+    translateAudioOutputLayout,
     translateAudioPath,
     translatePlaybackState,
     translateVideoDecoderBackend,
@@ -92,6 +93,8 @@ import {
     getGPUVideoDecodeTarget,
     getPlaybackAudioCodec,
     hasPotentialCustomPlaybackVideoRoute,
+    playbackAudioNeedsObjectRendering,
+    type CustomAudioRenderTarget,
     type CustomPlaybackEligibility,
     type CustomPlaybackEligibilityOptions,
     type CustomPlaybackIneligibilityReason,
@@ -126,7 +129,11 @@ import {
     probeCachedNativeMediaAudioCapabilities,
     type NativeMediaAudioCapabilities
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
-import { selectCustomAudioOutputChannelCountForMaximum } from 'webgpu-player/audio/NativeMultichannelAudioOutput';
+import {
+    selectCustomAudioOutputLayout,
+    selectCustomAudioSpeakerLayout
+} from 'webgpu-player/audio/NativeMultichannelAudioOutput';
+import type { CustomAudioOutputLayout } from 'webgpu-player/audio/processing/CustomAudioChannelLayout';
 import {
     type StaticHDRMetadata
 } from 'webgpu-player/demux/hdr/StaticHDRMetadata';
@@ -808,18 +815,35 @@ function getAudioContextMaximumChannelCount(audioContext: AudioContext | null): 
     }
 }
 
-function selectDecodedAudioOutputChannelCount(
+/** The user's audio output choices a playback keeps. */
+type CustomPlaybackAudioOutputSettings = Pick<WebGPUUserSettings['audio'], 'binauralHeadphones' | 'forceStereoDownmix' | 'speakerLayout'>;
+
+/** Returns what decoded audio renders to on a destination of the given width: the user's speaker layout for it, or stereo when the user forces stereo, and the binaural choice. */
+function selectAudioRenderTarget(
+    audioSettings: CustomPlaybackAudioOutputSettings,
+    maximumChannelCount: number | null
+): CustomAudioRenderTarget {
+    return {
+        binauralHeadphones: audioSettings.binauralHeadphones,
+        speakerLayout: audioSettings.forceStereoDownmix ?
+            'stereo' :
+            selectCustomAudioSpeakerLayout(audioSettings.speakerLayout, maximumChannelCount)
+    };
+}
+
+/** Returns the layout a decoded PCM track plays to within the speaker layout, all of it when a package renders the track's objects; undefined without decoded PCM. */
+function selectDecodedAudioOutputLayout(
     eligibility: EligibleCustomPlayback,
-    maximumChannelCount: number | null,
-    forceStereoDownmix: boolean
-): 2 | 6 | 8 | undefined {
+    renderTarget: CustomAudioRenderTarget
+): CustomAudioOutputLayout | undefined {
     if (eligibility.audioOutputMode !== 'decoded-pcm') {
         return undefined;
     }
-    if (forceStereoDownmix) {
-        return 2;
-    }
-    return selectCustomAudioOutputChannelCountForMaximum(maximumChannelCount, eligibility.audioSourceChannelCount);
+    return selectCustomAudioOutputLayout(
+        renderTarget.speakerLayout,
+        eligibility.audioSourceChannelCount,
+        eligibility.audioRendersObjects === true
+    );
 }
 
 function selectAudioDownmixAlgorithm(
@@ -834,6 +858,13 @@ function getDecodedAudioDownmixSettings(
     settings: WebGPUUserSettings
 ): AudioDownmixSettings | undefined {
     return eligibility.audioOutputMode === 'decoded-pcm' ? settings.audio.downmix : undefined;
+}
+
+function getDecodedAudioBinauralHeadphones(
+    eligibility: EligibleCustomPlayback,
+    renderTarget: CustomAudioRenderTarget
+): boolean | undefined {
+    return eligibility.audioOutputMode === 'decoded-pcm' ? renderTarget.binauralHeadphones : undefined;
 }
 
 /** Returns the play options of the decoder packages a route chose: the audio track's package, and the frame-pool route's GPU decoder. */
@@ -1680,6 +1711,7 @@ export default class WebGPUPlayer {
             const presentationTiming = customTelemetry.presentationTiming;
             const presentationTelemetry = this.presenter.getTelemetry();
             const eligibility = this.lastCustomPlaybackEligibility;
+            const { decodedAudioObjectCount, decodedAudioOutputLayout } = customTelemetry.videoDecode;
             return loadAddonStrings().then(() => {
                 const videoPath = eligibility?.eligible === true ?
                     `${translateVideoDecoderBackend(eligibility.videoDecoderBackend)} / ${translateVideoOutputMode(eligibility.videoOutputMode)}` :
@@ -1743,7 +1775,16 @@ export default class WebGPUPlayer {
                             {
                                 label: globalize.translate('WebGPUStatsQueuedUnderflowFrames'),
                                 value: `${customTelemetry.audioOutput?.queuedFrames ?? 0} / ${customTelemetry.audioOutput?.underflowFrames ?? 0}`
-                            }
+                            },
+                            // Shown once known: the layout only with decoded PCM, and the objects only from a package that reports them
+                            ...(decodedAudioOutputLayout === null ? [] : [ {
+                                label: globalize.translate('WebGPUStatsAudioOutputLayout'),
+                                value: translateAudioOutputLayout(decodedAudioOutputLayout)
+                            } ]),
+                            ...(decodedAudioObjectCount === null ? [] : [ {
+                                label: globalize.translate('WebGPUStatsAudioObjects'),
+                                value: `${decodedAudioObjectCount}`
+                            } ])
                         ],
                         type: 'audio'
                     }
@@ -1891,10 +1932,13 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Applies force stereo and the downmix algorithm to active WebGPU decoded audio at once.
+     * Applies force stereo, the speaker layout, binaural rendering, and the downmix algorithm to active WebGPU decoded audio at once.
      * Resolves false when no active session took them live.
      */
-    applyAudioOutputSettings(forceStereoDownmix: boolean, audioDownmixAlgorithm: CustomAudioDownmixAlgorithm): Promise<boolean> {
+    applyAudioOutputSettings(
+        audioOutputSettings: CustomPlaybackAudioOutputSettings,
+        audioDownmixAlgorithm: CustomAudioDownmixAlgorithm
+    ): Promise<boolean> {
         const audioSettings = this.customPlaybackAudioSettings;
         if (!audioSettings || !this.getActiveCustomPlaybackController()) {
             return Promise.resolve(false);
@@ -1902,7 +1946,9 @@ export default class WebGPUPlayer {
 
         this.customPlaybackAudioSettings = {
             ...audioSettings,
-            forceStereoDownmix
+            binauralHeadphones: audioOutputSettings.binauralHeadphones,
+            forceStereoDownmix: audioOutputSettings.forceStereoDownmix,
+            speakerLayout: audioOutputSettings.speakerLayout
         };
         if (this.customPlaybackAudioDownmixAlgorithm !== null) {
             this.customPlaybackAudioDownmixAlgorithm = audioDownmixAlgorithm;
@@ -1923,18 +1969,17 @@ export default class WebGPUPlayer {
             return Promise.resolve(false);
         }
 
-        const decodedAudioOutputChannelCount = selectDecodedAudioOutputChannelCount(
-            eligibility,
-            customPlaybackController.getAudioOutputMaximumChannelCount(),
-            audioSettings.forceStereoDownmix
-        );
-        if (decodedAudioOutputChannelCount === undefined) {
+        const renderTarget = selectAudioRenderTarget(audioSettings, customPlaybackController.getAudioOutputMaximumChannelCount());
+        // The track keeps the decoder its eligibility chose, so a track whose package renders objects keeps the whole layout
+        const decodedAudioOutputLayout = selectDecodedAudioOutputLayout(eligibility, renderTarget);
+        if (decodedAudioOutputLayout === undefined) {
             return Promise.resolve(false);
         }
         return customPlaybackController.reconfigureAudioOutput({
             audioDownmixAlgorithm: this.customPlaybackAudioDownmixAlgorithm ?? undefined,
             audioDownmixSettings: { ...audioSettings.downmix },
-            decodedAudioOutputChannelCount
+            binauralHeadphones: renderTarget.binauralHeadphones,
+            decodedAudioOutputLayout
         }).catch((error: unknown): boolean => {
             console.warn('Unable to switch the WebGPU audio output layout', error);
             return false;
@@ -2312,7 +2357,13 @@ export default class WebGPUPlayer {
         setupDeadline: CustomPlaybackSetupDeadline
     ): Promise<CustomPlaybackAttemptResult> {
         this.customPlaybackStartingGeneration = backendGeneration;
-        const eligibility = await this.getCustomPlaybackEligibilityForOptions(options, backendGeneration);
+        const webGPUUserSettings = loadWebGPUUserSettings();
+        // The prewarmed context opens on the output a decoded track plays to, so its destination's width resolves the speaker layout
+        const audioRenderTarget = selectAudioRenderTarget(
+            webGPUUserSettings.audio,
+            getAudioContextMaximumChannelCount(this.getCustomPlaybackAudioPrewarm(backendGeneration)?.audioContext ?? null)
+        );
+        const eligibility = await this.getCustomPlaybackEligibilityForOptions(options, backendGeneration, audioRenderTarget);
         if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
             return { status: 'superseded' };
         }
@@ -2332,12 +2383,7 @@ export default class WebGPUPlayer {
             eligibility.audioOutputMode,
             backendGeneration
         );
-        const webGPUUserSettings = loadWebGPUUserSettings();
-        const decodedAudioOutputChannelCount = selectDecodedAudioOutputChannelCount(
-            eligibility,
-            getAudioContextMaximumChannelCount(audioPrewarm?.audioContext ?? null),
-            webGPUUserSettings.audio.forceStereoDownmix
-        );
+        const decodedAudioOutputLayout = selectDecodedAudioOutputLayout(eligibility, audioRenderTarget);
 
         let completedStartResult: CustomPlaybackStartResult | null = null;
         try {
@@ -2421,9 +2467,11 @@ export default class WebGPUPlayer {
             );
             this.customPlaybackController = customPlaybackController;
             this.customPlaybackAudioSettings = {
+                binauralHeadphones: webGPUUserSettings.audio.binauralHeadphones,
                 downmix: { ...webGPUUserSettings.audio.downmix },
                 forceStereoDownmix: webGPUUserSettings.audio.forceStereoDownmix,
-                outputDeviceId: webGPUUserSettings.audio.outputDeviceId
+                outputDeviceId: webGPUUserSettings.audio.outputDeviceId,
+                speakerLayout: webGPUUserSettings.audio.speakerLayout
             };
             this.customPlaybackBackendGeneration = backendGeneration;
             this.customPlaybackFrameLoop?.destroy();
@@ -2443,8 +2491,10 @@ export default class WebGPUPlayer {
                 audioDownmixAlgorithm,
                 audioDownmixSettings: getDecodedAudioDownmixSettings(eligibility, webGPUUserSettings),
                 audioOutputMode: eligibility.audioOutputMode ?? undefined,
+                audioRendersObjects: eligibility.audioRendersObjects,
                 audioTrackIndex: eligibility.audioTrackIndex,
-                decodedAudioOutputChannelCount,
+                binauralHeadphones: getDecodedAudioBinauralHeadphones(eligibility, audioRenderTarget),
+                decodedAudioOutputLayout,
                 durationMicroseconds: eligibility.durationMicroseconds,
                 dolbyVisionProfile: eligibility.dolbyVisionProfile,
                 maximumCodedHeight: eligibility.maximumCodedHeight,
@@ -2576,9 +2626,11 @@ export default class WebGPUPlayer {
         return probeCustomDecodeCapabilities(mediaSource ?? undefined);
     }
 
+    /** The render target is the speaker layout and binaural choice decoded audio would play to, which decide whether a track needs a package that renders its objects. */
     private async getCustomPlaybackEligibilityForOptions(
         options: unknown,
-        backendGeneration: number
+        backendGeneration: number,
+        audioRenderTarget: CustomAudioRenderTarget
     ): Promise<CustomPlaybackEligibility | null> {
         if (!await getWebGPUCustomDecodeEnabled()) {
             return null;
@@ -2613,6 +2665,7 @@ export default class WebGPUPlayer {
         let eligibilityOptions: CustomPlaybackEligibilityOptions = {
             ...presentationOptions,
             audioDecoders: getAudioDecoderPackages(decoderPackages),
+            audioRenderTarget,
             nativeMediaAudioCapabilities,
             runtimeAvailability
         };
@@ -2632,7 +2685,11 @@ export default class WebGPUPlayer {
                 eligibility = getCustomPlaybackEligibility(playbackOptions, capabilities, eligibilityOptions);
             }
         }
-        if (isAudioCodecRefusal(eligibility)) {
+        // A Dolby Atmos track whose objects the target needs takes a rendering package ahead of the native route, so the server's are fetched before settling for it
+        const needsRenderingPackage = eligibility.eligible
+            && eligibility.audioRendersObjects !== true
+            && playbackAudioNeedsObjectRendering(playbackOptions, audioRenderTarget);
+        if (isAudioCodecRefusal(eligibility) || needsRenderingPackage) {
             const audioEligibility = await this.getServerAudioPackageEligibility(playbackOptions, capabilities, eligibilityOptions, serverId, storedPackageIds);
             if (!this.isRequestedSessionCurrent(backendGeneration)) {
                 return null;
@@ -2644,7 +2701,8 @@ export default class WebGPUPlayer {
     }
 
     /**
-     * Returns the eligibility with the server's audio packages of the track's codec, which download only when no engine decoder, native route, or user package took the track.
+     * Returns the eligibility with the server's audio packages of the track's codec, which download only when no engine decoder, native route, or user package took the track,
+     * or when a Dolby Atmos track whose objects the target needs found no rendering package among the user's.
      * Null when the server has no package of the codec.
      */
     private async getServerAudioPackageEligibility(
@@ -3123,7 +3181,17 @@ export default class WebGPUPlayer {
         backendGeneration: number,
         selectionRevision: number
     ): Promise<void> {
-        const eligibility = await this.getCustomPlaybackEligibilityForOptions(this.currentPlaybackOptions, backendGeneration);
+        const audioSettings = this.customPlaybackAudioSettings;
+        if (!audioSettings) {
+            throw new Error('Custom playback audio settings snapshot is unavailable');
+        }
+        // The live output knows its current device; the prewarm only knew the startup one
+        const audioRenderTarget = selectAudioRenderTarget(
+            audioSettings,
+            customPlaybackController.getAudioOutputMaximumChannelCount()
+                ?? getAudioContextMaximumChannelCount(this.getCustomPlaybackAudioPrewarm(backendGeneration)?.audioContext ?? null)
+        );
+        const eligibility = await this.getCustomPlaybackEligibilityForOptions(this.currentPlaybackOptions, backendGeneration, audioRenderTarget);
         if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
         }
@@ -3142,20 +3210,15 @@ export default class WebGPUPlayer {
             return;
         }
 
-        const audioSettings = this.customPlaybackAudioSettings;
-        if (!audioSettings) {
-            throw new Error('Custom playback audio settings snapshot is unavailable');
-        }
         const audioOutputMode = eligibility.audioOutputMode ?? 'decoded-pcm';
-        // The live output knows its current device; the prewarm only knew the startup one
-        const maximumChannelCount = customPlaybackController.getAudioOutputMaximumChannelCount()
-            ?? getAudioContextMaximumChannelCount(this.getCustomPlaybackAudioPrewarm(backendGeneration)?.audioContext ?? null);
         const result = await customPlaybackController.setAudioStreamIndex(
             eligibility.audioTrackIndex,
             audioOutputMode,
-            selectDecodedAudioOutputChannelCount(eligibility, maximumChannelCount, audioSettings.forceStereoDownmix),
+            selectDecodedAudioOutputLayout(eligibility, audioRenderTarget),
             audioOutputMode === 'decoded-pcm' ? audioSettings.downmix : undefined,
-            eligibility.audioDecoder
+            eligibility.audioDecoder,
+            eligibility.audioRendersObjects === true,
+            getDecodedAudioBinauralHeadphones(eligibility, audioRenderTarget)
         );
         if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
