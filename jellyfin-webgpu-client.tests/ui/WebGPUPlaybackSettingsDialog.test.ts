@@ -388,8 +388,9 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-// One default button per setting the panel offers, the settings button placement, HDR output, deinterlacing, and GPU decode slicing included
-const DEFAULT_SETTING_BUTTON_COUNT = 21;
+// One default button per setting the panel offers, the settings button placement, HDR output, deinterlacing, GPU decode slicing,
+// the speaker layout, and binaural rendering included
+const DEFAULT_SETTING_BUTTON_COUNT = 23;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -1169,7 +1170,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         forceStereoCheckbox.dispatchEvent(new Event('change'));
         expect(updateAudioDownmixSettings).toHaveBeenCalledTimes(liveUpdateCount);
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            true,
+            expect.objectContaining({ forceStereoDownmix: true }),
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
         // The status reports the switch until the session answers
@@ -1195,7 +1196,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         );
         expect(updateAudioDownmixSettings).toHaveBeenCalledTimes(liveUpdateCount);
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            true,
+            expect.objectContaining({ forceStereoDownmix: true }),
             CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.RFC7845
         );
         expect(audioStatus.textContent).toBe(
@@ -1217,7 +1218,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            true,
+            expect.objectContaining({ forceStereoDownmix: true }),
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
         await flushMicrotasks();
@@ -1240,7 +1241,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             createDefaultWebGPUUserSettings().audio.downmix
         );
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            false,
+            expect.objectContaining({ forceStereoDownmix: false }),
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
         expect(forceStereoCheckbox.checked).toBe(false);
@@ -1261,7 +1262,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         forceStereoCheckbox.checked = true;
         forceStereoCheckbox.dispatchEvent(new Event('change'));
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            true,
+            expect.objectContaining({ forceStereoDownmix: true }),
             CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750
         );
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll').click();
@@ -1269,7 +1270,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             createDefaultWebGPUUserSettings().audio.downmix
         );
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            false,
+            expect.objectContaining({ forceStereoDownmix: false }),
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
         expect(audioStatus.textContent).toBe(
@@ -1280,6 +1281,57 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             `${AUDIO_DOWNMIX_LIVE_STATUS} ${AUDIO_OUTPUT_LAYOUT_LIVE_STATUS}`
         );
         expect(storageMockState.audioDownmixAlgorithm).toBe(
+            DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
+        );
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('saves the speaker layout and binaural rendering and applies them live', async () => {
+        const applyAudioOutputSettings = vi.fn((): Promise<boolean> => Promise.resolve(true));
+        const player = {
+            applyAudioOutputSettings,
+            getDetectedInputPeakNits: vi.fn(() => 1_000),
+            getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
+            updateAudioDownmixSettings: vi.fn(() => true),
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
+        } as unknown as WebGPUPlayer;
+        const panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const audioStatus = requirePanelElement<HTMLElement>(panel, '[data-audio-status]');
+        const speakerLayoutSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="speakerLayout"]');
+        const binauralCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="binauralHeadphones"]');
+        expect(speakerLayoutSelect.value).toBe('auto');
+        expect(binauralCheckbox.checked).toBe(false);
+
+        speakerLayoutSelect.value = '5.1.4';
+        speakerLayoutSelect.dispatchEvent(new Event('change'));
+        expect(readSavedSettings()).toMatchObject({ audio: { speakerLayout: '5.1.4' } });
+        expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
+            expect.objectContaining({ binauralHeadphones: false, speakerLayout: '5.1.4' }),
+            DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
+        );
+        await flushMicrotasks();
+        expect(audioStatus.textContent).toBe(createLayoutChangeStatus(AUDIO_OUTPUT_LAYOUT_LIVE_STATUS));
+
+        binauralCheckbox.checked = true;
+        binauralCheckbox.dispatchEvent(new Event('change'));
+        expect(readSavedSettings()).toMatchObject({ audio: { binauralHeadphones: true, speakerLayout: '5.1.4' } });
+        expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
+            expect.objectContaining({ binauralHeadphones: true, speakerLayout: '5.1.4' }),
+            DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
+        );
+
+        for (const settingKey of [ 'speakerLayout', 'binauralHeadphones' ]) {
+            requirePanelElement<HTMLButtonElement>(panel, `[data-default-setting="${settingKey}"]`).click();
+        }
+        expect(speakerLayoutSelect.value).toBe('auto');
+        expect(binauralCheckbox.checked).toBe(false);
+        expect(readSavedSettings()).toMatchObject({ audio: { binauralHeadphones: false, speakerLayout: 'auto' } });
+        expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
+            expect.objectContaining({ binauralHeadphones: false, speakerLayout: 'auto' }),
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
 
@@ -1312,7 +1364,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         forceStereoCheckbox.checked = true;
         forceStereoCheckbox.dispatchEvent(new Event('change'));
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            true,
+            expect.objectContaining({ forceStereoDownmix: true }),
             DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
         );
         expect(audioStatus.textContent).toBe(
@@ -1329,7 +1381,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         audioDownmixAlgorithmSelect.value = CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.NightModeDialogue;
         audioDownmixAlgorithmSelect.dispatchEvent(new Event('change'));
         expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-            true,
+            expect.objectContaining({ forceStereoDownmix: true }),
             CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.NightModeDialogue
         );
         expect(audioStatus.textContent).toBe(
@@ -1346,7 +1398,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         for (const resetSelector of [ '.webgpuSettingsResetAudio', '.webgpuSettingsResetAll' ]) {
             requirePanelElement<HTMLButtonElement>(panel, resetSelector).click();
             expect(applyAudioOutputSettings).toHaveBeenLastCalledWith(
-                false,
+                expect.objectContaining({ forceStereoDownmix: false }),
                 DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM
             );
             expect(audioStatus.textContent).toBe(

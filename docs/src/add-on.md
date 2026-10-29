@@ -79,12 +79,18 @@ Every setting is the user's own in the browser profile, else the default an admi
   The plugin applies that cached read first, so the page's first settings already follow the server's defaults, and a server with none cached starts from none, so another server's defaults never carry over; a failed read keeps the defaults it has.
   `ClientDefaults.ts` holds them as one flat map, a key per setting, and each setting reads its key's value as it reads a stored value of its own, so a value it refuses leaves the built-in default.
   The settings panel opens, and a new playback negotiates, once a read in progress settles.
-- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the output device, the playback preferences, the presentation settings, and the settings button placement in localStorage under `<userId>-webGPUPlaybackSettings` (version 5).
+- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the speaker layout, binaural rendering, the output device, the playback preferences, the presentation settings, and the settings button placement in localStorage under `<userId>-webGPUPlaybackSettings` (version 5).
   A save stores only the values that differ from the defaults at that moment, arrays whole, so every other setting follows the defaults, and a later default the server sets reaches it.
   Restoring a setting's default drops it from storage; a value set equal to its default also follows the default from then on.
 - Not defaultable: the audio output device, whose id belongs to the browser, the user's own decoder packages, and the decoder test results, which are a cache.
 - The settings button placement says where the video OSD offers the settings panel: before the host's settings button, the default, after it, at the end of the OSD's controls, or as an item of the host's player settings menu.
   A change applies at once through `applySettingsButtonPlacement` of `compat/SettingsEntryPoints.ts`.
+- The speaker layout is the layout client-decoded audio plays to: `auto`, the default, or `stereo`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`, or `7.1.4`, and a stored value outside them loads as `auto`.
+  Auto follows the output's channel count: 12 channels or more take 7.1.4, 10 or 11 take 7.1.2, 8 or 9 take 7.1, 6 or 7 take 5.1, and fewer take stereo, so 5.1.2 and 5.1.4 apply only when chosen.
+  A chosen layout wider than the output resolves as auto, and force stereo makes it stereo.
+  A channel bed plays within the layout's floor, 7.1 at most; a Dolby Atmos track whose decoder package renders its objects plays to the whole layout.
+- Binaural rendering, off by default, asks a decoder package that renders Dolby Atmos objects to render them for headphones whenever the output is stereo.
+- The speaker layout and binaural rendering also take part in choosing a track's decoder, so a change that needs another decoder, such as one that renders objects, applies from the next playback or audio track switch.
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
 - GPU decode slicing defaults to off, and a playback keeps the value it started with.

@@ -23,6 +23,7 @@ import {
 import { scheduleSelectLabelFallback } from './SelectLabelFallback';
 import {
     AUDIO_DOWNMIX_ALGORITHM_OPTIONS,
+    AUDIO_SPEAKER_LAYOUT_OPTIONS,
     createSettingOptionsHTML,
     DEINTERLACE_MODE_OPTIONS,
     NUMERIC_CONTROL_CONFIGURATIONS,
@@ -137,6 +138,19 @@ const TRAILING_SECTIONS: readonly SettingSection[] = Object.freeze([
     {
         rows: [
             {
+                descriptionKey: 'WebGPUSpeakerLayoutHelp',
+                key: 'speakerLayout',
+                kind: 'select',
+                labelKey: 'WebGPUSpeakerLayout',
+                options: AUDIO_SPEAKER_LAYOUT_OPTIONS
+            },
+            {
+                descriptionKey: 'WebGPUBinauralHeadphonesHelp',
+                key: 'binauralHeadphones',
+                kind: 'boolean',
+                labelKey: 'WebGPUBinauralHeadphones'
+            },
+            {
                 descriptionKey: 'WebGPUAudioDownmixAlgorithmHelp',
                 key: 'audioDownmixAlgorithm',
                 kind: 'select',
@@ -180,6 +194,7 @@ function getSettingValues(
     return {
         audioDownmixAlgorithm,
         automaticInputPeakNits: settings.render.automaticInputPeakNits,
+        binauralHeadphones: settings.audio.binauralHeadphones,
         brightness: display.brightness,
         centerLevel: downmix.centerLevel,
         contrast: display.contrast,
@@ -198,6 +213,7 @@ function getSettingValues(
         preferredVideoPlayer,
         saturation: display.saturation,
         settingsButtonPlacement: settings.osd.settingsButtonPlacement,
+        speakerLayout: settings.audio.speakerLayout,
         surroundLevel: downmix.surroundLevel,
         toneMapOperator: toneMapping.operator
     };

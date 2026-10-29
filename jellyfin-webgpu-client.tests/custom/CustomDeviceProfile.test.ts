@@ -3,7 +3,7 @@ import type { DeviceProfile } from '@jellyfin/sdk/lib/generated-client/models/de
 import type { ProfileCondition } from '@jellyfin/sdk/lib/generated-client/models/profile-condition';
 import { describe, expect, it } from 'vitest';
 
-import {
+import CustomDecodeCapabilityProbe, {
     CUSTOM_AUDIO_CODECS,
     CUSTOM_MEDIABUNNY_PCM_AUDIO_CODECS,
     CUSTOM_NATIVE_SURROUND_AUDIO_CODECS,
@@ -45,6 +45,12 @@ import {
     type AV1RawFormatVariant
 } from 'webgpu-player/capability/AV1RawFormatCapabilities';
 import {
+    H264_RAW_FORMAT_PROBE_DEFINITIONS,
+    H264_RAW_FORMAT_VARIANTS,
+    type H264RawFormatCapability,
+    type H264RawFormatVariant
+} from 'webgpu-player/capability/H264RawFormatCapabilities';
+import {
     HEVC_RANGE_EXTENSION_VARIANTS,
     type HEVCRangeExtensionCapability,
     type HEVCRangeExtensionRawFormat,
@@ -62,6 +68,7 @@ import {
     createAV1RawFormatCapability,
     createConfigCodecCapability,
     createH264ProfileCapabilities,
+    createH264RawFormatCapability,
     createHEVCRangeExtensionCapability,
     createNoEngineDecoderCodecCapability
 } from './CustomDecodeCapabilityBuilders';
@@ -96,6 +103,7 @@ const JPEG2000_DECODER_PACKAGE: DecoderPackageRouteSummary = {
 const EAC3_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], kind: 'audio', outputFormats: [] };
 const DTS_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'dts' ], kind: 'audio', outputFormats: [] };
 const TRUEHD_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'mlp', 'truehd' ], kind: 'audio', outputFormats: [] };
+const WMA_DECODER_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'wmav1', 'wmav2', 'wmapro', 'wmalossless', 'wmavoice' ], kind: 'audio', outputFormats: [] };
 const HEVC_DECODER_PACKAGE: DecoderPackageRouteSummary = {
     codecs: [ 'hevc' ],
     kind: 'video',
@@ -109,7 +117,8 @@ const PACKAGE_CODEC_DECODER_PACKAGES: readonly DecoderPackageRouteSummary[] = [
     JPEG2000_DECODER_PACKAGE,
     EAC3_DECODER_PACKAGE,
     DTS_DECODER_PACKAGE,
-    TRUEHD_DECODER_PACKAGE
+    TRUEHD_DECODER_PACKAGE,
+    WMA_DECODER_PACKAGE
 ];
 
 // The codecs a capability probe can find supported; the probe reports every other codec as having no engine decoder
@@ -158,17 +167,16 @@ type NativeUltraHDVideoCapabilityHarness = Readonly<{
 }>;
 
 type NativeSurroundAudioCapabilityHarness = Readonly<{
-    capabilityProperties: Readonly<{
-        nativeSurroundAudio?: NonNullable<CustomDecodeCapabilities['nativeSurroundAudio']>
-    }>
+    capabilities?: NonNullable<CustomDecodeCapabilities['nativeSurroundAudio']>
     probeCount: number
 }>;
 
 function createNativeSurroundAudioCapabilityHarness(
-    supportedCodecs: readonly CustomNativeSurroundAudioCodec[]
+    supportedCodecs: readonly CustomNativeSurroundAudioCodec[],
+    inputChannelCount: CustomNativeSurroundAudioCodecCapability['inputChannelCount']
 ): NativeSurroundAudioCapabilityHarness {
     if (supportedCodecs.length === 0) {
-        return { capabilityProperties: {}, probeCount: 0 };
+        return { probeCount: 0 };
     }
 
     const capabilities = {} as Record<CustomNativeSurroundAudioCodec, CustomNativeSurroundAudioCodecCapability>;
@@ -184,14 +192,14 @@ function createNativeSurroundAudioCapabilityHarness(
         capabilities[codec] = {
             codec,
             codecString: codecStrings[codec],
-            inputChannelCount: 6,
+            inputChannelCount,
             reason: supported ? 'decode-output-verified' : 'decode-output-missing',
             sampleRate: 48_000,
             status: supported ? 'supported' : 'unsupported'
         };
     }
     return {
-        capabilityProperties: { nativeSurroundAudio: capabilities },
+        capabilities,
         probeCount: CUSTOM_NATIVE_SURROUND_AUDIO_CODECS.length
     };
 }
@@ -234,6 +242,7 @@ type CapabilityOptions = Readonly<{
     nativeDolbyVisionSupported?: boolean
     supportedNativeUltraHDVideoCodecs?: readonly CustomNativeUltraHDVideoCodec[]
     supportedNativeSurroundAudioCodecs?: readonly CustomNativeSurroundAudioCodec[]
+    supportedNativeSevenPointOneAudioCodecs?: readonly CustomNativeSurroundAudioCodec[]
 }>;
 
 function createCapabilities({
@@ -242,7 +251,8 @@ function createCapabilities({
     supportedRawHDRVideoCodecs = [],
     nativeDolbyVisionSupported = false,
     supportedNativeUltraHDVideoCodecs = [],
-    supportedNativeSurroundAudioCodecs = []
+    supportedNativeSurroundAudioCodecs = [],
+    supportedNativeSevenPointOneAudioCodecs = []
 }: CapabilityOptions): CustomDecodeCapabilities {
     const supportedVideoSet = new Set(supportedVideoCodecs);
     const supportedAudioSet = new Set(supportedAudioCodecs);
@@ -272,7 +282,8 @@ function createCapabilities({
         };
     }
     const nativeUltraHDVideoCapabilityHarness = createNativeUltraHDVideoCapabilityHarness(supportedNativeUltraHDVideoCodecs);
-    const nativeSurroundAudioCapabilityHarness = createNativeSurroundAudioCapabilityHarness(supportedNativeSurroundAudioCodecs);
+    const fivePointOneHarness = createNativeSurroundAudioCapabilityHarness(supportedNativeSurroundAudioCodecs, 6);
+    const sevenPointOneHarness = createNativeSurroundAudioCapabilityHarness(supportedNativeSevenPointOneAudioCodecs, 8);
     return {
         audio,
         h264Profiles: createH264ProfileCapabilities(supportedVideoSet.has('h264')),
@@ -284,19 +295,20 @@ function createCapabilities({
             reason: nativeDolbyVisionSupported ? 'decode-output-verified' : 'decode-output-missing',
             status: nativeDolbyVisionSupported ? 'supported' : 'unsupported'
         },
-        ...nativeSurroundAudioCapabilityHarness.capabilityProperties,
+        ...(fivePointOneHarness.capabilities ? { nativeSurroundAudio: fivePointOneHarness.capabilities } : {}),
+        ...(sevenPointOneHarness.capabilities ? { nativeSevenPointOneAudio: sevenPointOneHarness.capabilities } : {}),
         ...nativeUltraHDVideoCapabilityHarness.capabilityProperties,
         rawHDRVideo,
         telemetry: {
             audioProbeCount: CUSTOM_WEB_CODECS_AUDIO_CODECS.length,
             mediabunnyAudioCodecCount: CUSTOM_MEDIABUNNY_PCM_AUDIO_CODECS.length,
-            nativeSurroundAudioProbeCount: nativeSurroundAudioCapabilityHarness.probeCount,
+            nativeSurroundAudioProbeCount: fivePointOneHarness.probeCount + sevenPointOneHarness.probeCount,
             nativeHDRVideoProbeCount: 0,
             nativeUltraHDVideoProbeCount: nativeUltraHDVideoCapabilityHarness.probeCount,
             rawHDRVideoProbeCount: CUSTOM_RAW_HDR_VIDEO_CODECS.length - 1,
             reason: 'complete',
             supportedAudioCodecCount: supportedAudioCodecs.length,
-            supportedNativeSurroundAudioCodecCount: supportedNativeSurroundAudioCodecs.length,
+            supportedNativeSurroundAudioCodecCount: supportedNativeSurroundAudioCodecs.length + supportedNativeSevenPointOneAudioCodecs.length,
             supportedNativeHDRVideoCodecCount: 0,
             supportedNativeUltraHDVideoCodecCount: supportedNativeUltraHDVideoCodecs.length,
             supportedRawHDRVideoCodecCount: supportedRawHDRVideoCodecs.length,
@@ -1086,6 +1098,27 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Value: '1|2|3|6'
             });
             expect(measuredProfile?.Conditions).toEqual(expect.arrayContaining([ ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS ]));
+        }
+    );
+
+    it.each([ 'aac', 'opus', 'flac', 'vorbis' ] as const)(
+        'advertises 8 channels for %s only with its 7.1 verdict',
+        codec => {
+            const getChannelCondition = (capabilityOptions: Partial<CapabilityOptions>): unknown => augmentDeviceProfileForCustomDecode(
+                createBaseProfile(),
+                createCapabilities({ supportedVideoCodecs: [ 'h264' ], supportedAudioCodecs: [ codec ], ...capabilityOptions })
+            ).profile.CodecProfiles?.find(profile => (
+                profile.Codec === codec
+                && profile.Container === CUSTOM_VIDEO_CONTAINERS
+            ))?.Conditions?.find(condition => condition.Property === 'AudioChannels')?.Value;
+
+            expect(getChannelCondition({ supportedNativeSurroundAudioCodecs: [ codec ] })).toBe('1|2|3|6');
+            expect(getChannelCondition({
+                supportedNativeSevenPointOneAudioCodecs: [ codec ],
+                supportedNativeSurroundAudioCodecs: [ codec ]
+            })).toBe('1|2|3|6|8');
+            // The 7.1 verdict alone adds 8 to the channels every decoded route covers, but no 5.1 bed
+            expect(getChannelCondition({ supportedNativeSevenPointOneAudioCodecs: [ codec ] })).toBe('1|2|8');
         }
     );
 
@@ -4374,5 +4407,183 @@ describe('augmentDeviceProfileForCustomDecode AV1 raw formats outside Main 10', 
         expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'Professional', 10, 'SDR', { PixelFormat: 'yuv422p10le' }))).toBe(false);
         expect(isDirectPlayAdvertised(result.profile, createVideoStream('av1', 'High', 10, 'HDR10', { ...PQ_STREAM_COLOR, PixelFormat: 'yuv444p10le' }))).toBe(false);
         expect(isDirectPlayAdvertised(result.profile, EIGHT_BIT_PROFILE_10_STREAM)).toBe(false);
+    });
+});
+
+/** Adds H.264 raw-format evidence, unqualified apart from the given variants. */
+function withH264RawFormats(
+    capabilities: CustomDecodeCapabilities,
+    supportedVariants: readonly H264RawFormatVariant[]
+): CustomDecodeCapabilities {
+    const h264RawFormats = {} as Record<H264RawFormatVariant, H264RawFormatCapability>;
+    for (const variant of H264_RAW_FORMAT_VARIANTS) {
+        h264RawFormats[variant] = createH264RawFormatCapability(variant, supportedVariants.includes(variant));
+    }
+    return { ...capabilities, h264RawFormats };
+}
+
+/** Returns the base profile with Jellyfin Web's stock H.264 codec profile of an HDR display, which conditions on the 8-bit profiles. */
+function createBaseProfileWithStockH264(): DeviceProfile {
+    const profile = createBaseProfile();
+    const stockProfile = createStockVideoCodecProfile('h264', HDR_DISPLAY_STOCK_VIDEO_RANGE_TYPES);
+    profile.CodecProfiles = [ {
+        ...stockProfile,
+        Conditions: [
+            { Condition: 'EqualsAny', IsRequired: false, Property: 'VideoProfile', Value: 'high|main|baseline|constrained baseline' },
+            ...stockProfile.Conditions ?? []
+        ]
+    } ];
+    return profile;
+}
+
+const H264_RAW_FORMAT_CAPABILITY_OPTIONS = {
+    supportedAudioCodecs: [ 'aac' ],
+    supportedVideoCodecs: [ 'h264' ]
+} as const;
+const H264_RAW_FORMATS = [ 'I420P10', 'I422', 'I422P10', 'I444', 'I444P10' ] as const;
+
+function augmentH264RawFormats(
+    supportedVariants: readonly H264RawFormatVariant[],
+    authorizedRawHDRRouteKeys: readonly RawHDRAuthorizationRouteKey[],
+    capabilities: CustomDecodeCapabilities = createCapabilities(H264_RAW_FORMAT_CAPABILITY_OPTIONS)
+): DeviceProfile {
+    return augmentDeviceProfileForCustomDecode(
+        createBaseProfileWithStockH264(),
+        withH264RawFormats(capabilities, supportedVariants),
+        { allowRawHDR: true, allowRawSDR: true, authorizedRawHDRRouteKeys }
+    ).profile;
+}
+
+function createH264Stream(
+    profile: string,
+    bitDepth: number,
+    pixelFormat: string,
+    videoRangeType = 'SDR'
+): Readonly<Record<string, unknown>> {
+    const STREAM_COLORS: Readonly<Record<string, Readonly<Record<string, string>>>> = { HLG: HLG_STREAM_COLOR, SDR: {} };
+    const color = STREAM_COLORS[videoRangeType] ?? PQ_STREAM_COLOR;
+    return createVideoStream('h264', profile, bitDepth, videoRangeType, { ...color, PixelFormat: pixelFormat });
+}
+
+describe('augmentDeviceProfileForCustomDecode H.264 raw formats beyond High', () => {
+    it('advertises each profile at the depths whose whole format envelope qualified, with the ranges its keys authorize', () => {
+        const profile = augmentH264RawFormats(H264_RAW_FORMAT_VARIANTS, [
+            ...getBT709RawSDRRouteKeys(H264_RAW_FORMATS),
+            'I420P10:bt2020-ncl:bt2020:limited:pq',
+            'I422P10:bt2020-ncl:bt2020:limited:pq'
+        ]);
+        const pairBitDepths = (pair: string): string | undefined => getMeasuredRoutePairBitDepths(profile, 'h264', pair);
+
+        // 8-bit 4:2:0 under a profile beyond High is no variant, so High 10 takes 10 bits alone
+        expect(pairBitDepths('high 10|SDR')).toBe('10');
+        expect(pairBitDepths('high 10 intra|SDR')).toBe('10');
+        expect(pairBitDepths('high 4:2:2|SDR')).toBe('8|10');
+        expect(pairBitDepths('high 4:4:4 predictive|SDR')).toBe('8|10');
+        expect(pairBitDepths('cavlc 4:4:4|SDR')).toBe('8|10');
+        // HDR is 10-bit only, and each profile needs the PQ key of every format it may code
+        expect(pairBitDepths('high 10|HDR10')).toBe('10');
+        expect(pairBitDepths('high 4:2:2|HDR10Plus')).toBe('10');
+        expect(pairBitDepths('high 4:4:4 predictive|HDR10')).toBe('0');
+        expect(pairBitDepths('high 10|HLG')).toBe('0');
+        // The native route stays 8-bit SDR
+        expect(pairBitDepths('high|SDR')).toBe('8');
+        expect(pairBitDepths('high|HDR10')).toBe('0');
+
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 10', 10, 'yuv420p10le'))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 4:4:4 Predictive', 8, 'yuv444p'))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 4:2:2', 10, 'yuv422p10le', 'HDR10'))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 4:4:4 Predictive', 10, 'yuv444p10le', 'HDR10'))).toBe(false);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 10', 10, 'yuv420p10le', 'HLG'))).toBe(false);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High', 8, 'yuv420p'))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High', 10, 'yuv420p10le'))).toBe(false);
+    });
+
+    it('withholds a profile at a depth when any format it may code there did not qualify', () => {
+        const routeKeys = getBT709RawSDRRouteKeys(H264_RAW_FORMATS);
+        // High 4:2:2 at 10 bits also codes 4:2:0
+        const without422Ten = augmentH264RawFormats([ 'high420-10', 'high422-8', 'high444-8' ], routeKeys);
+        // High 4:4:4 Predictive at 8 bits also codes 4:2:2
+        const without422Eight = augmentH264RawFormats([ 'high420-10', 'high422-10', 'high444-8', 'high444-10' ], routeKeys);
+
+        expect(getMeasuredRoutePairBitDepths(without422Ten, 'h264', 'high 10|SDR')).toBe('10');
+        expect(getMeasuredRoutePairBitDepths(without422Ten, 'h264', 'high 4:2:2|SDR')).toBe('8');
+        expect(getMeasuredRoutePairBitDepths(without422Ten, 'h264', 'high 4:4:4 predictive|SDR')).toBe('8');
+        expect(isDirectPlayAdvertised(without422Ten, createH264Stream('High 4:2:2', 10, 'yuv422p10le'))).toBe(false);
+        expect(isDirectPlayAdvertised(without422Ten, createH264Stream('High 4:2:2', 8, 'yuv422p'))).toBe(true);
+
+        expect(getMeasuredRoutePairBitDepths(without422Eight, 'h264', 'high 4:2:2|SDR')).toBe('10');
+        expect(getMeasuredRoutePairBitDepths(without422Eight, 'h264', 'high 4:4:4 predictive|SDR')).toBe('10');
+        expect(isDirectPlayAdvertised(without422Eight, createH264Stream('High 4:4:4 Predictive', 8, 'yuv444p'))).toBe(false);
+        expect(isDirectPlayAdvertised(without422Eight, createH264Stream('High 4:4:4 Predictive', 10, 'yuv444p10le'))).toBe(true);
+    });
+
+    it('needs both BT.709 keys of every format for SDR, and the raw HDR key for HDR', () => {
+        const profile = augmentH264RawFormats(H264_RAW_FORMAT_VARIANTS, [
+            ...getBT709RawSDRRouteKeys([ 'I420P10', 'I422P10', 'I444', 'I444P10' ]),
+            'I422:bt709:bt709:limited:sdr',
+            'I420P10:bt2020-ncl:bt2020:limited:hlg'
+        ]);
+
+        // I422 lacks its full-range key, which every 8-bit profile beyond High may code
+        expect(getMeasuredRoutePairBitDepths(profile, 'h264', 'high 4:2:2|SDR')).toBe('10');
+        expect(getMeasuredRoutePairBitDepths(profile, 'h264', 'high 4:4:4 predictive|SDR')).toBe('10');
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 4:2:2', 8, 'yuv422p'))).toBe(false);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 10', 10, 'yuv420p10le', 'HLG'))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 10', 10, 'yuv420p10le', 'HDR10'))).toBe(false);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 4:2:2', 10, 'yuv422p10le', 'HLG'))).toBe(false);
+    });
+
+    it('keeps the native H.264 advertisement unchanged when no raw format qualified', () => {
+        const routeKeys = getBT709RawSDRRouteKeys(H264_RAW_FORMATS);
+        const unqualified = augmentH264RawFormats([], routeKeys);
+        const withoutEvidence = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockH264(),
+            createCapabilities(H264_RAW_FORMAT_CAPABILITY_OPTIONS),
+            { allowRawHDR: true, allowRawSDR: true, authorizedRawHDRRouteKeys: routeKeys }
+        ).profile;
+
+        expect(unqualified).toEqual(withoutEvidence);
+        expect(isDirectPlayAdvertised(unqualified, createH264Stream('High', 8, 'yuv420p'))).toBe(true);
+        expect(isDirectPlayAdvertised(unqualified, createH264Stream('High 10', 10, 'yuv420p10le'))).toBe(false);
+    });
+
+    it('lists H.264 for direct play when only raw formats decode it', () => {
+        const capabilities = createCapabilities(H264_RAW_FORMAT_CAPABILITY_OPTIONS);
+        const profile = augmentH264RawFormats(
+            H264_RAW_FORMAT_VARIANTS,
+            getBT709RawSDRRouteKeys(H264_RAW_FORMATS),
+            { ...capabilities, h264Profiles: createH264ProfileCapabilities(false) }
+        );
+
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High 10', 10, 'yuv420p10le'))).toBe(true);
+        expect(isDirectPlayAdvertised(profile, createH264Stream('High', 8, 'yuv420p'))).toBe(false);
+    });
+
+    it.each([
+        { bitDepth: 10, pixelFormat: 'yuv422p10le', profile: 'High 4:2:2 Intra', variants: [ 'high420-10', 'high422-10' ] },
+        { bitDepth: 8, pixelFormat: 'yuv444p', profile: 'High 4:4:4 Predictive', variants: [ 'high422-8', 'high444-8' ] }
+    ])('advertises $profile at $bitDepth bits from the probes the engine selects for such an item', async ({ bitDepth, pixelFormat, profile, variants }) => {
+        const stream = createH264Stream(profile, bitDepth, pixelFormat);
+        // A browser whose software decoder decodes and copies every vector the selection downloads
+        const probed = await new CustomDecodeCapabilityProbe({
+            h264RawFormatVectorLoader: (assetPath: string): Promise<ArrayBuffer> => {
+                const definition = H264_RAW_FORMAT_VARIANTS
+                    .map((variant: H264RawFormatVariant) => H264_RAW_FORMAT_PROBE_DEFINITIONS[variant])
+                    .find(candidate => candidate.assetPath === assetPath);
+                const byteLength = definition?.accessUnits.reduce((total: number, accessUnit): number => total + accessUnit.byteLength, 0) ?? 0;
+                return Promise.resolve(new ArrayBuffer(byteLength));
+            },
+            rawHDRVideoOutputProbe: () => Promise.resolve({ outputCopySupported: true }),
+            videoDecoder: { isConfigSupported: (config: VideoDecoderConfig) => Promise.resolve({ config, supported: true }) }
+        }).probe({ MediaSources: [ { MediaStreams: [ stream ] } ] });
+
+        expect(H264_RAW_FORMAT_VARIANTS.filter(variant => probed.h264RawFormats?.[variant].status === 'supported')).toEqual(variants);
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfileWithStockH264(),
+            { ...createCapabilities(H264_RAW_FORMAT_CAPABILITY_OPTIONS), h264RawFormats: probed.h264RawFormats },
+            { allowRawHDR: true, allowRawSDR: true, authorizedRawHDRRouteKeys: getBT709RawSDRRouteKeys(H264_RAW_FORMATS) }
+        ).profile;
+
+        expect(isDirectPlayAdvertised(result, stream)).toBe(true);
     });
 });

@@ -33,8 +33,13 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - The frame loop takes the controller's current frame each animation frame and presents it.
 - No animation frame runs while the page is hidden, so the frame loop's 25 ms timer takes and discards due frames against the clock instead.
   Credits keep flowing and audio stays the master.
-- `WebGPUPlayer.selectDecodedAudioOutputChannelCount` returns 2 when the user forces stereo, and otherwise defers to the engine's `selectCustomAudioOutputChannelCountForMaximum`.
-- The add-on triggers a live audio layout switch when the output reports `sinkchange` with a different channel count, and when force stereo or the downmix algorithm changes.
+- Before eligibility, `WebGPUPlayer` resolves the user's speaker layout against the destination's channel count with the engine's `selectCustomAudioSpeakerLayout`, stereo when the user forces stereo, and hands it with the binaural choice to the engine's eligibility as `audioRenderTarget`.
+  At startup the count is the audio prewarm's `destination.maxChannelCount`; at a track switch it is the live output's, else the prewarm's; without either the layout is stereo.
+- Each decoded PCM track then plays to the engine's `selectCustomAudioOutputLayout` of that layout, the whole layout when the eligibility reports `audioRendersObjects`, and the binaural choice goes with it to `play`, `setAudioStreamIndex`, and `reconfigureAudioOutput`.
+- Each playback keeps a snapshot of the audio settings it started with; the settings panel updates it as it applies a change.
+- The add-on triggers a live audio output switch when the output reports `sinkchange` with a different channel count, and when force stereo, the speaker layout, binaural rendering, or the downmix algorithm changes.
+  A binaural change that keeps the layout applies between packets without a pause.
+- The stats overlay's audio category shows the output layout and the number of objects a decoder package renders, each once the engine reports it.
 - Re-detect output, in the WebGPU settings, rebuilds every AudioContext sink so the browser re-reads the device.
   Chromium moves a default output to a new device without telling the page, which leaves a stale channel count until a rebuild.
 - The deinterlacing choice in the WebGPU settings reaches the presenter live through `WebGPUPlayer.setDeinterlaceMode`.

@@ -87,6 +87,16 @@ Per codec, the routes are:
 - VP9:
   - native SDR at 8 bits (`profile 0`);
   - raw HDR10, HDR10Plus, and HLG, and raw SDR, at 10 bits (`profile 2`).
+- H.264:
+  - native SDR at 8 bits under each profile up to `high` that `h264Profiles` verifies;
+  - the profiles beyond High that `h264RawFormats` qualifies, under their lowercase FFmpeg names (`high 10`, `high 10 intra`, `high 4:2:2`, `high 4:2:2 intra`, `high 4:4:4`, `high 4:4:4 predictive`, `high 4:4:4 intra`, and `cavlc 4:4:4`), as `createH264RawFormatMeasuredVideoRoutes` builds them.
+    A profile name hides chroma format, as generic `Rext` does, so a profile is advertised at a depth only when every raw format variant it may code there qualifies and its format's key for the range is authorized (`hasCompleteH264RawFormatEnvelope`).
+    `high 4:2:2` at 10 bits therefore needs both 4:2:0 and 4:2:2 at 10 bits, and `high 4:4:4 predictive` at 8 bits needs 4:2:2 and 4:4:4 at 8 bits.
+    8-bit 4:2:0 is no variant, so `high 10` is advertised at 10 bits only.
+    A depth's envelope still cannot exclude 8-bit 4:2:0 coded under `high 4:2:2` or a 4:4:4 profile, such as x264's lossless High 4:4:4 Predictive, because Jellyfin has no profile condition on chroma format or pixel format.
+    Such a stream negotiates DirectPlay once its profile is advertised at 8 bits, the engine's eligibility refuses it as `codec-unsupported`, and the player falls back as for any refused direct play.
+    SDR is advertised at 8 and 10 bits, and HDR10, HDR10Plus, and HLG at 10 bits only.
+    H.264 is a direct-play codec when only these raw routes decode it, and their profiles and depths widen the stock H.264 ceiling of the custom containers.
 - HEVC: as [Direct play support](direct-play-support.md) lists, with raw SDR at 10 bits (`main 10`) beside the native Main 10 SDR route.
 
 Every raw HDR route that advertises HDR10 also advertises HDR10Plus, because HDR10+ always carries a static HDR10 base that raw PQ presents (`getRawHDRRouteVideoRangeTypes`).
@@ -121,6 +131,7 @@ The profile advertises what the decoder packages a playback can use decode, befo
 - A package codec with stock CodecProfiles, AV1 or HEVC, widens their custom-container ceiling with its profiles and depths, as a raw route does (`createRawCodecProfilePlans`, `createAuthorizedHEVCProfilePlan`).
 - An audio package's codec is a decoded route at every channel count its decoded PCM path presents; DTS and TrueHD keep their exact profile routes.
   Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
+  A WMA package's codecs, `wmav1`, `wmav2`, `wmapro`, `wmalossless`, and `wmavoice`, are advertised in Matroska, AVI, and ASF only, the containers whose WAVEFORMATEX the engine reads.
 
 ### Sizes
 
@@ -151,6 +162,8 @@ The engine deinterlaces every route but Dolby Vision's, for each codec whose dec
 ## Audio
 
 - The profile advertises the engine's audio routes per codec and channel count, as the engine's [audio routes](https://alchemyyy.github.io/WebGPU-Player/routes.html#audio-routes) list them.
+- AAC, Opus, FLAC, and Vorbis advertise 3 and 6 channels only with the codec's 5.1 verdict and 8 only with its 7.1 verdict, each a probe of its own (`getDecodedAudioRouteChannelCounts`); without either they advertise 1 and 2.
+  Jellyfin reports FFmpeg's 7.1 and 7.1(wide) alike as `7.1`, so an 8-channel route covers both by count.
 - The profile uses `AudioSampleRate NotEquals 0`, because Jellyfin reuses conditions as transcode targets.
 - AC-3, E-AC-3, and PCM have no runtime probe, so `appendMeasuredNativeAudioRouteProfiles` never emits its 48 kHz profile.
 - A profile condition cannot express ChannelLayout, so three-channel routes and E-AC-3 and TrueHD 7.1 are advertised by channel count and qualified by layout only at eligibility.
@@ -186,7 +199,7 @@ Every non-retry profile also waits for the raw SDR authorization, whatever the s
   Bitrate is stripped everywhere on non-retry profiles.
 - HEVC routes expand to every (VideoProfile, VideoRangeType) pair, with `VideoBitDepth Equals 0` as the value that always fails.
   AV1 and VP9 expand the same way when they have more than one route, so their native 8-bit SDR and raw 10-bit SDR share one SDR pair with both depths, and the AV1 raw format variants of one profile share its pairs.
-  H.264 is not expanded.
+  H.264 expands the same way once a raw format profile beyond High is advertised; with its native route alone it is not expanded.
 - Generic `Rext` advertises a bit depth only when 4:2:0, 4:2:2, and 4:4:4 at that depth are all authorized (`hasCompleteRextBitDepthEnvelope`).
 - The native external route needs explicit color fields that a profile cannot express.
   Such a source can negotiate DirectPlay and then take the raw route or fall back.

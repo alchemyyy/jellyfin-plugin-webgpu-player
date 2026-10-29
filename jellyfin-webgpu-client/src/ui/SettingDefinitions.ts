@@ -3,6 +3,7 @@ import {
     CUSTOM_AUDIO_DOWNMIX_ALGORITHMS,
     type CustomAudioDownmixAlgorithm
 } from 'webgpu-player/audio/processing/CustomAudioDownmixAlgorithm';
+import type { CustomAudioSpeakerLayout } from 'webgpu-player/audio/NativeMultichannelAudioOutput';
 import type { DeinterlaceMode } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { HDR_RENDER_SETTING_RANGES, type ToneMapOperator } from 'webgpu-player/presentation/RenderSettings';
 
@@ -148,6 +149,18 @@ export const AUDIO_DOWNMIX_ALGORITHM_OPTIONS: ReadonlyArray<SettingOption<Custom
     { name: 'Dave750', value: CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750 },
     { labelKey: 'WebGPUDownmixAlgorithmNightModeDialogue', value: CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.NightModeDialogue }
 ] satisfies Array<SettingOption<CustomAudioDownmixAlgorithm>>);
+
+// Auto is Jellyfin Web's own word; the channel layouts are names Jellyfin leaves untranslated
+export const AUDIO_SPEAKER_LAYOUT_OPTIONS: ReadonlyArray<SettingOption<CustomAudioSpeakerLayout>> = Object.freeze([
+    { labelKey: 'Auto', value: 'auto' },
+    { labelKey: 'WebGPUSpeakerLayoutStereo', value: 'stereo' },
+    { name: '5.1', value: '5.1' },
+    { name: '7.1', value: '7.1' },
+    { name: '5.1.2', value: '5.1.2' },
+    { name: '5.1.4', value: '5.1.4' },
+    { name: '7.1.2', value: '7.1.2' },
+    { name: '7.1.4', value: '7.1.4' }
+] satisfies Array<SettingOption<CustomAudioSpeakerLayout>>);
 
 // Off is Jellyfin Web's own word
 export const DEINTERLACE_MODE_OPTIONS: ReadonlyArray<SettingOption<DeinterlaceMode>> = Object.freeze([

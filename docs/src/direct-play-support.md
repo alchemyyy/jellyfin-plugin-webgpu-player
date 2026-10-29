@@ -142,7 +142,7 @@ The engine's eligibility tests cover it.
 
 A codec the engine decodes only through a decoder package direct-plays only when the user's packages or the server's catalog offer a package whose `accepts` names it; otherwise the profile advertises nothing for it and Jellyfin transcodes.
 These are MPEG-1 and MPEG-2 (package `mpeg2`), VC-1 and WMV3 (`vc1`), JPEG 2000 (`jpeg2000`), and MPEG-4 Part 2, H.263, and MS-MPEG4 v1, v2, and v3 (`mpeg4`).
-Each direct-plays as SDR at the depths its package writes, in every container the engine demuxes it from: MPEG-4 Part 2 and H.263 in AVI, Matroska, and MP4, and MS-MPEG4 in AVI and Matroska.
+Each direct-plays as SDR at the depths its package writes, in every container the engine demuxes it from: MPEG-4 Part 2 and H.263 in AVI, ASF, Matroska, and MP4, MS-MPEG4 in AVI, ASF, and Matroska, and VC-1 and WMV3 in ASF too, which Jellyfin names `asf` for `.asf`, `.wmv`, and `.wma` files.
 
 ## Subtitles
 

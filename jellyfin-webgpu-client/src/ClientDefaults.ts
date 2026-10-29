@@ -6,6 +6,7 @@
 export const CLIENT_DEFAULT_KEYS = Object.freeze([
     'audioDownmixAlgorithm',
     'automaticInputPeakNits',
+    'binauralHeadphones',
     'brightness',
     'centerLevel',
     'contrast',
@@ -25,6 +26,7 @@ export const CLIENT_DEFAULT_KEYS = Object.freeze([
     'presentationFiles',
     'saturation',
     'settingsButtonPlacement',
+    'speakerLayout',
     'surroundLevel',
     'toneMapOperator'
 ] as const);

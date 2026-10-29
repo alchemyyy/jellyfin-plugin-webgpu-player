@@ -17,6 +17,7 @@ import {
 } from './PresentationSettingsSection';
 import {
     AUDIO_DOWNMIX_ALGORITHM_OPTIONS,
+    AUDIO_SPEAKER_LAYOUT_OPTIONS,
     createSettingOptionsHTML,
     NUMERIC_CONTROL_CONFIGURATIONS,
     SETTINGS_BUTTON_PLACEMENT_OPTIONS,
@@ -63,12 +64,14 @@ type DefaultSettingKey =
     | NumericSettingKey
     | 'audioDownmixAlgorithm'
     | 'automaticInputPeakNits'
+    | 'binauralHeadphones'
     | 'enableCustomDecode'
     | 'enableGPUDecodeSlicing'
     | 'enableHDRToneMapping'
     | 'forceStereoDownmix'
     | 'operator'
-    | 'settingsButtonPlacement';
+    | 'settingsButtonPlacement'
+    | 'speakerLayout';
 
 type ActivePanel = {
     close: () => void
@@ -422,6 +425,36 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
                             <select
+                                aria-describedby="webgpu-audio-speaker-layout-description"
+                                data-setting-select="speakerLayout"
+                                id="webgpu-audio-speaker-layout"
+                                is="emby-select"
+                                label="${translateToHTML('WebGPUSpeakerLayout')}"
+                            >${createSettingOptionsHTML(AUDIO_SPEAKER_LAYOUT_OPTIONS)}</select>
+                        </div>
+                        ${createDefaultButtonHTML('speakerLayout', globalize.translate('WebGPUSettingNameSpeakerLayout'))}
+                    </div>
+                    <div
+                        class="fieldDescription"
+                        id="webgpu-audio-speaker-layout-description"
+                    >${translateToHTML('WebGPUSpeakerLayoutHelp')}</div>
+                    <div class="webgpuSettingsCheckboxRow">
+                        <label class="checkboxContainer">
+                            <input
+                                data-setting-checkbox="binauralHeadphones"
+                                is="emby-checkbox"
+                                type="checkbox"
+                            />
+                            <span>${translateToHTML('WebGPUBinauralHeadphones')}</span>
+                        </label>
+                        ${createDefaultButtonHTML('binauralHeadphones', globalize.translate('WebGPUSettingNameBinauralHeadphones'))}
+                    </div>
+                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
+                        ${translateToHTML('WebGPUBinauralHeadphonesHelp')}
+                    </div>
+                    <div class="webgpuSettingsSelectRow">
+                        <div class="selectContainer webgpuSettingsSelectContainer">
+                            <select
                                 aria-describedby="webgpu-audio-downmix-algorithm-description"
                                 data-setting-select="audioDownmixAlgorithm"
                                 id="webgpu-audio-downmix-algorithm"
@@ -644,12 +677,14 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const audioOutputRedetect = requireElement<HTMLButtonElement>(panel, '[data-audio-output-redetect]');
     const automaticInputPeakCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="automaticInputPeakNits"]');
     const forceStereoCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="forceStereoDownmix"]');
+    const binauralHeadphonesCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="binauralHeadphones"]');
     const customDecodeCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
     const HDRToneMappingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableHDRToneMapping"]');
     const GPUDecodeSlicingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableGPUDecodeSlicing"]');
     const playbackStatus = requireElement<HTMLElement>(panel, '[data-playback-status]');
     const operatorSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="operator"]');
     const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
+    const speakerLayoutSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="speakerLayout"]');
     const settingsButtonPlacementSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="settingsButtonPlacement"]');
     let settings = loadWebGPUUserSettings();
     const audioOutputManager = getWebGPUAudioOutputManager();
@@ -719,6 +754,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         }
         automaticInputPeakCheckbox.checked = settings.render.automaticInputPeakNits;
         forceStereoCheckbox.checked = settings.audio.forceStereoDownmix;
+        binauralHeadphonesCheckbox.checked = settings.audio.binauralHeadphones;
         customDecodeCheckbox.checked = settings.playback.enableCustomDecode;
         HDRToneMappingCheckbox.checked = settings.playback.enableHDRToneMapping;
         GPUDecodeSlicingCheckbox.checked = settings.playback.enableGPUDecodeSlicing;
@@ -726,6 +762,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         HDRToneMappingCheckbox.disabled = !settings.playback.enableCustomDecode;
         GPUDecodeSlicingCheckbox.disabled = !settings.playback.enableCustomDecode;
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
+        speakerLayoutSelect.value = settings.audio.speakerLayout;
         operatorSelect.value = settings.render.settings.toneMapping.operator;
         settingsButtonPlacementSelect.value = settings.osd.settingsButtonPlacement;
         const inputPeakSlider = requireElement<HTMLInputElement>(panel, '[data-setting-slider="inputPeakNits"]');
@@ -864,11 +901,11 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         return audioStatusRevision;
     };
 
-    // Force stereo and the algorithm switch active decoded audio in place when they change it.
+    // Force stereo, the speaker layout, binaural rendering, and the algorithm switch active decoded audio in place when they change it.
     // formatStatus places the layout sentence in the full status, which translations may order freely
     const applyAudioOutputLayout = (formatStatus: (layoutStatus: string) => string): void => {
         const statusRevision = setAudioStatus(formatStatus(globalize.translate('WebGPUAudioLayoutStatusApplying')));
-        void player.applyAudioOutputSettings(settings.audio.forceStereoDownmix, audioDownmixAlgorithm).then((appliedLive: boolean): void => {
+        void player.applyAudioOutputSettings(settings.audio, audioDownmixAlgorithm).then((appliedLive: boolean): void => {
             if (!panelActive || statusRevision !== audioStatusRevision) {
                 return;
             }
@@ -1011,6 +1048,46 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     bindDefaultButton('forceStereoDownmix', (): void => {
         forceStereoCheckbox.checked = createDefaultWebGPUUserSettings().audio.forceStereoDownmix;
         onForceStereoChange();
+    });
+
+    const onSpeakerLayoutChange = (): void => {
+        settings = normalizeWebGPUUserSettings({
+            ...settings,
+            audio: {
+                ...settings.audio,
+                speakerLayout: speakerLayoutSelect.value
+            }
+        });
+        persistSettings();
+        applyAudioOutputLayout(formatLayoutChangeStatus);
+    };
+    speakerLayoutSelect.addEventListener('change', onSpeakerLayoutChange);
+    cleanupCallbacks.push((): void => {
+        speakerLayoutSelect.removeEventListener('change', onSpeakerLayoutChange);
+    });
+    bindDefaultButton('speakerLayout', (): void => {
+        speakerLayoutSelect.value = createDefaultWebGPUUserSettings().audio.speakerLayout;
+        onSpeakerLayoutChange();
+    });
+
+    const onBinauralHeadphonesChange = (): void => {
+        settings = normalizeWebGPUUserSettings({
+            ...settings,
+            audio: {
+                ...settings.audio,
+                binauralHeadphones: binauralHeadphonesCheckbox.checked
+            }
+        });
+        persistSettings();
+        applyAudioOutputLayout(formatLayoutChangeStatus);
+    };
+    binauralHeadphonesCheckbox.addEventListener('change', onBinauralHeadphonesChange);
+    cleanupCallbacks.push((): void => {
+        binauralHeadphonesCheckbox.removeEventListener('change', onBinauralHeadphonesChange);
+    });
+    bindDefaultButton('binauralHeadphones', (): void => {
+        binauralHeadphonesCheckbox.checked = createDefaultWebGPUUserSettings().audio.binauralHeadphones;
+        onBinauralHeadphonesChange();
     });
 
     const persistAudioDownmixAlgorithm = (value: unknown): void => {

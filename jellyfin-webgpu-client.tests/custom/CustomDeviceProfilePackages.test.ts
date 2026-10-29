@@ -28,6 +28,7 @@ const EVERY_FORMAT = [ 'I420', 'I420P10', 'I420P12', 'I422', 'I422P10', 'I422P12
 const AV1_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'av1' ], kind: 'video', outputFormats: EVERY_FORMAT };
 const HEVC_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'hevc' ], kind: 'video', outputFormats: EVERY_FORMAT };
 const EAC3_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'eac3', 'ac3' ], kind: 'audio', outputFormats: [] };
+const WMA_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'wmav1', 'wmav2', 'wmapro', 'wmalossless', 'wmavoice' ], kind: 'audio', outputFormats: [] };
 // A package that names a codec and a format the engine has no name for, which negotiation ignores
 const UNKNOWN_PACKAGE: DecoderPackageRouteSummary = { codecs: [ 'uncompressed' ], kind: 'video', outputFormats: [ 'RGBA' ] };
 // WebGPU's default largest storage binding, and a device that holds 2 GiB
@@ -48,13 +49,17 @@ const SIZES = {
 } as const;
 
 const MATROSKA_CONTAINER = 'mkv';
+const AVI_CONTAINER = 'avi';
 const MPEG4_CONTAINER = 'mp4';
 const TRANSPORT_STREAM_CONTAINER = 'ts';
 // The value a stock profile split takes for every container the engine does not play
 const NON_CUSTOM_VIDEO_CONTAINERS = `-${CUSTOM_PROFILE_VIDEO_CONTAINERS.join(',')}`;
 const STOCK_H264_MAXIMUM_LEVEL = '52';
+const MONO_CHANNEL_COUNT = 1;
 const STEREO_CHANNEL_COUNT = 2;
 const SURROUND_CHANNEL_COUNT = 6;
+const SIX_POINT_ONE_CHANNEL_COUNT = 7;
+const SEVEN_POINT_ONE_CHANNEL_COUNT = 8;
 const SAMPLE_RATE = 48_000;
 const EIGHT_BIT_DEPTH = 8;
 const TEN_BIT_DEPTH = 10;
@@ -265,6 +270,26 @@ describe('augmentDeviceProfileForCustomDecode with decoder packages', () => {
         expect(isDirectPlayAdvertised(augment([], [ 'av1' ]), MATROSKA_CONTAINER, videoStream, surroundStream)).toBe(false);
         expect(isDirectPlayAdvertised(augment([ EAC3_PACKAGE ], [ 'av1' ]), MATROSKA_CONTAINER, videoStream, surroundStream)).toBe(true);
         expect(isDirectPlayAdvertised(augment([ EAC3_PACKAGE ], [ 'av1' ]), MATROSKA_CONTAINER, videoStream, createAudioStream('ac3', SURROUND_CHANNEL_COUNT))).toBe(true);
+    });
+
+    it('advertises WMA from a package in Matroska and AVI, which carry its WAVEFORMATEX, at the layouts each decoder outputs', () => {
+        const videoStream = createVideoStream('h264', 'High', EIGHT_BIT_DEPTH);
+        const withPackage = augment([ WMA_PACKAGE ]);
+
+        expect(isDirectPlayAdvertised(augment([]), MATROSKA_CONTAINER, videoStream, createAudioStream('wmav2', STEREO_CHANNEL_COUNT))).toBe(false);
+        for (const container of [ MATROSKA_CONTAINER, AVI_CONTAINER ]) {
+            expect(isDirectPlayAdvertised(withPackage, container, videoStream, createAudioStream('wmav1', STEREO_CHANNEL_COUNT))).toBe(true);
+            expect(isDirectPlayAdvertised(withPackage, container, videoStream, createAudioStream('wmav2', STEREO_CHANNEL_COUNT))).toBe(true);
+            expect(isDirectPlayAdvertised(withPackage, container, videoStream, createAudioStream('wmapro', SURROUND_CHANNEL_COUNT))).toBe(true);
+            expect(isDirectPlayAdvertised(withPackage, container, videoStream, createAudioStream('wmapro', SEVEN_POINT_ONE_CHANNEL_COUNT))).toBe(true);
+            expect(isDirectPlayAdvertised(withPackage, container, videoStream, createAudioStream('wmalossless', STEREO_CHANNEL_COUNT))).toBe(true);
+            expect(isDirectPlayAdvertised(withPackage, container, videoStream, createAudioStream('wmavoice', MONO_CHANNEL_COUNT))).toBe(true);
+        }
+        // WMA v1 and v2 hold at most two channels, WMA Voice one, and no route presents 6.1
+        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, videoStream, createAudioStream('wmav2', SURROUND_CHANNEL_COUNT))).toBe(false);
+        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, videoStream, createAudioStream('wmavoice', STEREO_CHANNEL_COUNT))).toBe(false);
+        expect(isDirectPlayAdvertised(withPackage, MATROSKA_CONTAINER, videoStream, createAudioStream('wmapro', SIX_POINT_ONE_CHANNEL_COUNT))).toBe(false);
+        expect(isDirectPlayAdvertised(withPackage, MPEG4_CONTAINER, videoStream, createAudioStream('wmav2', STEREO_CHANNEL_COUNT))).toBe(false);
     });
 
     it('ignores codecs and formats the engine has no name for, and widens nothing on a retry', () => {
