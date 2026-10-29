@@ -89,6 +89,7 @@ import { CUSTOM_AUDIO_OUTPUT_SAMPLE_RATE } from 'webgpu-player/audio/CustomAudio
 import type { CustomAudioDownmixAlgorithm } from 'webgpu-player/audio/processing/CustomAudioDownmixAlgorithm';
 import { isSupportedCustomAudioSampleRate } from 'webgpu-player/audio/CustomAudioSampleRate';
 import {
+    getAudioMetadataLayout,
     getCustomPlaybackEligibility,
     getGPUVideoDecodeTarget,
     getPlaybackAudioCodec,
@@ -2490,6 +2491,7 @@ export default class WebGPUPlayer {
                 ...getDecoderPackagePlayOptions(eligibility),
                 audioDownmixAlgorithm,
                 audioDownmixSettings: getDecodedAudioDownmixSettings(eligibility, webGPUUserSettings),
+                audioMetadataLayout: getAudioMetadataLayout(eligibility),
                 audioOutputMode: eligibility.audioOutputMode ?? undefined,
                 audioRendersObjects: eligibility.audioRendersObjects,
                 audioTrackIndex: eligibility.audioTrackIndex,
@@ -3211,15 +3213,15 @@ export default class WebGPUPlayer {
         }
 
         const audioOutputMode = eligibility.audioOutputMode ?? 'decoded-pcm';
-        const result = await customPlaybackController.setAudioStreamIndex(
-            eligibility.audioTrackIndex,
+        const result = await customPlaybackController.setAudioStreamIndex(eligibility.audioTrackIndex, {
+            audioDecoder: eligibility.audioDecoder,
+            audioDownmixSettings: audioOutputMode === 'decoded-pcm' ? audioSettings.downmix : undefined,
+            audioMetadataLayout: getAudioMetadataLayout(eligibility),
             audioOutputMode,
-            selectDecodedAudioOutputLayout(eligibility, audioRenderTarget),
-            audioOutputMode === 'decoded-pcm' ? audioSettings.downmix : undefined,
-            eligibility.audioDecoder,
-            eligibility.audioRendersObjects === true,
-            getDecodedAudioBinauralHeadphones(eligibility, audioRenderTarget)
-        );
+            audioRendersObjects: eligibility.audioRendersObjects === true,
+            binauralHeadphones: getDecodedAudioBinauralHeadphones(eligibility, audioRenderTarget),
+            decodedAudioOutputLayout: selectDecodedAudioOutputLayout(eligibility, audioRenderTarget)
+        });
         if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
         }
