@@ -128,9 +128,12 @@ The profile advertises what the decoder packages a playback can use decode, befo
 - HEVC takes `main` and `main 10` for 4:2:0, each named range extension profile for its format, and generic `Rext` at a depth whose every chroma format the packages write.
   Generic `Rext` is also the label of 4:0:0 streams, so it needs a package that declares `monochrome`.
 - A codec only packages decode, such as MPEG-2, VC-1, JPEG 2000, MPEG-4 Part 2, H.263, or MS-MPEG4, takes one route without a profile condition, at the depths of the formats its packages write.
+  So JPEG 2000 at 12 bits, Digital Cinema X'Y'Z' (`JPEG 2000 digital cinema 2K`, `xyz12le`) among it, negotiates in MOV, MJ2, and Matroska wherever a package writes 12-bit formats; the pixel format is no profile condition, so eligibility decides X'Y'Z' by the pixel format and its untagged BT.709 metadata.
 - A package codec with stock CodecProfiles, AV1 or HEVC, widens their custom-container ceiling with its profiles and depths, as a raw route does (`createRawCodecProfilePlans`, `createAuthorizedHEVCProfilePlan`).
 - An audio package's codec is a decoded route at every channel count its decoded PCM path presents; DTS and TrueHD keep their exact profile routes.
   Native-media AC-3 and E-AC-3, which take 48 kHz only, step aside for a package that decodes them.
+  AC-3 is a decoded route at 1, 2, 5, and 6 channels, five being the 3/2 bed, whose speaker mask the package reports as `5.0(side)`.
+  DTS takes every Jellyfin DTS profile, DTS-ES included, each at the channel counts the engine's DTS routes give it: a profile condition per count (`createMeasuredDTSRouteProfiles`), so stereo and five channels exclude DTS-ES and seven channels name DTS-ES, DTS-HD HRA, and DTS-HD MA.
   A WMA package's codecs, `wmav1`, `wmav2`, `wmapro`, `wmalossless`, and `wmavoice`, are advertised in Matroska, AVI, and ASF only, the containers whose WAVEFORMATEX the engine reads.
 
 ### Sizes

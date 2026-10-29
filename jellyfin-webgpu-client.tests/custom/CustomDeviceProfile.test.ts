@@ -137,8 +137,8 @@ function isEngineAudioCodec(codec: CustomAudioCodec): codec is EngineAudioCodec 
 
 const ENGINE_VIDEO_CODECS: readonly EngineVideoCodec[] = CUSTOM_VIDEO_CODECS.filter(isEngineVideoCodec);
 const ENGINE_AUDIO_CODECS: readonly EngineAudioCodec[] = CUSTOM_AUDIO_CODECS.filter(isEngineAudioCodec);
-// The containers whose rules carry DTS: ISO BMFF, Matroska, and MPEG-TS
-const DTS_PROFILE_CONTAINERS = 'mp4,m4v,mov,mkv,ts,m2ts,mts';
+// The containers whose rules carry DTS: ISO BMFF, Matroska, MPEG-TS, and MPEG program streams
+const DTS_PROFILE_CONTAINERS = 'mp4,m4v,mov,mkv,ts,m2ts,mts,mpeg';
 // Every container the engine plays, as a measured audio route lists them, and the value a stock profile split takes for every other container
 const CUSTOM_VIDEO_CONTAINERS = CUSTOM_PROFILE_VIDEO_CONTAINERS.join(',');
 const NON_CUSTOM_VIDEO_CONTAINERS = `-${CUSTOM_VIDEO_CONTAINERS}`;
@@ -651,6 +651,42 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         });
     });
 
+    it('advertises JPEG 2000 from its decoder package in MOV, MJ2, and Matroska, where a Digital Cinema X\'Y\'Z\' stream direct-plays', () => {
+        const withoutPackage = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] }),
+            {}
+        );
+        const result = augmentDeviceProfileForCustomDecode(
+            createBaseProfile(),
+            createCapabilities({ supportedVideoCodecs: [], supportedAudioCodecs: [ 'aac' ] }),
+            { decoderPackages: [ JPEG2000_DECODER_PACKAGE ] }
+        );
+        const advertises = (profile: typeof result.profile, container: string): boolean => (
+            profile.DirectPlayProfiles?.some(directPlay => (
+                directPlay.Container?.split(',').includes(container) === true
+                && directPlay.VideoCodec?.split(',').includes('jpeg2000') === true
+            )) === true
+        );
+        // Jellyfin's view of the stream: a VfW mjp2 track, profile and depth from FFprobe, no color tags
+        const digitalCinema = createVideoStream('jpeg2000', 'JPEG 2000 digital cinema 2K', 12, 'SDR', {
+            ColorPrimaries: undefined,
+            ColorRange: undefined,
+            ColorSpace: undefined,
+            ColorTransfer: undefined,
+            Height: 858,
+            PixelFormat: 'xyz12le',
+            Width: 2_048
+        });
+
+        for (const container of [ 'mov', 'mj2', 'mkv' ]) {
+            expect(advertises(result.profile, container), container).toBe(true);
+            expect(advertises(withoutPackage.profile, container), `no package ${container}`).toBe(false);
+        }
+        expect(isDirectPlayAdvertised(result.profile, digitalCinema)).toBe(true);
+        expect(isDirectPlayAdvertised(withoutPackage.profile, digitalCinema)).toBe(false);
+    });
+
     it('sanitizes a non-custom WebGPU selection profile without mutation', () => {
         const original = createBaseProfile();
         original.MaxStreamingBitrate = 20_000_000;
@@ -1150,7 +1186,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
         });
         expect(addedProfiles.some(profile => profile.Container === 'webm')).toBe(false);
         expect(result.telemetry.supportedAudioCodecs).toEqual([ 'ac3', 'eac3' ]);
-        // Jellyfin reports AC-3 2/1 and 3/0 alike as 3.0, so three-channel AC-3 transcodes
+        // Jellyfin reports AC-3 2/1 and 3/0 alike as 3.0, so three-channel AC-3 transcodes; five channels are the 3/2 bed
         expect(result.profile.CodecProfiles).toContainEqual({
             Codec: 'ac3',
             Conditions: [
@@ -1158,7 +1194,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Condition: 'EqualsAny',
                     IsRequired: true,
                     Property: 'AudioChannels',
-                    Value: '1|2|6'
+                    Value: '1|2|5|6'
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],
@@ -1326,14 +1362,14 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Condition: 'EqualsAny',
                     IsRequired: true,
                     Property: 'AudioChannels',
-                    Value: '1|2|3|6|8'
+                    Value: '1|2|3|5|6|7|8'
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS,
                 {
                     Condition: 'EqualsAny',
                     IsRequired: true,
                     Property: 'AudioProfile',
-                    Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
+                    Value: 'DTS|DTS 96/24|DTS-ES|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
                 }
             ],
             Container: DTS_PROFILE_CONTAINERS,
@@ -1378,7 +1414,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Condition: 'EqualsAny',
                 IsRequired: true,
                 Property: 'AudioProfile',
-                Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
+                Value: 'DTS|DTS 96/24|DTS-ES|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
             Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
@@ -1394,15 +1430,15 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             ],
             Codec: 'dts',
             Conditions: [ {
-                Condition: 'Equals',
+                Condition: 'EqualsAny',
                 IsRequired: true,
                 Property: 'AudioProfile',
-                Value: 'DTS-HD MA'
+                Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
             Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
-        // Jellyfin cannot express ChannelLayout, so runtime eligibility requires 2.1 or 3.0
+        // Jellyfin cannot express ChannelLayout, so the package's speaker mask decides 2.1, 3.0, 4.1, 5.0, and 6.1 at runtime
         expect(result.profile.CodecProfiles).toContainEqual({
             ApplyConditions: [
                 {
@@ -1417,11 +1453,24 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Condition: 'EqualsAny',
                 IsRequired: true,
                 Property: 'AudioProfile',
-                Value: 'DTS-HD MA|DTS-HD MA + DTS:X'
+                Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
             Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
         });
+        // Five channels for every profile but DTS-ES, which extends a 5.1 core, and seven for DTS-ES and the lossless 6.1 beds
+        for (const [ channelCount, profiles ] of [
+            [ '5', 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X' ],
+            [ '7', 'DTS-ES|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X' ]
+        ] as const) {
+            expect(result.profile.CodecProfiles).toContainEqual({
+                ApplyConditions: [ { Condition: 'Equals', IsRequired: true, Property: 'AudioChannels', Value: channelCount } ],
+                Codec: 'dts',
+                Conditions: [ { Condition: 'EqualsAny', IsRequired: true, Property: 'AudioProfile', Value: profiles } ],
+                Container: DTS_PROFILE_CONTAINERS,
+                Type: 'VideoAudio'
+            });
+        }
         expect(result.profile.CodecProfiles).toContainEqual({
             ApplyConditions: [
                 {
@@ -1436,7 +1485,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                 Condition: 'EqualsAny',
                 IsRequired: true,
                 Property: 'AudioProfile',
-                Value: 'DTS|DTS 96/24|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
+                Value: 'DTS|DTS 96/24|DTS-ES|DTS-HD HRA|DTS-HD MA|DTS-HD MA + DTS:X'
             } ],
             Container: DTS_PROFILE_CONTAINERS,
             Type: 'VideoAudio'
@@ -1465,8 +1514,25 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             { channelCount: 1, profile: 'DTS', sampleRate: 48_000 },
             { channelCount: 1, profile: 'DTS-HD MA', sampleRate: 96_000 },
             { channelCount: 3, profile: 'DTS-HD MA', sampleRate: 48_000 },
+            { channelCount: 3, profile: 'DTS', sampleRate: 48_000 },
+            { channelCount: 3, profile: 'DTS-HD HRA', sampleRate: 48_000 },
+            { channelCount: 2, profile: 'DTS', sampleRate: 48_000 },
+            { channelCount: 2, profile: 'DTS 96/24', sampleRate: 96_000 },
+            { channelCount: 2, profile: 'DTS-HD HRA', sampleRate: 48_000 },
             { channelCount: 2, profile: 'DTS-HD MA', sampleRate: 48_000 },
+            { channelCount: 2, profile: 'DTS-HD MA + DTS:X', sampleRate: 48_000 },
             { channelCount: 2, profile: 'DTS-HD MA', sampleRate: 96_000 },
+            { channelCount: 5, profile: 'DTS', sampleRate: 48_000 },
+            { channelCount: 5, profile: 'DTS 96/24', sampleRate: 96_000 },
+            { channelCount: 5, profile: 'DTS-HD HRA', sampleRate: 48_000 },
+            { channelCount: 5, profile: 'DTS-HD MA', sampleRate: 48_000 },
+            { channelCount: 5, profile: 'DTS-HD MA + DTS:X', sampleRate: 48_000 },
+            { channelCount: 6, profile: 'DTS-ES', sampleRate: 48_000 },
+            { channelCount: 7, profile: 'DTS-ES', sampleRate: 48_000 },
+            { channelCount: 7, profile: 'DTS-ES', sampleRate: 96_000 },
+            { channelCount: 7, profile: 'DTS-HD HRA', sampleRate: 48_000 },
+            { channelCount: 7, profile: 'DTS-HD MA', sampleRate: 48_000 },
+            { channelCount: 7, profile: 'DTS-HD MA + DTS:X', sampleRate: 48_000 },
             { channelCount: 6, profile: 'DTS', sampleRate: 48_000 },
             { channelCount: 6, profile: 'DTS 96/24', sampleRate: 96_000 },
             { channelCount: 6, profile: 'DTS-HD HRA', sampleRate: 48_000 },
@@ -1480,14 +1546,14 @@ describe('augmentDeviceProfileForCustomDecode', () => {
             expect(acceptsMeasuredAudioRoute(codecProfiles, 'dts', route)).toBe(true);
         }
         for (const route of [
-            { channelCount: 3, profile: 'DTS', sampleRate: 48_000 },
-            { channelCount: 3, profile: 'DTS-HD HRA', sampleRate: 48_000 },
-            { channelCount: 2, profile: 'DTS', sampleRate: 48_000 },
-            { channelCount: 2, profile: 'DTS-HD HRA', sampleRate: 48_000 },
+            // DTS-ES always extends a 5.1 core, and a core alone carries no seventh channel
+            { channelCount: 2, profile: 'DTS-ES', sampleRate: 48_000 },
+            { channelCount: 5, profile: 'DTS-ES', sampleRate: 48_000 },
+            { channelCount: 7, profile: 'DTS', sampleRate: 48_000 },
+            { channelCount: 7, profile: 'DTS 96/24', sampleRate: 96_000 },
+            // 4.0 has no layout
+            { channelCount: 4, profile: 'DTS-HD MA', sampleRate: 48_000 },
             { channelCount: 2, profile: 'DTS-HD MA', sampleRate: 96_001 },
-            { channelCount: 7, profile: 'DTS-ES', sampleRate: 48_000 },
-            { channelCount: 7, profile: 'DTS-ES', sampleRate: 96_000 },
-            { channelCount: 7, profile: 'DTS-HD MA', sampleRate: 48_000 },
             { channelCount: 8, profile: 'DTS-HD MA', sampleRate: 96_001 },
             { channelCount: 8, profile: 'DTS-HD HRA', sampleRate: 96_001 },
             { channelCount: 8, profile: 'DTS-HD MA', sampleRate: 192_000 },
@@ -2018,7 +2084,7 @@ describe('augmentDeviceProfileForCustomDecode', () => {
                     Condition: 'EqualsAny',
                     IsRequired: true,
                     Property: 'AudioChannels',
-                    Value: '1|2|6'
+                    Value: '1|2|5|6'
                 },
                 ...TARGET_NEUTRAL_AUDIO_SAMPLE_RATE_CONDITIONS
             ],

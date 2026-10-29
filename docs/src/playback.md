@@ -36,6 +36,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - Before eligibility, `WebGPUPlayer` resolves the user's speaker layout against the destination's channel count with the engine's `selectCustomAudioSpeakerLayout`, stereo when the user forces stereo, and hands it with the binaural choice to the engine's eligibility as `audioRenderTarget`.
   At startup the count is the audio prewarm's `destination.maxChannelCount`; at a track switch it is the live output's, else the prewarm's; without either the layout is stereo.
 - Each decoded PCM track then plays to the engine's `selectCustomAudioOutputLayout` of that layout, the whole layout when the eligibility reports `audioRendersObjects`, and the binaural choice goes with it to `play`, `setAudioStreamIndex`, and `reconfigureAudioOutput`.
+- `play` and `setAudioStreamIndex` also take the track's `audioMetadataLayout` (`getAudioMetadataLayout`): Jellyfin's channel count, which screens a track whose container declares a count no layout has, as a Matroska header written from its first frames can, and the speaker mask of a 2.1 FLAC, whose decoder reports none.
 - Each playback keeps a snapshot of the audio settings it started with; the settings panel updates it as it applies a change.
 - The add-on triggers a live audio output switch when the output reports `sinkchange` with a different channel count, and when force stereo, the speaker layout, binaural rendering, or the downmix algorithm changes.
   A binaural change that keeps the layout applies between packets without a pause.
@@ -51,6 +52,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
   Stale results are dropped by `customPlaybackSeekRevision`.
 - Audio track switch: eligibility runs again.
   If the source is no longer eligible, the session renegotiates; otherwise it restarts as a seek at the current time.
+  An external audio file's stream is never eligible (`audio-track-external`), since only the server muxes it in, so switching to one renegotiates rather than playing an embedded track.
 - Stop: the delegate stops the backend synchronously, so `stopped` stays in order.
 
 ## Fallback and renegotiation

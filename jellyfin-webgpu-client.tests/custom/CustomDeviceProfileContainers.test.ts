@@ -52,6 +52,19 @@ describe('the direct-play containers of the custom path', () => {
         });
     });
 
+    it('advertises MPEG program streams, which Jellyfin names mpeg, with MPEG-1 and MPEG-2 only while the mpeg2 package supports them', () => {
+        const profiles = createCompatibleProfiles([ 'h264', 'mpeg1video', 'mpeg2video' ], [ 'aac', 'mp3', 'ac3', 'eac3', 'dts', 'pcm_s16be' ]);
+
+        expect(profiles).toContainEqual({
+            AudioCodec: 'mp3,ac3,dts',
+            Container: 'mpeg',
+            Type: 'Video',
+            VideoCodec: 'mpeg1video,mpeg2video'
+        });
+        // Without the package's codecs no program stream profile remains
+        expect(createCompatibleProfiles([ 'h264', 'hevc' ], [ 'mp3', 'ac3', 'dts' ]).some(profile => profile.Container === 'mpeg')).toBe(false);
+    });
+
     it('advertises no AIFF, since the custom path plays only items with video', () => {
         const profiles = createCompatibleProfiles(SUPPORTED_VIDEO_CODECS, SUPPORTED_AUDIO_CODECS);
 

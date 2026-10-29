@@ -142,7 +142,29 @@ The engine's eligibility tests cover it.
 
 A codec the engine decodes only through a decoder package direct-plays only when the user's packages or the server's catalog offer a package whose `accepts` names it; otherwise the profile advertises nothing for it and Jellyfin transcodes.
 These are MPEG-1 and MPEG-2 (package `mpeg2`), VC-1 and WMV3 (`vc1`), JPEG 2000 (`jpeg2000`), and MPEG-4 Part 2, H.263, and MS-MPEG4 v1, v2, and v3 (`mpeg4`).
-Each direct-plays as SDR at the depths its package writes, in every container the engine demuxes it from: MPEG-4 Part 2 and H.263 in AVI, ASF, Matroska, and MP4, MS-MPEG4 in AVI, ASF, and Matroska, and VC-1 and WMV3 in ASF too, which Jellyfin names `asf` for `.asf`, `.wmv`, and `.wma` files.
+Each direct-plays as SDR at the depths its package writes, in every container the engine demuxes it from: MPEG-4 Part 2 and H.263 in AVI, ASF, Matroska, and MP4, MS-MPEG4 in AVI, ASF, and Matroska, JPEG 2000 in MOV, MJ2, and Matroska, and VC-1 and WMV3 in ASF too, which Jellyfin names `asf` for `.asf`, `.wmv`, and `.wma` files.
+JPEG 2000 in Matroska is a Video for Windows track, and its Digital Cinema profiles' X'Y'Z' (`xyz12le` at 12 bits) direct-plays like 12-bit 4:4:4 when it carries no color tags or BT.709 ones, since the package writes it as BT.709 Y'CbCr.
+MPEG-1 and MPEG-2 also direct-play from MPEG program streams, `.mpg` files and DVD-Video `.vob` files, which Jellyfin names `mpeg` by ffprobe's format name, with MP3, AC-3, or DTS audio; the profile offers `mpeg` only with the `mpeg2` package's codecs, as it offers them in MPEG-TS, and MP2 and DVD-Video LPCM (`pcm_dvd`) audio stay with the server.
+
+## Audio channel layouts
+
+Engine rows: [Formats](https://alchemyyy.github.io/WebGPU-Player/formats.html) and [Eligibility and routes](https://alchemyyy.github.io/WebGPU-Player/routes.html#audio-routes).
+A profile condition cannot express ChannelLayout, so the profile advertises channel counts, and eligibility checks a layout where the count alone does not settle it.
+
+| Codec | Jellyfin channels and layout | Negotiated | Custom pipeline |
+| --- | --- | --- | --- |
+| AC-3 | 1, 2, or 6 | Yes | Yes |
+| AC-3 | 5, `5.0` (3/2) | Yes, with an AC-3 package | Yes; a track that gains its LFE mid-stream rebinds to 5.1 |
+| AC-3 | 5, `4.1` (3/1 with LFE) | Yes, with an AC-3 package | Yes; its back center splits across the surrounds |
+| AC-3 | 5, 2/2 with LFE | Yes, with an AC-3 package | No: the package's speaker mask has no layout, so the attempt fails and renegotiates |
+| AC-3 | 3 | No | No: 2/1 and 3/0 both arrive as `3.0` |
+| FLAC | 3, `2.1` | Yes, as three-channel FLAC | Yes, as FL, FR, and LFE, by the mask the layout names (`audioMetadataLayout`) |
+| AAC, Opus, Vorbis, PCM | 3, `2.1` | Yes, as three channels | No: their three channels decode as 3.0, so eligibility refuses the layout and the item plays through the HTML player or renegotiates |
+| DTS, any profile | 1, 2, 3, or 6 | Yes, with a DTS package; DTS-ES only at 1 and 6 | Yes; three channels play as the package's `2.1`, `3.0`, or `3.0(back)` mask |
+| DTS other than DTS-ES | 5, `5.0` or `4.1` | Yes, with a DTS package | Yes; a 4.1 back center splits across the surrounds |
+| DTS-ES, DTS-HD HRA, DTS-HD MA, DTS-HD MA + DTS:X | 7, `6.1` | Yes, with a DTS package | Yes, as WAVE 6.1 |
+| DTS-HD HRA, DTS-HD MA, DTS-HD MA + DTS:X | 8 | Yes, with a DTS package | Yes |
+| DTS | 4, `4.0` | No | No: 4.0 has no layout |
 
 ## Subtitles
 

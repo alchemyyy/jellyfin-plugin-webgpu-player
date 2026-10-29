@@ -9,7 +9,7 @@ Each number is escaped, as in `5\.`, so Markdown shows it rather than renumberin
 6\. The legacy formats the custom path still leaves to the server.
    Since 10-27 the engine plays the codecs AVI usually carries: H.264 and HEVC, with the presentation times the fork reads from their pictures' order counts, VP8, VP9, AV1, and MPEG-4 Part 2, H.263, and MS-MPEG4 through the `mpeg4` decoder package, with AAC, MP3, AC-3, FLAC, Vorbis, and PCM, WAVE_FORMAT_EXTENSIBLE and its channel mask included.
    The fork reads OpenDML indexes, so an AVI past 1 GiB plays to its end, and unpacks DivX packed B-frames, as FFmpeg does.
-   Theora still has no route in any container, and FLV, ASF, and MPEG program streams stay undemuxed, so Jellyfin transcodes them.
+   Theora still has no route in any container, and FLV and ASF stay undemuxed, so Jellyfin transcodes them; MPEG program streams (MPG, VOB) play their MPEG-1 and MPEG-2 video with MP3, AC-3, or DTS since 10-29, but MP2 and DVD-Video LPCM (`pcm_dvd`) audio still transcode.
    The `mpeg4` package implements one-point GMC, reversible VLC, and H.263 B and PB pictures untested, since no encoder at hand writes them; it refuses quarter-pel streams of libavcodec builds before 4653 and lacks FFmpeg's chroma edge workaround for interlaced MPEG-4 from libavcodec 55.66 to 57.66, and a DivX packed stream in Matroska presents one frame off.
    E-AC-3 in AVI stays out of the AVI rule until a vector checks it, and HEVC that FFmpeg's AVI muxer wrote under a zero tag reaches Jellyfin as `rawvideo`, so only hosts that skip Jellyfin's metadata play it.
    Closing it needs a Theora decoder package, demuxers for those containers in the fork, streams that exercise the untested modes, and an E-AC-3 AVI vector.

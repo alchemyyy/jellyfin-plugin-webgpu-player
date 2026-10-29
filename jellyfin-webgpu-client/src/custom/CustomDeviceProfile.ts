@@ -29,12 +29,11 @@ import {
     getCustomAudioCodecProfileContainers
 } from 'webgpu-player/capability/CustomContainerCodecSupport';
 import {
-    DTS_DIRECT_PLAY_PROFILE_TOKENS,
+    DTS_PROFILE_TOKENS,
     DTS_PROFILE_VALUE_BY_TOKEN,
     DTS_SUPPORTED_INPUT_ROUTES,
     TRUEHD_SUPPORTED_INPUT_ROUTES,
-    isDTSDirectPlayProfileToken,
-    type DTSDirectPlayProfileToken
+    type DTSProfileToken
 } from 'webgpu-player/audio/CustomCompressedAudioRoute';
 import {
     NATIVE_MEDIA_AUDIO_CHANNEL_COUNTS,
@@ -74,7 +73,7 @@ import {
     presentsInterlacedVideo,
     type CustomVideoRouteOptions
 } from 'webgpu-player/capability/CustomPlaybackEligibility';
-import { getDolbyVisionPresentationSelection } from 'webgpu-player/presentation/PresentationInput';
+import { getDolbyVisionPresentationSelection, isContainerVideoStream } from 'webgpu-player/presentation/PresentationInput';
 import {
     getGPUDecoderFormatFacts,
     isGPUDecoderOutputFormat,
@@ -284,7 +283,7 @@ const NATIVE_VIDEO_RUNTIME_CONDITION_PROPERTIES = new Set<string>([
     VIDEO_WIDTH_PROPERTY
 ]);
 const SUPPORTED_DTS_AUDIO_PROFILES: readonly string[] =
-    Object.freeze(DTS_DIRECT_PLAY_PROFILE_TOKENS.map(profileToken => (DTS_PROFILE_VALUE_BY_TOKEN[profileToken])));
+    Object.freeze(DTS_PROFILE_TOKENS.map(profileToken => (DTS_PROFILE_VALUE_BY_TOKEN[profileToken])));
 
 function getDolbyVisionVideoRangeTypes(
     capabilities: CustomDecodeCapabilities,
@@ -462,11 +461,7 @@ function getDolbyVisionItemVideoRoute(
     if (!selection || !Array.isArray(mediaStreams)) {
         return null;
     }
-    const videoStreams = mediaStreams.filter((stream: unknown): stream is Record<string, unknown> => (
-        stream !== null
-        && typeof stream === 'object'
-        && String((stream as { Type?: unknown }).Type ?? '').trim().toUpperCase() === 'VIDEO'
-    ));
+    const videoStreams = mediaStreams.filter(isContainerVideoStream) as Record<string, unknown>[];
     const videoStream = videoStreams[selection.baseLayerVideoTrackOrdinal];
     if (!videoStream) {
         return null;
@@ -2960,7 +2955,7 @@ function createMeasuredExactAudioRouteProfile(
 
 type DTSProfileRouteGroup = {
     channelCount: number
-    profileTokens: DTSDirectPlayProfileToken[]
+    profileTokens: DTSProfileToken[]
 };
 
 function createMeasuredDTSRouteProfiles(): CodecProfile[] {
@@ -2968,9 +2963,6 @@ function createMeasuredDTSRouteProfiles(): CodecProfile[] {
     const routeGroupsByChannelCount = new Map<number, DTSProfileRouteGroup>();
     for (const route of DTS_SUPPORTED_INPUT_ROUTES) {
         for (const profileToken of route.profileTokens) {
-            if (!isDTSDirectPlayProfileToken(profileToken)) {
-                continue;
-            }
             let routeGroup = routeGroupsByChannelCount.get(route.channelCount);
             if (!routeGroup) {
                 routeGroup = {
@@ -3020,7 +3012,7 @@ function createMeasuredDTSRouteProfiles(): CodecProfile[] {
     ));
 
     for (const routeGroup of routeGroupsByChannelCount.values()) {
-        const profileValues = DTS_DIRECT_PLAY_PROFILE_TOKENS
+        const profileValues = DTS_PROFILE_TOKENS
             .filter(profileToken => routeGroup.profileTokens.includes(profileToken))
             .map(profileToken => DTS_PROFILE_VALUE_BY_TOKEN[profileToken]);
         measuredProfiles.push(createMeasuredExactAudioRouteProfile(
