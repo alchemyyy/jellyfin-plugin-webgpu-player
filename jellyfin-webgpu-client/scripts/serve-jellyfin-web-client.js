@@ -1,11 +1,14 @@
-// Serves a Jellyfin Web build with the live WebGPU Player add-on on 127.0.0.1, and proxies every other request to a Jellyfin server.
+// Serves a Jellyfin Web build with the live WebGPU Player add-on and the live plugin on 127.0.0.1, and proxies every other request to a Jellyfin server.
 // serve_jellyfin_web_client.sh in the plugin root runs it: `configure` stores and checks the settings before the script's long first steps, then `serve`.
-// The add-on builds as `npm run build:development` does, and again on every change, into a folder of its own, so the plugin's add-on build in bin/ stays as it is
+// The add-on builds as `npm run build:development` does, and again on every change, into a folder of its own, so the plugin's add-on build in bin/ stays as it is.
+// The plugin builds into a host of its own (Jellyfin.Plugin.WebGPUPlayer.DevHost), with that add-on build embedded, and again on every change of its sources
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const readline = require('readline');
 const { pipeline } = require('stream');
 const { parseArgs } = require('util');
 const escapeHTML = require('escape-html');
@@ -18,8 +21,29 @@ const LOOPBACK_HOST_NAMES = new Set([ 'localhost', '127.0.0.1', '[::1]' ]);
 const WEB_PATH = '/web/';
 // The plugin's add-on asset route below the server's base URL; the bootstrap names it to the add-on
 const ASSET_PATH = '/WebGPUPlayer/assets/';
+// The plugin's other routes (ModuleController.RoutePrefix), which this checkout's plugin serves
+const PLUGIN_ROUTE_PATH = '/WebGPUPlayer/';
 // The live reload events, served here; Jellyfin has no route below this path
 const EVENTS_PATH = '/__webgpu-player-dev/events';
+// Jellyfin Web reads a plugin's settings page and its controller from this route, each by the name the plugin gives it in Plugin.GetPages
+const CONFIGURATION_PAGE_PATH = `${WEB_PATH}ConfigurationPage`;
+const PLUGIN_DIRECTORY = path.join(CLIENT_DIRECTORY, '..', 'Jellyfin.Plugin.WebGPUPlayer');
+// The host that serves the plugin's routes; it writes the ready line (Program.cs) once it listens
+const PLUGIN_HOST_DIRECTORY = path.join(CLIENT_DIRECTORY, '..', 'Jellyfin.Plugin.WebGPUPlayer.DevHost');
+const PLUGIN_HOST_NAME = 'Jellyfin.Plugin.WebGPUPlayer.DevHost';
+const PLUGIN_HOST_READY_PREFIX = 'WebGPU Player plugin host listening on ';
+// The plugin's sources, whose change builds and starts the host again; bin/ and obj/ are build output
+const PLUGIN_SOURCE_PATTERN = /\.(?:cs|csproj)$/i;
+const BUILD_OUTPUT_PATTERN = /^(?:bin|obj)\//;
+// How long a burst of file changes, as an editor's save writes, settles before it builds or reloads
+const CHANGE_DELAY = 300;
+// This checkout's settings page, served in place of the installed plugin's, read on every request
+const CONFIGURATION_FOLDER_NAME = 'Configuration';
+const CONFIGURATION_DIRECTORY = path.join(PLUGIN_DIRECTORY, CONFIGURATION_FOLDER_NAME);
+const CONFIGURATION_FILES = new Map([
+    [ 'WebGPUPlayer', 'configPage.html' ],
+    [ 'WebGPUPlayerConfig.js', 'configPage.js' ]
+]);
 const ADDON_MANIFEST_FILE_NAME = 'addon-manifest.json';
 const ADDON_ENTRY_PATTERN = /^plugin\.[0-9a-f]+\.js$/;
 // The name the plugin adds to config.json's plugins; Jellyfin Web's plugin manager loads the window factory of that name
@@ -72,6 +96,7 @@ const HTTP_FOUND = 302;
 const HTTP_NOT_FOUND = 404;
 const HTTP_INTERNAL_SERVER_ERROR = 500;
 const HTTP_BAD_GATEWAY = 502;
+const HTTP_SERVICE_UNAVAILABLE = 503;
 
 /** The latest add-on build, and the build in progress that requests for index.html wait for. */
 class AddonBuild {
@@ -102,15 +127,18 @@ class AddonBuild {
     }
 }
 
-/** The open live reload event streams, which hear of each successful add-on build. */
+/**
+ * The open live reload event streams, which hear of each change a page reloads for: a successful add-on build, a plugin restart, or a settings page edit.
+ * Each change has an id of its own (getReloadId), which a page compares with the one it loaded with.
+ */
 class LiveReloadEvents {
     #streams = new Set();
 
-    /** Opens an event stream; it hears of the latest successful build at once, so a page that missed a build reloads. */
-    open(response, latestHash) {
+    /** Opens an event stream; it hears of the latest id at once, so a page that missed a change reloads. */
+    open(response, latestId) {
         response.writeHead(HTTP_OK, { 'Cache-Control': NO_STORE, 'Content-Type': 'text/event-stream' });
-        if (latestHash !== null) {
-            response.write(formatEvent('current', latestHash));
+        if (latestId !== null) {
+            response.write(formatEvent('current', latestId));
         }
         this.#streams.add(response);
         response.on('close', () => {
@@ -118,16 +146,207 @@ class LiveReloadEvents {
         });
     }
 
-    /** Tells every open stream of a successful build. */
-    broadcast(hash) {
+    /** Tells every open stream of a change. */
+    broadcast(id) {
         for (const stream of this.#streams) {
-            stream.write(formatEvent('build', hash));
+            stream.write(formatEvent('build', id));
         }
+    }
+}
+
+/**
+ * This checkout's plugin, in a host of its own that serves its routes, built and started again on every change of its sources,
+ * and of the engine modules the add-on build carries, which the plugin embeds and offers as its bundled decoders and passes.
+ * Its data folder, of uploads and client defaults, is its own, so the installed plugin's stays as it is.
+ */
+class PluginHost {
+    #addonDirectory;
+    #dataDirectory;
+    #outputDirectory;
+    #server;
+    #onRestart;
+    #child = null;
+    // Whether a build and start is in progress, and whether another change asked for one meanwhile
+    #cycling = false;
+    #again = false;
+    // The requests that wait for the build and start in progress
+    #pending = null;
+    // The address of the running host, or the reason none runs
+    #latest = Object.freeze({ address: null, failure: 'The plugin starts after the first successful add-on build' });
+    // The engine modules of the add-on build the running host embeds
+    #addonModules = null;
+    #hasStarted = false;
+
+    constructor({ addonDirectory, onRestart, outputDirectory, server }) {
+        this.#addonDirectory = addonDirectory;
+        this.#outputDirectory = outputDirectory;
+        this.#dataDirectory = path.join(outputDirectory, 'data');
+        this.#server = server;
+        this.#onRestart = onRestart;
+    }
+
+    /** Resolves with the running host's address, or the reason none runs, once no build and start is in progress. */
+    settled() {
+        return this.#pending?.promise ?? Promise.resolve(this.#latest);
+    }
+
+    /** Builds and starts the host again when a successful add-on build changed the engine modules the plugin embeds, as the first one does. */
+    addonBuilt() {
+        const modules = readAddonModules(this.#addonDirectory);
+        if (modules !== this.#addonModules) {
+            this.#addonModules = modules;
+            this.restart();
+        }
+    }
+
+    /** Builds and starts the host again; the requests for its routes wait meanwhile, and a change during it runs one more after it. */
+    restart() {
+        if (this.#addonModules === null) {
+            return;
+        }
+        this.#pending ??= Promise.withResolvers();
+        if (this.#cycling) {
+            this.#again = true;
+            return;
+        }
+        this.#cycling = true;
+        void this.#cycle();
+    }
+
+    /** Stops the host at once, as this process exits. */
+    kill() {
+        this.#child?.kill();
+    }
+
+    async #cycle() {
+        do {
+            this.#again = false;
+            await this.#stop();
+            this.#latest = Object.freeze(await this.#buildAndStart().catch(error => ({ address: null, failure: getErrorMessage(error) })));
+        } while (this.#again);
+        this.#cycling = false;
+        this.#pending.resolve(this.#latest);
+        this.#pending = null;
+        if (this.#latest.address === null) {
+            console.error(`The plugin did not start: ${this.#latest.failure}`);
+            console.error('Its routes answer 503 until a change of its sources starts it.');
+            return;
+        }
+        // The first start only completes the page that loaded with the first add-on build
+        if (this.#hasStarted) {
+            this.#onRestart();
+        }
+        this.#hasStarted = true;
+    }
+
+    // The running host stops first, since it holds its build's files open on Windows
+    async #stop() {
+        const child = this.#child;
+        if (child === null) {
+            return;
+        }
+        this.#child = null;
+        if (child.exitCode === null && child.signalCode === null) {
+            const exited = new Promise(resolve => {
+                child.once('exit', resolve);
+            });
+            child.kill();
+            await exited;
+        }
+    }
+
+    async #buildAndStart() {
+        const startTime = Date.now();
+        // Each folder ends in a separator, as the project file and Directory.Build.props join them
+        const build = await runProcess('dotnet', [
+            'build', path.join(PLUGIN_HOST_DIRECTORY, `${PLUGIN_HOST_NAME}.csproj`),
+            '--nologo', '-v:q', '-tl:off', '-clp:NoSummary',
+            `-p:WebGPUPlayerDevRoot=${this.#outputDirectory}${path.sep}`,
+            `-p:AddonOutputDirectory=${this.#addonDirectory}${path.sep}`
+        ]);
+        if (build.code !== 0) {
+            return { address: null, failure: `Its build failed:\n${build.output}` };
+        }
+        fs.mkdirSync(this.#dataDirectory, { recursive: true });
+        // The build's own executable, which runs on the .NET runtime that built it.
+        // Its standard input stays open, unwritten, until this process exits, which stops it even when this process is killed
+        const hostFile = path.join(this.#outputDirectory, 'bin', PLUGIN_HOST_NAME, 'Debug', PLUGIN_HOST_NAME + (process.platform === 'win32' ? '.exe' : ''));
+        const child = spawn(hostFile, [ '--server', this.#server.url.href, '--data-folder', this.#dataDirectory ], {
+            stdio: [ 'pipe', 'pipe', 'inherit' ]
+        });
+        this.#child = child;
+        const { promise, resolve } = Promise.withResolvers();
+        let isReady = false;
+        readline.createInterface({ input: child.stdout }).on('line', line => {
+            if (!isReady && line.startsWith(PLUGIN_HOST_READY_PREFIX)) {
+                isReady = true;
+                resolve({ address: line.slice(PLUGIN_HOST_READY_PREFIX.length), failure: null });
+                return;
+            }
+            console.log(line);
+        });
+        child.once('error', error => {
+            resolve({ address: null, failure: `It did not start: ${error.message}` });
+        });
+        child.once('exit', (code, signal) => {
+            const failure = signal === null ? `It exited with code ${code}` : `It exited with ${signal}`;
+            resolve({ address: null, failure });
+            // A host that stops on its own once it listens, not for a restart, leaves its routes unanswered until the next change
+            if (isReady && this.#child === child) {
+                this.#child = null;
+                this.#latest = Object.freeze({ address: null, failure });
+                console.error(`The plugin stopped: ${failure}; its routes answer 503 until a change of its sources starts it.`);
+            }
+        });
+        const latest = await promise;
+        if (latest.address !== null) {
+            console.log(`Plugin built and started in ${Date.now() - startTime} ms.`);
+        }
+        return latest;
     }
 }
 
 function formatEvent(name, data) {
     return `event: ${name}\ndata: ${data}\n\n`;
+}
+
+/** Runs a command to its end, and resolves with its exit code and its output, both streams together. */
+function runProcess(command, args) {
+    const { promise, resolve } = Promise.withResolvers();
+    const child = spawn(command, args, { stdio: [ 'ignore', 'pipe', 'pipe' ] });
+    const chunks = [];
+    child.stdout.on('data', chunk => chunks.push(chunk));
+    child.stderr.on('data', chunk => chunks.push(chunk));
+    child.once('error', error => {
+        resolve({ code: null, output: `${command} did not start: ${error.message}` });
+    });
+    child.once('close', code => {
+        resolve({ code, output: Buffer.concat(chunks).toString('utf8').trim() });
+    });
+    return promise;
+}
+
+/**
+ * Returns the engine modules an add-on build carries, as the plugin reads them from its manifest, with each file's content hash,
+ * so a build that changed none of them needs no new plugin build; or null before the first build.
+ */
+function readAddonModules(addonDirectory) {
+    let manifest;
+    try {
+        manifest = JSON.parse(fs.readFileSync(path.join(addonDirectory, ADDON_MANIFEST_FILE_NAME), 'utf8'));
+    } catch {
+        return null;
+    }
+    const { decoderPackageSection = null, decoderPackages = [], passes = [] } = manifest;
+    // A listed file the build lacks fails the plugin's own check, which its build reports
+    const files = [ ...decoderPackages, ...passes ].map(file => {
+        try {
+            return [ file, crypto.createHash('sha256').update(fs.readFileSync(path.join(addonDirectory, file))).digest('hex') ];
+        } catch {
+            return [ file, null ];
+        }
+    });
+    return JSON.stringify({ decoderPackageSection, files });
 }
 
 function getErrorMessage(error) {
@@ -244,8 +463,12 @@ function createAddonCompiler(outputDirectory) {
     return webpack(configuration);
 }
 
-/** Builds the add-on again on every change of its sources or the engine's, recording each build and telling the live reload events of each success. */
-function watchAddon(compiler, build, events) {
+/**
+ * Builds the add-on again on every change of its sources or the engine's, recording each build and telling the live reload events of each success,
+ * and the plugin, which embeds the build's engine modules.
+ */
+function watchAddon(compiler, context) {
+    const { build } = context;
     compiler.hooks.invalid.tap(MESSAGE_PREFIX, () => {
         build.begin();
     });
@@ -261,9 +484,57 @@ function watchAddon(compiler, build, events) {
             console.warn(stats.toString({ colors: true, preset: 'errors-warnings' }));
         }
         console.log(`Add-on built in ${stats.endTime - stats.startTime} ms.`);
+        // Before the build settles, so a page it releases finds the plugin's routes waiting for the plugin's start
+        context.pluginHost.addonBuilt();
         build.finish({ failure: null, hash: stats.hash });
-        events.broadcast(stats.hash);
+        context.events.broadcast(getReloadId(context));
     });
+}
+
+/** Returns the id of the latest change a page reloads for, or null before the first successful add-on build. */
+function getReloadId(context) {
+    const { hash } = context.build.latest;
+    return hash === null ? null : `${hash}.${context.revision}`;
+}
+
+/** Counts a change other than an add-on build, a plugin restart or a settings page edit, and tells the live reload events of it. */
+function reloadPages(context) {
+    context.revision += 1;
+    const id = getReloadId(context);
+    if (id !== null) {
+        context.events.broadcast(id);
+    }
+}
+
+/**
+ * Watches the plugin's sources and its host's: a change of the settings page reloads open pages, and any other change of a source builds and starts the plugin again.
+ * Each burst of changes, as an editor's save writes, acts once it settles.
+ */
+function watchPlugin(context) {
+    const timers = new Map();
+    const later = (name, action) => {
+        clearTimeout(timers.get(name));
+        timers.set(name, setTimeout(action, CHANGE_DELAY));
+    };
+    for (const directory of [ PLUGIN_DIRECTORY, PLUGIN_HOST_DIRECTORY ]) {
+        fs.watch(directory, { recursive: true }, (eventType, fileName) => {
+            const file = fileName?.replaceAll('\\', '/');
+            if (file === undefined || BUILD_OUTPUT_PATTERN.test(file)) {
+                return;
+            }
+            if (directory === PLUGIN_DIRECTORY && file.startsWith(`${CONFIGURATION_FOLDER_NAME}/`)) {
+                later('configuration', () => {
+                    console.log('Settings page changed.');
+                    reloadPages(context);
+                });
+            } else if (PLUGIN_SOURCE_PATTERN.test(file)) {
+                later('plugin', () => {
+                    console.log('Plugin sources changed; building the plugin again.');
+                    context.pluginHost.restart();
+                });
+            }
+        });
+    }
 }
 
 /**
@@ -278,12 +549,12 @@ function createBootstrapScript(entry) {
 }
 
 /**
- * Returns the script that reloads a page once a successful add-on build other than its own is the latest.
- * A page of a failed build, which has none, reloads at the next successful build.
+ * Returns the script that reloads a page once a change other than its own is the latest (getReloadId).
+ * A page of a failed build, which has none, reloads at the next change.
  */
-function createLiveReloadScript(hash) {
+function createLiveReloadScript(id) {
     return `<script data-webgpu-player-live-reload>(() => {
-    const build = ${JSON.stringify(hash)};
+    const build = ${JSON.stringify(id)};
     const events = new EventSource(${JSON.stringify(EVENTS_PATH)});
     const reloadForAnotherBuild = event => {
         if (event.data !== build) {
@@ -368,7 +639,7 @@ async function serveIndex(request, response, context) {
         throw new Error(`Jellyfin Web's index.html in ${context.webDirectory} has no </head>`);
     }
     const scripts = createBootstrapScript(readAddonEntry(context.addonDirectory))
-        + (context.config.liveReload ? createLiveReloadScript(build.hash) : '');
+        + (context.config.liveReload ? createLiveReloadScript(getReloadId(context)) : '');
     sendText(request, response, HTTP_OK, HTML_CONTENT_TYPE, html.replace(HEAD_END_PATTERN, `${scripts}</head>`));
 }
 
@@ -541,10 +812,46 @@ function proxyUpgrade(request, socket, head, server) {
     serverRequest.end();
 }
 
-/** Serves Jellyfin Web, the add-on, and the live reload events, and forwards every other request to the server. */
+/** Forwards a request for the plugin's routes to this checkout's plugin, once a build and start in progress is done. */
+async function servePluginRoute(request, response, context) {
+    const { address, failure } = await context.pluginHost.settled();
+    if (address === null) {
+        sendText(request, response, HTTP_SERVICE_UNAVAILABLE, TEXT_CONTENT_TYPE, `This checkout's plugin is not running. ${failure}`);
+        return;
+    }
+    const target = new URL(request.url, address);
+    const outgoing = http.request(target, { headers: getForwardedHeaders(request.headers, target), method: request.method }, answer => {
+        response.writeHead(answer.statusCode, answer.statusMessage, getReturnedHeaders(answer.headers, context.server));
+        pipeline(answer, response, () => undefined);
+    });
+    outgoing.on('error', error => {
+        if (response.headersSent) {
+            response.destroy();
+            return;
+        }
+        sendText(request, response, HTTP_BAD_GATEWAY, TEXT_CONTENT_TYPE, `This checkout's plugin did not answer: ${error.message}`);
+    });
+    response.on('close', () => {
+        if (!response.writableFinished) {
+            outgoing.destroy();
+        }
+    });
+    pipeline(request, outgoing, () => undefined);
+}
+
+/** Whether a path is one of the plugin's routes other than the add-on's assets, which this script serves itself. */
+function isPluginRoute(pathname) {
+    return pathname.startsWith(PLUGIN_ROUTE_PATH) && !pathname.startsWith(ASSET_PATH);
+}
+
+/** Serves Jellyfin Web, the add-on, the plugin, and the live reload events, and forwards every other request to the server. */
 async function handleRequest(request, response, context) {
-    const { pathname } = new URL(request.url, 'http://localhost');
-    // Only reads are served here; Jellyfin Web writes only to the server
+    const { pathname, searchParams } = new URL(request.url, 'http://localhost');
+    if (isPluginRoute(pathname)) {
+        await servePluginRoute(request, response, context);
+        return;
+    }
+    // Only reads are served here otherwise; Jellyfin Web writes only to the server
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         proxyRequest(request, response, context.server);
         return;
@@ -554,7 +861,7 @@ async function handleRequest(request, response, context) {
         return;
     }
     if (pathname === EVENTS_PATH) {
-        context.events.open(response, context.build.latest.hash);
+        context.events.open(response, getReloadId(context));
         return;
     }
     if (pathname === WEB_PATH || pathname === `${WEB_PATH}index.html`) {
@@ -563,6 +870,10 @@ async function handleRequest(request, response, context) {
     }
     if (pathname === `${WEB_PATH}config.json`) {
         await serveWebConfig(request, response, context);
+        return;
+    }
+    const configurationFile = pathname === CONFIGURATION_PAGE_PATH ? CONFIGURATION_FILES.get(searchParams.get('name') ?? '') : undefined;
+    if (configurationFile !== undefined && await serveFile(request, response, CONFIGURATION_DIRECTORY, configurationFile)) {
         return;
     }
     // A file the add-on build lacks is never taken from the server, whose add-on is the plugin's own
@@ -588,7 +899,7 @@ function listen(httpServer, port) {
     return promise;
 }
 
-/** Serves the Jellyfin Web build and the live add-on, against the server the settings name. */
+/** Serves the Jellyfin Web build, the live add-on, and the live plugin, against the server the settings name. */
 async function serve(options) {
     const config = { ...DEFAULT_CONFIG, ...readConfigFile(options.config) };
     checkConfig(config, options.config);
@@ -608,8 +919,21 @@ async function serve(options) {
     }
     const addonDirectory = path.resolve(options['addon-output']);
     const compiler = createAddonCompiler(addonDirectory);
+    const pluginHost = new PluginHost({
+        addonDirectory,
+        onRestart: () => reloadPages(context),
+        outputDirectory: path.resolve(options['plugin-output']),
+        server
+    });
+    // The host is a process of its own, which stops with this one; a signal exits through the exit handlers
+    process.on('exit', () => {
+        pluginHost.kill();
+    });
+    for (const signal of [ 'SIGINT', 'SIGTERM' ]) {
+        process.once(signal, () => process.exit(1));
+    }
 
-    const context = { addonDirectory, build: new AddonBuild(), config, events: new LiveReloadEvents(), server, webDirectory };
+    const context = { addonDirectory, build: new AddonBuild(), config, events: new LiveReloadEvents(), pluginHost, revision: 0, server, webDirectory };
     const httpServer = http.createServer((request, response) => {
         handleRequest(request, response, context).catch(error => {
             console.error(`${MESSAGE_PREFIX}: ${request.method} ${request.url}: ${getErrorMessage(error)}`);
@@ -624,12 +948,14 @@ async function serve(options) {
         proxyUpgrade(request, socket, head, server);
     });
     await listen(httpServer, config.dev_client_port);
-    console.log(`\nJellyfin Web with the live WebGPU Player add-on: http://${LOOPBACK_ADDRESS}:${config.dev_client_port}${WEB_PATH}`);
+    console.log(`\nJellyfin Web with the live WebGPU Player add-on and plugin: http://${LOOPBACK_ADDRESS}:${config.dev_client_port}${WEB_PATH}`);
+    console.log(`The plugin's routes go to this checkout's plugin, with its data in ${path.join(path.resolve(options['plugin-output']), 'data')}`);
     console.log(`Every other request goes to ${server.url.href}`);
     console.log(config.liveReload ?
-        'The add-on builds again on every change, and open pages reload after each successful build.' :
-        'The add-on builds again on every change; reload the page to run a new build.');
-    watchAddon(compiler, context.build, context.events);
+        'The add-on and the plugin build again on every change, and open pages reload after each successful build and each settings page edit.' :
+        'The add-on and the plugin build again on every change; reload the page to run a new build.');
+    watchAddon(compiler, context);
+    watchPlugin(context);
 }
 
 async function main() {
@@ -637,6 +963,7 @@ async function main() {
         allowPositionals: true,
         options: {
             'addon-output': { type: 'string' },
+            'plugin-output': { type: 'string' },
             'config': { type: 'string' },
             'port': { type: 'string' },
             'server': { type: 'string' },
@@ -644,10 +971,10 @@ async function main() {
         }
     });
     const [ command ] = positionals;
-    const requiredOptions = command === 'serve' ? [ 'config', 'web-client', 'addon-output' ] : [ 'config' ];
+    const requiredOptions = command === 'serve' ? [ 'config', 'web-client', 'addon-output', 'plugin-output' ] : [ 'config' ];
     if (positionals.length !== 1 || (command !== 'configure' && command !== 'serve')) {
         throw new Error('Usage: serve-jellyfin-web-client.js configure --config <file> [--server <url>] [--port <port>], '
-            + 'or serve --config <file> --web-client <folder> --addon-output <folder>');
+            + 'or serve --config <file> --web-client <folder> --addon-output <folder> --plugin-output <folder>');
     }
     for (const name of requiredOptions) {
         if (values[name] === undefined) {

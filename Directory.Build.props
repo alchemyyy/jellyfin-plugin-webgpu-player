@@ -8,4 +8,13 @@
         <!-- Build outputs collect in the repository's bin/, one folder per project: bin/<Project>/<Configuration>/ -->
         <BaseOutputPath>$(MSBuildThisFileDirectory)bin\$(MSBuildProjectName)\</BaseOutputPath>
     </PropertyGroup>
+    <!--
+      serve_jellyfin_web_client.sh builds the plugin host with the live add-on embedded into a folder of its own, WebGPUPlayerDevRoot (ending in a separator),
+      so the plugin's own bin/ and obj/ stay as they are. The projects' own obj/ folders then hold another build's generated sources, which stay out of this one
+    -->
+    <PropertyGroup Condition="'$(WebGPUPlayerDevRoot)' != ''">
+        <BaseOutputPath>$(WebGPUPlayerDevRoot)bin\$(MSBuildProjectName)\</BaseOutputPath>
+        <BaseIntermediateOutputPath>$(WebGPUPlayerDevRoot)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+        <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
+    </PropertyGroup>
 </Project>

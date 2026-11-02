@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Serves Jellyfin Web with this checkout's WebGPU Player add-on, live, against a Jellyfin server of your own.
+# Serves Jellyfin Web with this checkout's WebGPU Player add-on and plugin, live, against a Jellyfin server of your own.
 #
 # Run it from the folder to work in, which keeps its files:
 #   serve_jellyfin_web_client.json  the settings: the server's address, the local port, and live reload
 #   jellyfin-web/                   a clone of the Jellyfin Web commit the add-on builds against, built once per commit
 #   webgpu-player-addon/            the add-on, built in development mode, and again on every change of its sources
+#   webgpu-player-plugin/           the plugin, in a host of its own, built with that add-on embedded, and again on every change
+#                                   of its sources; its data/ is the plugin's data folder: uploads and client defaults
 #
 # The browser opens http://127.0.0.1:<port>/web/, which serves Jellyfin Web from the clone, with the bootstrap the plugin
-# adds to it, and the add-on. Every other request, the API, media, and the WebSocket, goes to the server, so the browser
-# sees one origin, as when the server serves Jellyfin Web, and plays the server's library through the add-on.
-# A read the server redirects to another origin, such as a split tunnel's media host, is followed here too.
-# The server needs no plugin; with the plugin installed, its decoders, passes, and client defaults reach the add-on too.
+# adds to it, and the add-on. The plugin's routes, /WebGPUPlayer/..., go to this checkout's plugin, which signs each request
+# in as the server's user whose credentials it carries, and the settings page and its controller come from
+# Jellyfin.Plugin.WebGPUPlayer/Configuration, read on every request. Every other request, the API, media, and the WebSocket,
+# goes to the server, so the browser sees one origin, as when the server serves Jellyfin Web, and plays the server's library
+# through the add-on. A read the server redirects to another origin, such as a split tunnel's media host, is followed here too.
+# The server needs no plugin; an installed one, and its data, stay as they are.
 #
-# Needs Git, Node.js, and npm, and a checkout built once with ./build.sh, for the add-on's npm packages and the engine's
-# WebAssembly modules and decoder packages. Works in Git Bash on Windows and in bash on Linux and macOS.
+# Needs Git, Node.js, npm, and the .NET SDK, and a checkout built once with ./build.sh, for the add-on's npm packages and the
+# engine's WebAssembly modules and decoder packages. Works in Git Bash on Windows and in bash on Linux and macOS.
 
 set -euo pipefail
 
@@ -27,8 +31,9 @@ workspace_directory="$(pwd)"
 config_file="$workspace_directory/serve_jellyfin_web_client.json"
 web_directory="$workspace_directory/jellyfin-web"
 addon_output_directory="$workspace_directory/webgpu-player-addon"
+plugin_output_directory="$workspace_directory/webgpu-player-plugin"
 readonly script_directory client_directory serve_script jellyfin_web_submodule_path jellyfin_web_submodule_name \
-    workspace_directory config_file web_directory addon_output_directory
+    workspace_directory config_file web_directory addon_output_directory plugin_output_directory
 
 configure_arguments=()
 
@@ -46,7 +51,7 @@ Options:
   -h, --help      Show this help.
 
 serve_jellyfin_web_client.json also holds "liveReload" (default: true): whether open pages reload
-after each successful add-on build.
+after each successful add-on or plugin build, and each edit of the plugin's settings page.
 
 Examples:
   ../jellyfin-plugin-webgpu-player/serve_jellyfin_web_client.sh --server http://<host>:8096
@@ -95,7 +100,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-for command_name in git node npm; do
+for command_name in git node npm dotnet; do
     command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
 [ -d "$client_directory/node_modules" ] \
@@ -141,4 +146,5 @@ fi
 exec node "$(native_path "$serve_script")" serve \
     --config "$(native_path "$config_file")" \
     --web-client "$(native_path "$web_directory/dist")" \
-    --addon-output "$(native_path "$addon_output_directory")"
+    --addon-output "$(native_path "$addon_output_directory")" \
+    --plugin-output "$(native_path "$plugin_output_directory")"
