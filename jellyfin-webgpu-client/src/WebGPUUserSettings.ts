@@ -24,7 +24,7 @@ import {
     type DeinterlaceMode
 } from 'webgpu-player/presentation/DeinterlaceTimeline';
 
-import { getClientDefaults } from './ClientDefaults';
+import { getClientDefaults, type ClientDefaultKey } from './ClientDefaults';
 import {
     DEFAULT_SETTINGS_BUTTON_PLACEMENT,
     isSettingsButtonPlacement,
@@ -532,6 +532,73 @@ export function saveWebGPUUserSettings(
         false
     );
     return normalizedSettings;
+}
+
+// Where each default's setting lives in the stored settings; the player preference and the downmix algorithm are stored apart
+const SETTING_PATHS: Readonly<Partial<Record<ClientDefaultKey, readonly string[]>>> = Object.freeze({
+    automaticInputPeakNits: [ 'render', 'automaticInputPeakNits' ],
+    binauralHeadphones: [ 'audio', 'binauralHeadphones' ],
+    brightness: [ 'render', 'settings', 'display', 'brightness' ],
+    centerLevel: [ 'audio', 'downmix', 'centerLevel' ],
+    contrast: [ 'render', 'settings', 'display', 'contrast' ],
+    deinterlaceMode: [ 'presentation', 'deinterlaceMode' ],
+    desaturationStrength: [ 'render', 'settings', 'toneMapping', 'desaturationStrength' ],
+    enableCustomDecode: [ 'playback', 'enableCustomDecode' ],
+    enableGPUDecodeSlicing: [ 'playback', 'enableGPUDecodeSlicing' ],
+    enableHDRToneMapping: [ 'playback', 'enableHDRToneMapping' ],
+    exposure: [ 'render', 'settings', 'toneMapping', 'exposure' ],
+    forceStereoDownmix: [ 'audio', 'forceStereoDownmix' ],
+    hdrOutput: [ 'presentation', 'hdrOutput' ],
+    inputPeakNits: [ 'render', 'settings', 'toneMapping', 'inputPeakNits' ],
+    outputGain: [ 'audio', 'downmix', 'outputGain' ],
+    outputPeakNits: [ 'render', 'settings', 'toneMapping', 'outputPeakNits' ],
+    paperWhiteNits: [ 'render', 'settings', 'toneMapping', 'paperWhiteNits' ],
+    presentationFiles: [ 'presentation', 'files' ],
+    saturation: [ 'render', 'settings', 'display', 'saturation' ],
+    settingsButtonPlacement: [ 'osd', 'settingsButtonPlacement' ],
+    speakerLayout: [ 'audio', 'speakerLayout' ],
+    surroundLevel: [ 'audio', 'downmix', 'surroundLevel' ],
+    toneMapOperator: [ 'render', 'settings', 'toneMapping', 'operator' ]
+});
+
+/** Deletes a leaf of nested settings, and each parent it leaves empty. */
+function deleteSettingPath(settings: Record<string, unknown>, path: readonly string[]): void {
+    const [ key, ...rest ] = path;
+    if (!(key in settings)) {
+        return;
+    }
+    const child = settings[key];
+    if (rest.length === 0) {
+        delete settings[key];
+    } else if (isRecord(child)) {
+        deleteSettingPath(child, rest);
+        if (Object.keys(child).length === 0) {
+            delete settings[key];
+        }
+    }
+}
+
+/**
+ * Drops the user's own choices of the given defaults' settings, so they follow the defaults again, and returns the user's own shader files it dropped.
+ * Settings of an earlier version are stored in the current version first; nothing stored stays nothing.
+ */
+export function clearWebGPUUserSettingChoices(
+    keys: readonly ClientDefaultKey[],
+    storage: WebGPUUserSettingsStorage = currentSettings
+): readonly StoredPresentationFile[] {
+    if (!storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY, false)) {
+        return [];
+    }
+    const settings = loadWebGPUUserSettings(storage);
+    const choices = getChangedSettings(settings, createDefaultWebGPUUserSettings());
+    for (const key of keys) {
+        const path = SETTING_PATHS[key];
+        if (path !== undefined) {
+            deleteSettingPath(choices, path);
+        }
+    }
+    storage.set(WEBGPU_USER_SETTINGS_STORAGE_KEY, JSON.stringify({ ...choices, version: WEBGPU_USER_SETTINGS_VERSION }), false);
+    return keys.includes('presentationFiles') ? settings.presentation.files ?? [] : [];
 }
 
 /** Builds a source's HDR render settings: automatic mode takes the detected input peak, clamped to the setting's range, and paper white never exceeds the input peak. */

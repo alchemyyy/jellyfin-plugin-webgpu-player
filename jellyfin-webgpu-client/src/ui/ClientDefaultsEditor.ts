@@ -9,9 +9,14 @@ import {
 import { parsePassFile } from 'webgpu-player/presentation/passes/PassManifest';
 import type { PassParameter } from 'webgpu-player/presentation/passes/PassTypes';
 
-import { setClientDefaults, type ClientDefaultKey, type ClientDefaults } from '../ClientDefaults';
+import { CLIENT_DEFAULT_KEYS, type ClientDefaultKey } from '../ClientDefaults';
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
-import { fetchServerClientDefaults, saveServerClientDefaults } from '../ServerClientDefaults';
+import {
+    applyClientDefaults,
+    fetchServerClientDefaults,
+    saveServerClientDefaults,
+    type ServerClientDefaults
+} from '../ServerClientDefaults';
 import { fetchServerPassSource, loadServerModuleCatalog, type ServerModuleCatalog, type ServerPassFile } from '../ServerModules';
 import { getServerFileKey } from '../ServerPresentationPasses';
 import {
@@ -35,8 +40,11 @@ import {
 } from './SettingDefinitions';
 import { setStatus, translateToHTML } from './SettingsPanelHTML';
 
+import './ClientDefaultsEditor.scss';
+
 // The administrator's editor of the defaults the server sets for every user's client settings, which the plugin's settings page renders.
-// Each setting is either set on the server, holding its value, or not set, showing the add-on's built-in default that clients then use
+// Each setting shows its default: the server's value, else the add-on's built-in one; only a value that differs from the built-in one is stored.
+// Each setting can also return to its built-in default, or be applied to every client, which then drops its users' own choices of it
 
 /** A flat key the editor shows as one row; the default shader preset has a list of its own. */
 type SettingKey = Exclude<ClientDefaultKey, 'presentationFiles'>;
@@ -62,7 +70,7 @@ type PresetFileView = PresetFile & Readonly<{
     failure: string | null
 }>;
 
-/** The server's defaults as the editor shows them: each set row's value, the preset, and the labels of the values clients refuse. */
+/** The server's defaults as the editor shows them: each value the server sets, the preset, and the labels of the values clients refuse. */
 type EditorState = Readonly<{
     presetFiles: readonly PresetFileView[]
     refusedLabels: readonly string[]
@@ -304,7 +312,7 @@ function createRowControlHTML(row: SettingRow, descriptionKey: string | undefine
             return `
                 <div class="checkboxContainer checkboxContainer-withDescription">
                     <label>
-                        <input data-client-default-value="${row.key}" disabled id="${id}" is="emby-checkbox" type="checkbox" />
+                        <input data-client-default-value="${row.key}" id="${id}" is="emby-checkbox" type="checkbox" />
                         <span>${translateToHTML(row.labelKey)}</span>
                     </label>
                     ${description === '' ? '' : `<div class="fieldDescription checkboxFieldDescription">${description}</div>`}
@@ -314,7 +322,6 @@ function createRowControlHTML(row: SettingRow, descriptionKey: string | undefine
                 <div class="selectContainer">
                     <select
                         data-client-default-value="${row.key}"
-                        disabled
                         id="${id}"
                         is="emby-select"
                         label="${translateToHTML(row.labelKey)}"
@@ -331,7 +338,6 @@ function createRowControlHTML(row: SettingRow, descriptionKey: string | undefine
                 <div class="inputContainer">
                     <input
                         data-client-default-value="${row.key}"
-                        disabled
                         id="${id}"
                         is="emby-input"
                         label="${labelHTML}"
@@ -346,15 +352,34 @@ function createRowControlHTML(row: SettingRow, descriptionKey: string | undefine
     }
 }
 
+/** Returns a setting's buttons that apply its default to every client and return it to the built-in default, each named by the setting's label. */
+function createActionsHTML(key: ClientDefaultKey, label: string): string {
+    return `
+        <div class="webgpuClientDefaultActions">
+            <button
+                aria-label="${translateToHTML('WebGPUClientDefaultsApplyLabel', label)}"
+                class="raised button-alt"
+                data-client-default-apply="${key}"
+                is="emby-button"
+                type="button"
+            ><span>${translateToHTML('WebGPUClientDefaultsApply')}</span></button>
+            <button
+                aria-label="${translateToHTML('WebGPUClientDefaultsResetLabel', label)}"
+                class="raised"
+                data-client-default-reset="${key}"
+                is="emby-button"
+                type="button"
+            ><span>${translateToHTML('WebGPUClientDefaultsReset')}</span></button>
+        </div>`;
+}
+
 function createRowHTML(row: SettingRow): string {
     const descriptionKey = row.kind === 'number' ? row.configuration.descriptionKey : row.descriptionKey;
+    const label = getRowLabel(row);
     return `
-        <div aria-label="${escapeHtml(getRowLabel(row))}" class="verticalSection" data-client-default="${row.key}" role="group">
+        <div aria-label="${escapeHtml(label)}" class="verticalSection webgpuClientDefaultRow" data-client-default="${row.key}" role="group">
             ${createRowControlHTML(row, descriptionKey)}
-            <label class="checkboxContainer">
-                <input data-client-default-set="${row.key}" is="emby-checkbox" type="checkbox" />
-                <span>${translateToHTML('WebGPUClientDefaultsSetOnServer')}</span>
-            </label>
+            ${createActionsHTML(row.key, label)}
         </div>`;
 }
 
@@ -380,9 +405,14 @@ function createPresetSectionHTML(): string {
                     label="${translateToHTML('WebGPUServerPasses')}"
                 ></select>
             </div>
-            <button class="raised" data-client-defaults-preset-add is="emby-button" type="button">
-                <span>${translateToHTML('Add')}</span>
-            </button>
+            <div class="webgpuClientDefaultRow">
+                <div>
+                    <button class="raised" data-client-defaults-preset-add is="emby-button" type="button">
+                        <span>${translateToHTML('Add')}</span>
+                    </button>
+                </div>
+                ${createActionsHTML(PRESET_FILES_KEY, globalize.translate('WebGPUShaderPasses'))}
+            </div>
         </div>`;
 }
 
@@ -468,10 +498,6 @@ function getValueControl(root: ParentNode, key: SettingKey): HTMLInputElement | 
     return requireElement<HTMLInputElement | HTMLSelectElement>(root, `[data-client-default-value="${key}"]`);
 }
 
-function getSetCheckbox(root: ParentNode, key: SettingKey): HTMLInputElement {
-    return requireElement<HTMLInputElement>(root, `[data-client-default-set="${key}"]`);
-}
-
 /** Shows a value in a row's control; a number input also keeps it as the value an entry that is no number returns to. */
 function showRowValue(root: ParentNode, row: SettingRow, value: SettingValue): void {
     const control = getValueControl(root, row.key);
@@ -521,11 +547,12 @@ async function describePresetFile(file: PresetFile, sources: Map<string, Promise
 }
 
 /**
- * Reads the server's defaults into what the editor shows, which the page follows from now on, as a refresh applies them.
+ * Reads the server's defaults into what the editor shows, and applies them to the page, which follows them from now on, as a refresh applies them.
  * Each value reads through its setting's own normalization, as clients read it; a value that reads otherwise shows what clients use and is named.
  */
-async function readEditorState(defaults: ClientDefaults, sources: Map<string, Promise<string>>): Promise<EditorState> {
-    setClientDefaults(defaults);
+async function readEditorState(serverDefaults: ServerClientDefaults, sources: Map<string, Promise<string>>): Promise<EditorState> {
+    applyClientDefaults(serverDefaults);
+    const defaults = serverDefaults.settings;
     const clientValues = getSettingValues(
         createDefaultWebGPUUserSettings(),
         normalizeVideoPlayerPreference(defaults.preferredVideoPlayer),
@@ -577,7 +604,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
     const readFailure = defaultsResult.status === 'rejected' ?
         globalize.translate('WebGPUClientDefaultsReadFailed', getErrorMessage(defaultsResult.reason)) :
         null;
-    // Without the server's defaults the form starts with no row set and saves nothing, and the page keeps the defaults it follows
+    // Without the server's defaults the form starts with the built-in values and cannot save, and the page keeps the defaults it follows
     const defaultsRead = defaultsResult.status === 'fulfilled';
     const initialState: EditorState = defaultsRead ?
         await readEditorState(defaultsResult.value, sources) :
@@ -585,6 +612,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
 
     // A fresh root each render, since the page renders the editor into the same element on each visit
     const root = document.createElement('div');
+    root.className = 'webgpuClientDefaultsEditor';
     root.innerHTML = createEditorHTML();
     element.textContent = '';
     element.appendChild(root);
@@ -592,6 +620,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
     scheduleSelectLabelFallback(root);
     const statusElement = requireElement<HTMLElement>(root, '[data-client-defaults-status]');
     const saveButton = requireElement<HTMLButtonElement>(root, '[data-client-defaults-save]');
+    const applyButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-client-default-apply]'));
     const presetFilesElement = requireElement<HTMLElement>(root, '[data-client-defaults-preset-files]');
     const presetChoice = requireElement<HTMLSelectElement>(root, '[data-client-defaults-preset-choice]');
     const presetAddButton = requireElement<HTMLButtonElement>(root, '[data-client-defaults-preset-add]');
@@ -621,24 +650,22 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         presetAddButton.disabled = emptyText !== null || adding;
     };
 
-    /** Shows the server's defaults: each set row checked with its value, every other row disabled with its built-in value. */
+    /** Shows the server's defaults: each value the server sets, else the built-in one. */
     const showState = (state: EditorState): void => {
         for (const row of SETTING_ROWS) {
-            const setValue = state.setValues[row.key];
-            getSetCheckbox(root, row.key).checked = setValue !== undefined;
-            getValueControl(root, row.key).disabled = setValue === undefined;
-            showRowValue(root, row, setValue ?? builtInValues[row.key]);
+            showRowValue(root, row, state.setValues[row.key] ?? builtInValues[row.key]);
         }
         presetFiles = [ ...state.presetFiles ];
         renderPreset();
     };
 
-    /** Returns the defaults the form sets: each checked row's value, and the preset when it lists a file. */
+    /** Returns the defaults the form sets: each row's value that differs from its built-in one, and the preset when it lists a file. */
     const readForm = (): Record<string, unknown> => {
         const settings: Record<string, unknown> = {};
         for (const row of SETTING_ROWS) {
-            if (getSetCheckbox(root, row.key).checked) {
-                settings[row.key] = readRowValue(root, row);
+            const value = readRowValue(root, row);
+            if (value !== builtInValues[row.key]) {
+                settings[row.key] = value;
             }
         }
         if (presetFiles.length > 0) {
@@ -651,19 +678,43 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         return settings;
     };
 
-    const save = async (): Promise<void> => {
-        saving = true;
-        saveButton.disabled = true;
+    const setSaving = (value: boolean): void => {
+        saving = value;
+        for (const button of [ saveButton, ...applyButtons ]) {
+            button.disabled = value || !defaultsRead;
+        }
+    };
+
+    /** Stores the form, applying the given setting to every client when one is given. */
+    const save = async (applied: ClientDefaultKey | null): Promise<void> => {
+        setSaving(true);
         try {
-            const stored = await saveServerClientDefaults(readForm());
+            const stored = await saveServerClientDefaults(readForm(), applied === null ? [] : [ applied ]);
             const state = await readEditorState(stored, sources);
             showState(state);
-            setStatus(statusElement, joinSentences(globalize.translate('SettingsSaved'), describeRefusedValues(state)) ?? '');
+            const appliedRow = SETTING_ROWS.find((row: SettingRow): boolean => row.key === applied);
+            const appliedLabel = appliedRow === undefined ? globalize.translate('WebGPUShaderPasses') : getRowLabel(appliedRow);
+            const savedText = applied === null ?
+                globalize.translate('SettingsSaved') :
+                globalize.translate('WebGPUClientDefaultsApplied', appliedLabel);
+            setStatus(statusElement, joinSentences(savedText, describeRefusedValues(state)) ?? '');
         } catch (error) {
             setStatus(statusElement, globalize.translate('WebGPUClientDefaultsSaveFailed', getErrorMessage(error)));
         } finally {
-            saving = false;
-            saveButton.disabled = false;
+            setSaving(false);
+        }
+    };
+
+    /** Shows a setting's built-in default, which a save stores as no server default. */
+    const resetSetting = (key: string | undefined): void => {
+        if (key === PRESET_FILES_KEY) {
+            presetFiles = [];
+            renderPreset();
+            return;
+        }
+        const row = SETTING_ROWS.find((settingRow: SettingRow): boolean => settingRow.key === key);
+        if (row !== undefined) {
+            showRowValue(root, row, builtInValues[row.key]);
         }
     };
 
@@ -685,17 +736,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
             return;
         }
-        const setKey = target.dataset.clientDefaultSet;
-        const row = SETTING_ROWS.find((settingRow: SettingRow): boolean => settingRow.key === (setKey ?? target.dataset.clientDefaultValue));
-        if (row !== undefined && setKey !== undefined) {
-            // A row the server does not set shows the built-in value clients then use
-            const control = getValueControl(root, row.key);
-            control.disabled = !(target as HTMLInputElement).checked;
-            if (control.disabled) {
-                showRowValue(root, row, builtInValues[row.key]);
-            }
-            return;
-        }
+        const row = SETTING_ROWS.find((settingRow: SettingRow): boolean => settingRow.key === target.dataset.clientDefaultValue);
         if (row !== undefined && row.kind === 'number') {
             showRowValue(root, row, readRowValue(root, row));
             return;
@@ -720,18 +761,27 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
     root.addEventListener('click', (event: Event): void => {
         const target = event.target instanceof Element ? event.target : null;
         const removeButton = target?.closest<HTMLElement>('[data-client-defaults-preset-remove]');
+        const applyButton = target?.closest<HTMLElement>('[data-client-default-apply]');
+        const resetButton = target?.closest<HTMLElement>('[data-client-default-reset]');
         if (removeButton) {
             const removedIndex = Number(removeButton.dataset.clientDefaultsPresetRemove);
             presetFiles = presetFiles.filter((_file: PresetFileView, index: number): boolean => index !== removedIndex);
             renderPreset();
+        } else if (resetButton) {
+            resetSetting(resetButton.dataset.clientDefaultReset);
+        } else if (applyButton && !saving && defaultsRead) {
+            const key = CLIENT_DEFAULT_KEYS.find((defaultKey: ClientDefaultKey): boolean => defaultKey === applyButton.dataset.clientDefaultApply);
+            if (key !== undefined) {
+                void save(key);
+            }
         } else if (target?.closest('[data-client-defaults-preset-add]') && !adding) {
             void addPresetFile();
         } else if (target?.closest('[data-client-defaults-save]') && !saving && defaultsRead) {
-            void save();
+            void save(null);
         }
     });
 
     showState(initialState);
-    saveButton.disabled = !defaultsRead;
+    setSaving(false);
     setStatus(statusElement, joinSentences(joinSentences(readFailure, catalogFailure), describeRefusedValues(initialState)) ?? '');
 }

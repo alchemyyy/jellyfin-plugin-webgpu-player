@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 import Events from 'utils/events';
 
+import { WEBGPU_USER_SETTINGS_STORAGE_KEY as SETTINGS_STORAGE_KEY, WEBGPU_USER_SETTINGS_VERSION } from 'addons/webGPUPlayer/WebGPUUserSettings';
+
 type ClientDefaultsModule = typeof import('addons/webGPUPlayer/ClientDefaults');
 type ServerClientDefaultsModule = typeof import('addons/webGPUPlayer/ServerClientDefaults');
 
@@ -21,7 +23,19 @@ const PAYLOAD_TOO_LARGE_STATUS = 413;
 
 const testState = vi.hoisted(() => ({
     serverId: 'server-1',
+    // The signed-in user's local settings, by name
+    storage: new Map<string, string>(),
     userId: 'user-1' as string | null
+}));
+
+// The signed-in user's local settings, which the add-on build redirects to its shim
+vi.mock('scripts/settings/userSettings', () => ({
+    currentSettings: {
+        get: (name: string): string | null => testState.storage.get(name) ?? null,
+        set: (name: string, value: string): void => {
+            testState.storage.set(name, value);
+        }
+    }
 }));
 
 // The page's server connections, with an API client of the server the test names
@@ -86,9 +100,14 @@ function readCache(serverId = SERVER_ID): unknown {
     return cachedText === null ? null : JSON.parse(cachedText);
 }
 
+function readStoredSettings(): unknown {
+    return JSON.parse(testState.storage.get(SETTINGS_STORAGE_KEY) ?? 'null');
+}
+
 beforeEach(() => {
     localStorage.clear();
     testState.serverId = SERVER_ID;
+    testState.storage.clear();
     testState.userId = USER_ID;
     responses = [];
     fetchMock = vi.fn((): Promise<Response> => {
@@ -118,7 +137,7 @@ describe('ServerClientDefaults', () => {
         pending.resolve(new Response(JSON.stringify({ settings: { brightness: 0.75, hdrOutput: true } }), { status: 200 }));
         await sync.whenClientDefaultsSettled();
         expect(clientDefaults.getClientDefaults()).toEqual({ brightness: 0.75, hdrOutput: true });
-        expect(readCache()).toEqual({ brightness: 0.75, hdrOutput: true });
+        expect(readCache()).toEqual({ applied: {}, settings: { brightness: 0.75, hdrOutput: true } });
     });
 
     it('keeps the current defaults when a read fails, without rejecting', async () => {
@@ -174,8 +193,8 @@ describe('ServerClientDefaults', () => {
         pending.resolve(new Response(JSON.stringify({ settings: { exposure: 2 } }), { status: 200 }));
         await sync.whenClientDefaultsSettled();
         expect(clientDefaults.getClientDefaults()).toEqual({ exposure: 2 });
-        expect(readCache()).toEqual({ exposure: 0 });
-        expect(readCache(OTHER_SERVER_ID)).toEqual({ exposure: 2 });
+        expect(readCache()).toEqual({ applied: {}, settings: { exposure: 0 } });
+        expect(readCache(OTHER_SERVER_ID)).toEqual({ applied: {}, settings: { exposure: 2 } });
     });
 
     it('starts a server without cached defaults from none, so another server\'s defaults never carry over to it', async () => {
@@ -191,7 +210,7 @@ describe('ServerClientDefaults', () => {
         await sync.whenClientDefaultsSettled();
 
         expect(clientDefaults.getClientDefaults()).toEqual({});
-        expect(readCache()).toEqual({ exposure: 1 });
+        expect(readCache()).toEqual({ applied: {}, settings: { exposure: 1 } });
     });
 
     it('joins a read in progress, and starts the sync only once', async () => {
@@ -222,7 +241,7 @@ describe('ServerClientDefaults', () => {
     });
 
     it('saves defaults in the settings envelope, then applies and caches what the server stored', async () => {
-        responses.push(respondJSON({ settings: { brightness: 0.5, settingsButtonPlacement: 'controls-end' } }));
+        responses.push(respondJSON({ applied: {}, settings: { brightness: 0.5, settingsButtonPlacement: 'controls-end' } }));
         const { clientDefaults, sync } = await importModules();
 
         const stored = await sync.saveServerClientDefaults({ brightness: 0.5, settingsButtonPlacement: 'controls-end' });
@@ -232,9 +251,71 @@ describe('ServerClientDefaults', () => {
             headers: { 'Authorization': AUTHORIZATION, 'Content-Type': 'application/json' },
             method: 'PUT'
         });
-        expect(stored).toEqual({ brightness: 0.5, settingsButtonPlacement: 'controls-end' });
-        expect(clientDefaults.getClientDefaults()).toEqual(stored);
+        expect(stored).toEqual({ applied: {}, settings: { brightness: 0.5, settingsButtonPlacement: 'controls-end' } });
+        expect(clientDefaults.getClientDefaults()).toEqual(stored.settings);
         expect(readCache()).toEqual(stored);
+    });
+
+    it('names the settings a save applies to every client', async () => {
+        responses.push(respondJSON({ applied: { brightness: 7 }, settings: { brightness: 0.5 } }));
+        const { sync } = await importModules();
+
+        await expect(sync.saveServerClientDefaults({ brightness: 0.5 }, [ 'brightness' ])).resolves.toEqual({ applied: { brightness: 7 }, settings: { brightness: 0.5 } });
+
+        expect(fetchMock).toHaveBeenCalledWith(DEFAULTS_URL, expect.objectContaining({
+            body: JSON.stringify({ apply: [ 'brightness' ], settings: { brightness: 0.5 } })
+        }));
+    });
+
+    it('drops the user\'s own choice of each applied setting once per revision, keeping their other choices', async () => {
+        testState.storage.set(SETTINGS_STORAGE_KEY, JSON.stringify({
+            playback: { enableCustomDecode: false },
+            render: { settings: { display: { brightness: 1.5, contrast: 1.25 } } },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        }));
+        testState.storage.set('preferredVideoPlayer', 'html');
+        responses.push(
+            respondJSON({ applied: { brightness: 3, preferredVideoPlayer: 3 }, settings: { brightness: 0.5 } }),
+            respondJSON({ applied: { brightness: 3, preferredVideoPlayer: 3 }, settings: { brightness: 0.5 } }),
+            respondJSON({ applied: { brightness: 4, preferredVideoPlayer: 3 }, settings: { brightness: 0.5 } })
+        );
+        const { clientDefaults, sync } = await importModules();
+        const listener = vi.fn();
+        clientDefaults.subscribeClientDefaults(listener);
+
+        await sync.refreshClientDefaults();
+
+        expect(readStoredSettings()).toEqual({
+            playback: { enableCustomDecode: false },
+            render: { settings: { display: { contrast: 1.25 } } },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        expect(testState.storage.get('preferredVideoPlayer')).toBe('');
+        // A choice made after the apply stays the user's until the next apply
+        testState.storage.set('preferredVideoPlayer', 'webgpu');
+        testState.storage.set(SETTINGS_STORAGE_KEY, JSON.stringify({ render: { settings: { display: { brightness: 2 } } }, version: WEBGPU_USER_SETTINGS_VERSION }));
+        await sync.refreshClientDefaults();
+        expect(testState.storage.get('preferredVideoPlayer')).toBe('webgpu');
+        expect(readStoredSettings()).toEqual({ render: { settings: { display: { brightness: 2 } } }, version: WEBGPU_USER_SETTINGS_VERSION });
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        await sync.refreshClientDefaults();
+        expect(readStoredSettings()).toEqual({ version: WEBGPU_USER_SETTINGS_VERSION });
+        expect(testState.storage.get('preferredVideoPlayer')).toBe('webgpu');
+        // The defaults did not change, but the user's settings did, so the page hears of it
+        expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('drops no choice while no user is signed in', async () => {
+        testState.userId = null;
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ applied: { hdrOutput: 1 }, settings: { hdrOutput: true } }));
+        testState.storage.set(SETTINGS_STORAGE_KEY, JSON.stringify({ presentation: { hdrOutput: false }, version: WEBGPU_USER_SETTINGS_VERSION }));
+        const { clientDefaults, sync } = await importModules();
+
+        sync.startClientDefaultsSync();
+
+        expect(clientDefaults.getClientDefaults()).toEqual({ hdrOutput: true });
+        expect(readStoredSettings()).toEqual({ presentation: { hdrOutput: false }, version: WEBGPU_USER_SETTINGS_VERSION });
     });
 
     it('rejects a refused read or save with the server\'s code and detail, else the HTTP status, and keeps the defaults', async () => {
@@ -242,7 +323,7 @@ describe('ServerClientDefaults', () => {
             respondJSON({ code: 'client-defaults-invalid', detail: 'settings.brightness is null' }, BAD_REQUEST_STATUS),
             respondStatus(PAYLOAD_TOO_LARGE_STATUS),
             respondStatus(FORBIDDEN_STATUS),
-            respondJSON({ settings: { contrast: 1.25 } })
+            respondJSON({ applied: {}, settings: { contrast: 1.25 } })
         );
         const { clientDefaults, sync } = await importModules();
 
@@ -251,7 +332,7 @@ describe('ServerClientDefaults', () => {
         await expect(sync.fetchServerClientDefaults()).rejects.toThrow(`http-${FORBIDDEN_STATUS}`);
         expect(clientDefaults.getClientDefaults()).toEqual({});
         // A read for the editor only reads
-        await expect(sync.fetchServerClientDefaults()).resolves.toEqual({ contrast: 1.25 });
+        await expect(sync.fetchServerClientDefaults()).resolves.toEqual({ applied: {}, settings: { contrast: 1.25 } });
         expect(clientDefaults.getClientDefaults()).toEqual({});
         testState.userId = null;
         await expect(sync.fetchServerClientDefaults()).rejects.toThrow('server-unavailable: no signed-in server');

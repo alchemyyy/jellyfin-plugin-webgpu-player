@@ -6,6 +6,33 @@
 </head>
 <body>
     <div id="WebGPUPlayerConfigurationPage" data-role="page" class="page type-interior pluginConfigurationPage" data-controller="__plugin/WebGPUPlayerConfig.js">
+        <style>
+            /* The decoder and pass lists take the client defaults editor's width: half the page, but never narrower than 30em nor wider than the page.
+               The host centers a list; these start at the page's start, as the editor does */
+            #WebGPUPlayerConfigurationPage .webgpuModuleList {
+                width: max(50%, min(100%, 30em));
+                margin-inline: 0;
+            }
+
+            /* Room between an entry's switch, or an upload's delete button, and the list's edge */
+            #WebGPUPlayerConfigurationPage .webgpuModuleList .listItem {
+                padding-inline-end: 1.25em;
+            }
+
+            #WebGPUPlayerConfigurationPage .webgpuModuleList .listItemBody {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            /* An entry's enabled switch sits at the end of its row, before an upload's delete button.
+               The host's checkbox label fills its container's width, which here would leave the entry's text none */
+            #WebGPUPlayerConfigurationPage .webgpuModuleList .webgpuModuleEnabled {
+                width: auto;
+                margin: 0;
+                margin-inline-start: auto;
+                flex: none;
+            }
+        </style>
         <div data-role="content">
             <div class="content-primary">
                 <div class="verticalSection">
@@ -35,7 +62,7 @@
                     </div>
                     <p class="fieldDescription">Decoder packages (.wasm): GPU video decoders and software audio decoders.</p>
                     <input type="file" accept=".wasm,application/wasm" multiple hidden data-files="decoderPackages">
-                    <div class="paperList" data-list="decoderPackages"></div>
+                    <div class="paperList webgpuModuleList" data-list="decoderPackages"></div>
                 </div>
 
                 <div class="verticalSection">
@@ -47,7 +74,7 @@
                     </div>
                     <p class="fieldDescription">Pass files (.wgsl): postprocessing passes a user can add to the player's presentation.</p>
                     <input type="file" accept=".wgsl,text/plain" multiple hidden data-files="passes">
-                    <div class="paperList" data-list="passes"></div>
+                    <div class="paperList webgpuModuleList" data-list="passes"></div>
                 </div>
 
                 <div class="fieldDescription" data-status role="status" aria-live="polite"></div>

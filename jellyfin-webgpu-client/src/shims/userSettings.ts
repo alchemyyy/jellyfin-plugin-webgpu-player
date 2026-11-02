@@ -18,7 +18,7 @@ const AUDIO_NORMALIZATION_KEY = 'selectAudioNormalization';
 const DEFAULT_AUDIO_NORMALIZATION = 'TrackGain';
 // The fork's storage key, so a preference saved by the fork carries over
 export const PREFERRED_VIDEO_PLAYER_KEY = 'preferredVideoPlayer';
-const WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY = 'webGPUAudioDownmixAlgorithm';
+export const WEBGPU_AUDIO_DOWNMIX_ALGORITHM_KEY = 'webGPUAudioDownmixAlgorithm';
 // Marks a user whose player preference and downmix algorithm were read since a choice equal to its default started to follow the default
 const LEGACY_CHOICES_MIGRATED_KEY = 'webGPULegacyChoicesMigrated';
 const LEGACY_CHOICES_MIGRATED = 'true';

@@ -29,18 +29,24 @@ const serverMockState = vi.hoisted(() => ({
     saveFailure: null as string | null
 }));
 
-vi.mock('addons/webGPUPlayer/ServerClientDefaults', () => ({
-    fetchServerClientDefaults: vi.fn(() => (serverMockState.defaultsFailure === null ?
-        Promise.resolve(serverMockState.defaults) :
-        Promise.reject(new Error(serverMockState.defaultsFailure)))),
-    saveServerClientDefaults: vi.fn((defaults: Record<string, unknown>) => {
-        if (serverMockState.saveFailure !== null) {
-            return Promise.reject(new Error(serverMockState.saveFailure));
-        }
-        serverMockState.defaults = defaults;
-        return Promise.resolve(defaults);
-    })
-}));
+vi.mock('addons/webGPUPlayer/ServerClientDefaults', async () => {
+    const clientDefaults = await import('addons/webGPUPlayer/ClientDefaults');
+    return {
+        applyClientDefaults: vi.fn((defaults: { settings: Record<string, unknown> }): void => {
+            clientDefaults.setClientDefaults(defaults.settings);
+        }),
+        fetchServerClientDefaults: vi.fn(() => (serverMockState.defaultsFailure === null ?
+            Promise.resolve({ applied: {}, settings: serverMockState.defaults }) :
+            Promise.reject(new Error(serverMockState.defaultsFailure)))),
+        saveServerClientDefaults: vi.fn((defaults: Record<string, unknown>) => {
+            if (serverMockState.saveFailure !== null) {
+                return Promise.reject(new Error(serverMockState.saveFailure));
+            }
+            serverMockState.defaults = defaults;
+            return Promise.resolve({ applied: {}, settings: defaults });
+        })
+    };
+});
 
 vi.mock('addons/webGPUPlayer/ServerModules', () => ({
     fetchServerPassSource: vi.fn((fileName: string): Promise<string> => {
@@ -76,14 +82,6 @@ function getValueControl(container: HTMLElement, key: string): HTMLInputElement 
     return control;
 }
 
-function getSetCheckbox(container: HTMLElement, key: string): HTMLInputElement {
-    const checkbox = container.querySelector<HTMLInputElement>(`[data-client-default-set="${key}"]`);
-    if (!checkbox) {
-        throw new Error(`no set checkbox for ${key}`);
-    }
-    return checkbox;
-}
-
 /** Returns the saturation pass file's parameter input, which each change of the list renders anew. */
 function getParameterInput(container: HTMLElement): HTMLInputElement {
     const input = container.querySelector<HTMLInputElement>(`[data-client-defaults-parameter="${SATURATION_PARAMETER_NAME}"]`);
@@ -100,12 +98,6 @@ function getStatus(container: HTMLElement): string {
 function changeValue(control: HTMLInputElement | HTMLSelectElement, value: string): void {
     control.value = value;
     control.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-function setRow(container: HTMLElement, key: string, isSet: boolean): void {
-    const checkbox = getSetCheckbox(container, key);
-    checkbox.checked = isSet;
-    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function click(container: HTMLElement, selector: string): void {
@@ -144,14 +136,14 @@ describe('client defaults editor', () => {
         setClientDefaults({});
     });
 
-    it('shows each setting the server does not set disabled, with its built-in value', async () => {
+    it('shows each setting the server does not set with its built-in value, every control enabled', async () => {
         const container = await renderEditor();
         const builtInRender = createHDRToSDRRenderSettings();
 
         for (const key of CLIENT_DEFAULT_KEYS.filter((defaultKey: string): boolean => defaultKey !== 'presentationFiles')) {
-            expect(getSetCheckbox(container, key).checked, key).toBe(false);
-            expect(getValueControl(container, key).disabled, key).toBe(true);
+            expect(getValueControl(container, key).disabled, key).toBe(false);
         }
+        expect(container.querySelector('[data-client-default-set]')).toBeNull();
         expect(getValueControl(container, 'preferredVideoPlayer').value).toBe('auto');
         expect(getValueControl(container, 'settingsButtonPlacement').value).toBe('before-settings');
         expect(getValueControl(container, 'enableCustomDecode').checked).toBe(true);
@@ -163,20 +155,16 @@ describe('client defaults editor', () => {
         expect(getStatus(container)).toBe('');
     });
 
-    it('checks each setting the server sets and shows its value', async () => {
+    it('shows the value of each setting the server sets', async () => {
         serverMockState.defaults = { brightness: 0.1, deinterlaceMode: 'off', hdrOutput: true, preferredVideoPlayer: 'html' };
 
         const container = await renderEditor();
 
-        for (const key of [ 'brightness', 'deinterlaceMode', 'hdrOutput', 'preferredVideoPlayer' ]) {
-            expect(getSetCheckbox(container, key).checked, key).toBe(true);
-            expect(getValueControl(container, key).disabled, key).toBe(false);
-        }
         expect(Number(getValueControl(container, 'brightness').value)).toBe(0.1);
         expect(getValueControl(container, 'deinterlaceMode').value).toBe('off');
         expect(getValueControl(container, 'hdrOutput').checked).toBe(true);
         expect(getValueControl(container, 'preferredVideoPlayer').value).toBe('html');
-        expect(getSetCheckbox(container, 'contrast').checked).toBe(false);
+        expect(Number(getValueControl(container, 'contrast').value)).toBe(createHDRToSDRRenderSettings().display.contrast);
         expect(getStatus(container)).toBe('');
         // The page follows the defaults it just read
         expect(getClientDefaults()).toEqual(serverMockState.defaults);
@@ -187,7 +175,6 @@ describe('client defaults editor', () => {
 
         const container = await renderEditor();
 
-        expect(getSetCheckbox(container, 'toneMapOperator').checked).toBe(true);
         expect(getValueControl(container, 'toneMapOperator').value).toBe(createHDRToSDRRenderSettings().toneMapping.operator);
         expect(getValueControl(container, 'enableCustomDecode').checked).toBe(true);
         expect(getStatus(container)).toBe(translateSourceString(
@@ -196,23 +183,19 @@ describe('client defaults editor', () => {
         ));
     });
 
-    it('saves exactly the set rows with typed values, numbers kept inside their ranges', async () => {
+    it('saves exactly the values that differ from the built-in ones, numbers kept inside their ranges', async () => {
+        serverMockState.defaults = { saturation: 1.5 };
         const container = await renderEditor();
 
-        setRow(container, 'brightness', true);
         changeValue(getValueControl(container, 'brightness'), '9999');
-        setRow(container, 'hdrOutput', true);
         getValueControl(container, 'hdrOutput').checked = true;
-        setRow(container, 'deinterlaceMode', true);
         changeValue(getValueControl(container, 'deinterlaceMode'), 'single-rate');
-        setRow(container, 'preferredVideoPlayer', true);
         changeValue(getValueControl(container, 'preferredVideoPlayer'), 'webgpu');
-        // A row set then unset again is not saved, and shows the built-in value
-        setRow(container, 'contrast', true);
+        // A value changed back to the built-in one, by hand or by its reset, is not stored
         changeValue(getValueControl(container, 'contrast'), '1.5');
-        setRow(container, 'contrast', false);
+        click(container, '[data-client-default-reset="contrast"]');
+        click(container, '[data-client-default-reset="saturation"]');
         // An entry that is no number returns to the value shown before
-        setRow(container, 'exposure', true);
         changeValue(getValueControl(container, 'exposure'), '');
 
         click(container, '[data-client-defaults-save]');
@@ -221,28 +204,44 @@ describe('client defaults editor', () => {
         expect(saveServerClientDefaults).toHaveBeenCalledWith({
             brightness: HDR_RENDER_SETTING_RANGES.brightness.maximum,
             deinterlaceMode: 'single-rate',
-            exposure: createHDRToSDRRenderSettings().toneMapping.exposure,
             hdrOutput: true,
             preferredVideoPlayer: 'webgpu'
-        });
+        }, []);
         expect(Number(getValueControl(container, 'contrast').value)).toBe(createHDRToSDRRenderSettings().display.contrast);
-        expect(getValueControl(container, 'contrast').disabled).toBe(true);
+        expect(Number(getValueControl(container, 'saturation').value)).toBe(createHDRToSDRRenderSettings().display.saturation);
+        expect(Number(getValueControl(container, 'exposure').value)).toBe(createHDRToSDRRenderSettings().toneMapping.exposure);
         // The form shows what the server stored
-        expect(getSetCheckbox(container, 'brightness').checked).toBe(true);
         expect(Number(getValueControl(container, 'brightness').value)).toBe(HDR_RENDER_SETTING_RANGES.brightness.maximum);
+    });
+
+    it('applies a setting to every client by saving the form with that setting named', async () => {
+        const container = await renderEditor();
+        changeValue(getValueControl(container, 'brightness'), '0.5');
+        getValueControl(container, 'hdrOutput').checked = true;
+
+        click(container, '[data-client-default-apply="brightness"]');
+
+        await vi.waitFor(() => expect(getStatus(container))
+            .toBe(translateSourceString('WebGPUClientDefaultsApplied', translateSourceString('WebGPUBrightness'))));
+        expect(saveServerClientDefaults).toHaveBeenCalledWith({ brightness: 0.5, hdrOutput: true }, [ 'brightness' ]);
+
+        click(container, '[data-client-default-apply="presentationFiles"]');
+        await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledTimes(2));
+        expect(saveServerClientDefaults).toHaveBeenLastCalledWith({ brightness: 0.5, hdrOutput: true }, [ 'presentationFiles' ]);
     });
 
     it('shows a refused save in the status and keeps the form', async () => {
         serverMockState.saveFailure = 'client-defaults-invalid: settings';
         const container = await renderEditor();
-        setRow(container, 'hdrOutput', true);
+        getValueControl(container, 'hdrOutput').checked = true;
 
         click(container, '[data-client-defaults-save]');
 
         await vi.waitFor(() => expect(getStatus(container))
             .toBe(translateSourceString('WebGPUClientDefaultsSaveFailed', 'client-defaults-invalid: settings')));
-        expect(getSetCheckbox(container, 'hdrOutput').checked).toBe(true);
+        expect(getValueControl(container, 'hdrOutput').checked).toBe(true);
         expect(container.querySelector<HTMLButtonElement>('[data-client-defaults-save]')?.disabled).toBe(false);
+        expect(container.querySelector<HTMLButtonElement>('[data-client-default-apply="hdrOutput"]')?.disabled).toBe(false);
     });
 
     it('saves nothing when the server defaults cannot be read, since a save would drop the defaults the form never showed', async () => {
@@ -253,9 +252,11 @@ describe('client defaults editor', () => {
         expect(getStatus(container)).toBe(translateSourceString('WebGPUClientDefaultsReadFailed', 'http-500'));
         const saveButton = container.querySelector<HTMLButtonElement>('[data-client-defaults-save]');
         expect(saveButton?.disabled).toBe(true);
-        setRow(container, 'forceStereoDownmix', true);
+        expect(container.querySelector<HTMLButtonElement>('[data-client-default-apply="brightness"]')?.disabled).toBe(true);
+        getValueControl(container, 'forceStereoDownmix').checked = true;
         // A save calls the server before its first await, so a click that saves would have called it by now
         click(container, '[data-client-defaults-save]');
+        click(container, '[data-client-default-apply="brightness"]');
         expect(saveServerClientDefaults).not.toHaveBeenCalled();
     });
 
@@ -302,7 +303,7 @@ describe('client defaults editor', () => {
                 { fileName: WITHDRAWN_FILE, parameters: { strength: 2 } },
                 { fileName: INVERT_FILE, parameters: {} }
             ]
-        });
+        }, []);
         await vi.waitFor(() => expect(getStatus(container)).toBe('SettingsSaved'));
 
         changeValue(getParameterInput(container), String(SATURATION_PARAMETER_DEFAULT));
@@ -315,18 +316,24 @@ describe('client defaults editor', () => {
                 { fileName: SATURATION_FILE, parameters: {} },
                 { fileName: INVERT_FILE, parameters: {} }
             ]
-        });
+        }, []);
     });
 
-    it('leaves the preset out of the save once its last file is removed', async () => {
+    it('leaves the preset out of the save once its last file is removed, or the preset is reset', async () => {
         serverMockState.defaults = { presentationFiles: [ { fileName: INVERT_FILE, parameters: {} } ] };
         const container = await renderEditor();
 
         click(container, '[data-client-defaults-preset-remove="0"]');
         click(container, '[data-client-defaults-save]');
 
-        await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledWith({}));
+        await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledWith({}, []));
         expect(getPresetFileTexts(container)).toEqual([]);
+
+        serverMockState.defaults = { presentationFiles: [ { fileName: INVERT_FILE, parameters: {} }, { fileName: SATURATION_FILE, parameters: {} } ] };
+        const resetContainer = await renderEditor();
+        expect(getPresetFileTexts(resetContainer)).toHaveLength(2);
+        click(resetContainer, '[data-client-default-reset="presentationFiles"]');
+        expect(getPresetFileTexts(resetContainer)).toEqual([]);
     });
 
     it('names an unreadable pass catalog and offers nothing to add', async () => {

@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Net.Mime;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -35,13 +34,13 @@ public sealed class ClientDefaultsController(ClientDefaultsStore store) : Contro
     {
         // Each response revalidates, since an administrator may change the defaults at any time
         Response.Headers.CacheControl = ModuleController.RevalidateCacheControl;
-        return new JsonResult(new ClientDefaultsDocument(store.GetSettings()), ResponseJsonOptions);
+        return new JsonResult(store.GetDocument(), ResponseJsonOptions);
     }
 
     /// <summary>
-    /// Replaces the client defaults with the request body, <c>{ "settings": { ... } }</c>.
+    /// Replaces the client defaults with the request body, <c>{ "settings": { ... }, "apply": [ ... ] }</c>, bumping the applied revision of each key in <c>apply</c>.
     /// </summary>
-    /// <returns>The stored defaults, or the failed check: 413 for a body over the limit, 500 for a refused write, else 400.</returns>
+    /// <returns>The stored defaults and applied revisions, or the failed check: 413 for a body over the limit, 500 for a refused write, else 400.</returns>
     [HttpPut(ClientDefaultsPath)]
     [Authorize(Policy = Policies.RequiresElevation)]
     [Consumes(MediaTypeNames.Application.Json)]
@@ -54,10 +53,10 @@ public sealed class ClientDefaultsController(ClientDefaultsStore store) : Contro
             return CreateProblemResult(new ClientDefaultsProblem(ClientDefaultsProblem.SizeCode, ClientDefaultsFunctions.SizeDetail));
         }
 
-        (IReadOnlyDictionary<string, JsonElement>? settings, ClientDefaultsProblem? problem) = store.SetDocument(bytes);
-        return settings is null
+        (ClientDefaultsDocument? document, ClientDefaultsProblem? problem) = store.SetDocument(bytes);
+        return document is null
             ? CreateProblemResult(problem!)
-            : new JsonResult(new ClientDefaultsDocument(settings), ResponseJsonOptions);
+            : new JsonResult(document, ResponseJsonOptions);
     }
 
     private static JsonResult CreateProblemResult(ClientDefaultsProblem problem)

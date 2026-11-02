@@ -117,7 +117,7 @@ function createEntryElement(kindName, entry) {
     // The key's state applies to whichever version holds it, so a replaced bundled file has no switch of its own
     if (!entry.replaced) {
         const label = document.createElement('label');
-        label.className = 'checkboxContainer';
+        label.className = 'checkboxContainer webgpuModuleEnabled';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.setAttribute('is', 'emby-checkbox');

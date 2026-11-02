@@ -36,6 +36,9 @@ export type ClientDefaultKey = typeof CLIENT_DEFAULT_KEYS[number];
 /** The server's defaults as read: each key's value unchecked, for its setting's owner to normalize. */
 export type ClientDefaults = Readonly<Partial<Record<ClientDefaultKey, unknown>>>;
 
+/** The revision of each key an administrator last applied to every client; a client drops its user's own choice of a key once per newer revision. */
+export type AppliedRevisions = Readonly<Partial<Record<ClientDefaultKey, number>>>;
+
 const WARNING_PREFIX = 'WebGPU client defaults';
 const EMPTY_DEFAULTS: ClientDefaults = Object.freeze({});
 
@@ -65,16 +68,33 @@ export function parseClientDefaults(value: unknown): ClientDefaults {
     return Object.freeze(defaults);
 }
 
+/** Keeps the known keys of a revisions object that hold a positive whole number; another key or value is left out. */
+export function parseAppliedRevisions(value: unknown): AppliedRevisions {
+    const revisions: Partial<Record<ClientDefaultKey, number>> = {};
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return revisions;
+    }
+    for (const [ key, revision ] of Object.entries(value) as Array<[ string, unknown ]>) {
+        if (isClientDefaultKey(key) && typeof revision === 'number' && Number.isSafeInteger(revision) && revision > 0) {
+            revisions[key] = revision;
+        }
+    }
+    return Object.freeze(revisions);
+}
+
 /** Returns the latest defaults, or none before any were read. */
 export function getClientDefaults(): ClientDefaults {
     return currentDefaults;
 }
 
-/** Replaces the defaults, and tells each subscriber when they changed. */
-export function setClientDefaults(defaults: ClientDefaults): void {
+/**
+ * Replaces the defaults, and tells each subscriber when they changed.
+ * choicesChanged tells them even when the defaults did not, since the user's own choices changed with them.
+ */
+export function setClientDefaults(defaults: ClientDefaults, choicesChanged = false): void {
     const parsedDefaults = parseClientDefaults(defaults);
     const parsedDefaultsText = JSON.stringify(parsedDefaults);
-    if (parsedDefaultsText === currentDefaultsText) {
+    if (parsedDefaultsText === currentDefaultsText && !choicesChanged) {
         return;
     }
     currentDefaults = parsedDefaults;

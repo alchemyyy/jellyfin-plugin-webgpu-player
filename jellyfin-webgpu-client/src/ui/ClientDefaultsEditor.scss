@@ -1,0 +1,36 @@
+.webgpuClientDefaultsEditor {
+    // Half the page, but never narrower than a readable form, nor wider than the page
+    width: max(50%, min(100%, 30em));
+
+    // The host dims setting labels to its secondary text; the theme's primary text sets them apart from their descriptions. A focused label keeps the host's accent
+    .inputLabelUnfocused,
+    .selectLabel:not(.selectLabelFocused),
+    .checkboxLabel {
+        color: var(--jf-palette-text-primary, inherit);
+    }
+
+    // A setting's control, then its buttons at the row's end; the buttons wrap below a control too narrow to share the row, still at its end
+    .webgpuClientDefaultRow {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5em 1em;
+
+        > :first-child {
+            flex: 1 1 15em;
+            min-width: 0;
+        }
+    }
+
+    .webgpuClientDefaultActions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.5em;
+        margin-inline-start: auto;
+
+        .emby-button {
+            margin: 0;
+        }
+    }
+}
