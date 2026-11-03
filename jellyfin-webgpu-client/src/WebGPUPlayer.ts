@@ -921,6 +921,10 @@ export default class WebGPUPlayer {
     private customPlaybackHasPlayed = false;
     private customPlaybackAudioSelectionRevision = 0;
     private customPlaybackSeekRevision = 0;
+    /** The newest seek on the current controller, which a startup it supersedes follows instead of abandoning the play request. */
+    private latestCustomPlaybackSeek: Promise<CustomPlaybackStartResult | undefined> | null = null;
+    /** The newest seek requested while custom setup has no controller yet, which becomes the startup position. */
+    private pendingCustomPlaybackSeekTimeMicroseconds: Microseconds | null = null;
     private customPlaybackSetupRevision = 0;
     private customPlaybackSetupTelemetry: CustomPlaybackSetupTelemetry = {
         stage: 'idle',
@@ -1148,6 +1152,7 @@ export default class WebGPUPlayer {
 
     /** Cancels only an unresolved backend startup, leaving established playback intact. */
     cancelPendingPlay(): void {
+        this.pendingCustomPlaybackSeekTimeMicroseconds = null;
         this.htmlDelegate.cancelPendingPlay();
         const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(this.backendSessionGeneration);
         if (audioPrewarmClose) {
@@ -1158,6 +1163,7 @@ export default class WebGPUPlayer {
             return;
         }
 
+        this.customPlaybackStartingGeneration = null;
         void this.detachCustomPlaybackController();
         this.customPlaybackAudioSelectionRevision += 1;
         this.customPlaybackSeekRevision += 1;
@@ -1255,6 +1261,8 @@ export default class WebGPUPlayer {
     }
 
     stop(destroyPlayer: boolean): Promise<unknown> {
+        this.pendingCustomPlaybackSeekTimeMicroseconds = null;
+        this.customPlaybackStartingGeneration = null;
         const sessionGeneration = this.backendSessionGeneration;
         const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(sessionGeneration);
         this.htmlDelegate.cancelPendingPlay();
@@ -1294,6 +1302,8 @@ export default class WebGPUPlayer {
     }
 
     destroy(): void {
+        this.pendingCustomPlaybackSeekTimeMicroseconds = null;
+        this.customPlaybackStartingGeneration = null;
         if (typeof document !== 'undefined') {
             document.removeEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
@@ -1377,7 +1387,7 @@ export default class WebGPUPlayer {
             if (!this.isRequestedSessionCurrent(generation)) {
                 return PLAYBACK_SUPERSEDED;
             }
-            const playResult = await this.htmlDelegate.player.play(options);
+            const playResult = await this.htmlDelegate.player.play(this.applyPendingStartupSeek(options));
             if (!this.isRequestedSessionCurrent(generation)) {
                 return PLAYBACK_SUPERSEDED;
             }
@@ -1402,6 +1412,18 @@ export default class WebGPUPlayer {
         }
     }
 
+    /** Starts the native backend from a seek requested while custom setup was deciding against it. */
+    private applyPendingStartupSeek(options: unknown): unknown {
+        const seekTimeMicroseconds = this.takePendingCustomPlaybackSeekTime();
+        return seekTimeMicroseconds === null ? options : this.createNativeFallbackOptions(seekTimeMicroseconds);
+    }
+
+    private takePendingCustomPlaybackSeekTime(): Microseconds | null {
+        const seekTimeMicroseconds = this.pendingCustomPlaybackSeekTimeMicroseconds;
+        this.pendingCustomPlaybackSeekTimeMicroseconds = null;
+        return seekTimeMicroseconds;
+    }
+
     currentTime(value?: number): number | undefined {
         if (value != null) {
             this.cancelPendingPausedPresentationRefresh();
@@ -1414,14 +1436,27 @@ export default class WebGPUPlayer {
             this.customPlaybackSeekRevision += 1;
             const seekRevision = this.customPlaybackSeekRevision;
             const backendGeneration = this.backendSessionGeneration;
+            const customPlaybackController = this.getActiveCustomPlaybackController();
+            if (!customPlaybackController && !recoveryTransitionActive && this.customPlaybackStartingGeneration === backendGeneration) {
+                // Setup has no controller to seek yet, and the HTML backend is idle, so setup starts from the newest position instead
+                this.pendingCustomPlaybackSeekTimeMicroseconds = requestedTimeMicroseconds;
+                return undefined;
+            }
             const seekGeneration = this.advancePresentationGeneration();
             this.presenter.seek(seekGeneration);
-            const customPlaybackController = this.getActiveCustomPlaybackController();
             if (customPlaybackController) {
                 this.customPlaybackFrameLoop?.setPresentationGeneration(seekGeneration);
                 this.presenter.setDecodedFramePushMode(true, seekGeneration);
-                void Promise.resolve().then(() => (customPlaybackController.seek(requestedTimeMicroseconds))).then(result => {
-                    if (this.customPlaybackSeekRevision !== seekRevision) {
+                // A burst of seeks collapses to the newest: a queued seek that a newer seek or a teardown replaced never reaches the controller,
+                // and the controller supersedes a running seek's generation when the next one starts
+                const seekPromise = Promise.resolve().then(() => (
+                    this.isCustomPlaybackSeekCurrent(customPlaybackController, backendGeneration, seekRevision) ?
+                        customPlaybackController.seek(requestedTimeMicroseconds) :
+                        undefined
+                ));
+                this.latestCustomPlaybackSeek = seekPromise;
+                void seekPromise.then(result => {
+                    if (!result || this.customPlaybackSeekRevision !== seekRevision) {
                         return;
                     }
                     this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
@@ -1440,6 +1475,9 @@ export default class WebGPUPlayer {
             return undefined;
         }
 
+        if (this.pendingCustomPlaybackSeekTimeMicroseconds !== null) {
+            return microsecondsToMilliseconds(this.pendingCustomPlaybackSeekTimeMicroseconds);
+        }
         const customPlaybackController = this.getActiveCustomPlaybackController();
         if (customPlaybackController) {
             this.lastKnownTimeMicroseconds = customPlaybackController.currentTimeMicroseconds;
@@ -2309,11 +2347,20 @@ export default class WebGPUPlayer {
             stage: 'capabilities',
             status: 'in-progress'
         };
-        const result = await waitForCustomPlaybackSetup(
-            (deadline: CustomPlaybackSetupDeadline): Promise<CustomPlaybackAttemptResult> => (
-                this.tryStartCustomPlayback(options, backendGeneration, setupRevision, recoveryAnchorMicroseconds, deadline)
-            )
-        );
+        // Starting spans the whole bounded attempt, so a declined setup hands later seeks back to the HTML backend
+        this.customPlaybackStartingGeneration = backendGeneration;
+        let result: CustomPlaybackAttemptResult | typeof CUSTOM_PLAYBACK_SETUP_TIMEOUT;
+        try {
+            result = await waitForCustomPlaybackSetup(
+                (deadline: CustomPlaybackSetupDeadline): Promise<CustomPlaybackAttemptResult> => (
+                    this.tryStartCustomPlayback(options, backendGeneration, setupRevision, recoveryAnchorMicroseconds, deadline)
+                )
+            );
+        } finally {
+            if (this.customPlaybackStartingGeneration === backendGeneration) {
+                this.customPlaybackStartingGeneration = null;
+            }
+        }
         if (result !== CUSTOM_PLAYBACK_SETUP_TIMEOUT) {
             if (result.status !== 'superseded') {
                 this.customPlaybackSetupTelemetry = {
@@ -2333,7 +2380,6 @@ export default class WebGPUPlayer {
             status: 'timeout'
         };
         this.customPlaybackSetupRevision += 1;
-        this.customPlaybackStartingGeneration = null;
         this.webGPUPresentationEnabled = false;
         const invalidatedGeneration = this.advancePresentationGeneration();
         this.presenter.endSession(invalidatedGeneration);
@@ -2358,7 +2404,6 @@ export default class WebGPUPlayer {
         recoveryAnchorMicroseconds: Microseconds,
         setupDeadline: CustomPlaybackSetupDeadline
     ): Promise<CustomPlaybackAttemptResult> {
-        this.customPlaybackStartingGeneration = backendGeneration;
         const webGPUUserSettings = loadWebGPUUserSettings();
         // The prewarmed context opens on the output a decoded track plays to, so its destination's width resolves the speaker layout
         const audioRenderTarget = selectAudioRenderTarget(
@@ -2488,7 +2533,7 @@ export default class WebGPUPlayer {
             );
             this.customPlaybackAudioDownmixAlgorithm = audioDownmixAlgorithm ?? null;
 
-            const startResult = await customPlaybackController.play({
+            const initialStartResult = await customPlaybackController.play({
                 ...getDecoderPackagePlayOptions(eligibility),
                 audioDownmixAlgorithm,
                 audioDownmixSettings: getDecodedAudioDownmixSettings(eligibility, webGPUUserSettings),
@@ -2505,34 +2550,70 @@ export default class WebGPUPlayer {
                 nativeHDRTransfer: eligibility.nativeHDRTransfer ?? null,
                 neutralizeHDRColorMetadata: eligibility.neutralizeHDRColorMetadata,
                 rawVideoFrameFormat: eligibility.rawVideoFrameFormat,
-                startTimeMicroseconds: eligibility.startTimeMicroseconds,
+                startTimeMicroseconds: this.takePendingCustomPlaybackSeekTime() ?? eligibility.startTimeMicroseconds,
                 source: eligibility.source,
                 videoDecoderBackend: eligibility.videoDecoderBackend,
                 videoOutputMode: eligibility.videoOutputMode,
                 videoTrackIndex: eligibility.videoTrackIndex
             });
+            const startResult = await this.followCustomPlaybackStartupSeeks(customPlaybackController, backendGeneration, initialStartResult);
             if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
                 return { status: 'superseded' };
             }
             this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, startResult);
             completedStartResult = startResult;
         } catch (error) {
-            if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
-                return { status: 'superseded' };
-            }
-            console.warn('Custom playback startup failed; using the HTML backend', error);
-            void this.detachCustomPlaybackController();
-            return this.getCustomPlaybackUnavailableResult(backendGeneration, 'decode-failed', recoveryAnchorMicroseconds);
-        } finally {
-            if (this.customPlaybackStartingGeneration === backendGeneration) {
-                this.customPlaybackStartingGeneration = null;
-            }
+            return this.handleCustomPlaybackStartupFailure(error, backendGeneration, setupRevision, recoveryAnchorMicroseconds);
         }
 
         if (!completedStartResult) {
             return this.getCustomPlaybackUnavailableResult(backendGeneration, 'lifecycle-failed', recoveryAnchorMicroseconds);
         }
         return this.resolveCustomPlaybackStartResult(completedStartResult);
+    }
+
+    /** A seek supersedes the startup's decode generation, not the play request, so the request settles with the newest seek's startup. */
+    private async followCustomPlaybackStartupSeeks(
+        customPlaybackController: CustomPlaybackController,
+        backendGeneration: number,
+        initialResult: CustomPlaybackStartResult
+    ): Promise<CustomPlaybackStartResult> {
+        let result = initialResult;
+        let followedSeek: Promise<CustomPlaybackStartResult | undefined> | null = null;
+        while (result.status === 'superseded' && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
+            const seek = this.latestCustomPlaybackSeek;
+            if (!seek || seek === followedSeek) {
+                break;
+            }
+            followedSeek = seek;
+            try {
+                result = (await seek) ?? result;
+            } catch (error) {
+                // A newer seek replaced the one that failed, so only the newest seek's failure ends the startup
+                if (seek === this.latestCustomPlaybackSeek && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
+                    throw error;
+                }
+            }
+        }
+        return result;
+    }
+
+    /** Joins a fallback a failed startup seek already began, rather than starting the HTML backend twice. */
+    private async handleCustomPlaybackStartupFailure(
+        error: unknown,
+        backendGeneration: number,
+        setupRevision: number,
+        recoveryAnchorMicroseconds: Microseconds
+    ): Promise<CustomPlaybackAttemptResult> {
+        if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
+            return { status: 'superseded' };
+        }
+        if (this.customPlaybackFallbackPromise) {
+            return { result: await this.customPlaybackFallbackPromise, status: 'handled' };
+        }
+        console.warn('Custom playback startup failed; using the HTML backend', error);
+        void this.detachCustomPlaybackController();
+        return this.getCustomPlaybackUnavailableResult(backendGeneration, 'decode-failed', recoveryAnchorMicroseconds);
     }
 
     private async resolveCustomPlaybackStartResult(startResult: CustomPlaybackStartResult): Promise<CustomPlaybackAttemptResult> {
@@ -2585,8 +2666,9 @@ export default class WebGPUPlayer {
             return { status: 'native-required' };
         }
 
-        this.lastKnownTimeMicroseconds = mediaTimeMicroseconds;
-        this.customPlaybackRecoveryTimeMicroseconds = mediaTimeMicroseconds;
+        const resumeTimeMicroseconds = this.takePendingCustomPlaybackSeekTime() ?? mediaTimeMicroseconds;
+        this.lastKnownTimeMicroseconds = resumeTimeMicroseconds;
+        this.customPlaybackRecoveryTimeMicroseconds = resumeTimeMicroseconds;
         this.webGPUPresentationEnabled = false;
         this.beginCustomPlaybackAudioPrewarmClose(backendGeneration);
         const invalidatedGeneration = this.advancePresentationGeneration();
@@ -3290,6 +3372,7 @@ export default class WebGPUPlayer {
         this.customPlaybackAudioSelectionRevision += 1;
         this.customPlaybackSeekRevision += 1;
         this.customPlaybackBackendGeneration = null;
+        this.latestCustomPlaybackSeek = null;
         this.customPlaybackEmitUnpause = false;
     }
 
@@ -3297,6 +3380,15 @@ export default class WebGPUPlayer {
         return this.customPlaybackController === customPlaybackController
             && this.customPlaybackBackendGeneration === backendGeneration
             && this.isRequestedSessionCurrent(backendGeneration);
+    }
+
+    private isCustomPlaybackSeekCurrent(
+        customPlaybackController: CustomPlaybackController,
+        backendGeneration: number,
+        seekRevision: number
+    ): boolean {
+        return this.customPlaybackSeekRevision === seekRevision
+            && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration);
     }
 
     private isCustomPlaybackAudioSelectionCurrent(
