@@ -11,11 +11,13 @@
 
 <p align="center"><b><i>This plugin is in alpha!!!</i></b></p>
 
-This plugin adds a custom WebGPU-based media player as an optional player backend to Jellyfin in the browser. This allows (theoretically) any media to be played directly in the client's browser, which would otherwise need to be transcoded on the server. This includes HDR->SDR tone-mapping, and multichannel audio downmixing. This player also links to software implementations of popular codecs which some devices don't support natively.
+This plugin adds a custom WebGPU-based media player as an optional player backend to Jellyfin in the browser, thus  allowing (theoretically) any media to be played directly, which would otherwise need to be transcoded on the server. Notably, this includes HDR->SDR tone-mapping and multichannel audio downmixing.
 
-Benefits of this, beyond massive performance, are total control over tone-mapping and audio downmixing settings on a per-device basis.
+The underlying WebGPU player also supports dynamically available codec modules, which enable GPU-accelerated decoding on otherwise unsupported platforms.
 
-This is meant to be a replacement solution to the Jellyfin desktop client "ecosystem". My philosophy here is that its a lot easier to develop a backend player, which is almost purely mechanically testable, than it is to modify or outright create a UX and stitch it into an existing native player program, with all the extra overhead of shipping and maintaining a standalone app a user base has to manually keep up to date. 
+Similar to codec modules, the player supports dynamic post-processing modules i.e. "shaders". Users coming from MPV should be familiar with this concept. This enables support for advanced upscaling alogrithms such as Anime4K, sharpening filters, frame-blend motion smoothing, and more.
+
+The player repository is located here: [WebGPU Player](https://github.com/alchemyyy/WebGPU-Player)
 
 [Currently supported formats](https://alchemyyy.github.io/WebGPU-Player/formats.html)
 
@@ -28,13 +30,19 @@ Add this plugin as you would any other plugin: add this manifest to your plugin 
 https://raw.githubusercontent.com/alchemyyy/jellyfin-plugin-webgpu-player/refs/heads/main/manifest.json
 ```
 
-The [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin is optional. When it is installed, the plugin rewrites Jellyfin Web through it, alongside other plugins that use it. Without it, the plugin's own middleware does the same rewrites.
+Thats it! you're all set.
+
+<h4 align="center">Additional Install Info</h2>
+
+The [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin is optional. When it is installed, the plugin rewrites Jellyfin Web through it, alongside other plugins that use it. Without it, the plugin's own middleware performs the same rewrites.
 
 The plugin itself is basically a wrapper for injecting modifications into the Jellyfin Web client. The web client modifications live in [jellyfin-webgpu-client](https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/tree/main/jellyfin-webgpu-client). The player backend itself is its own project here: [WebGPU-Player](https://github.com/alchemyyy/WebGPU-Player). This plugin also ships with [my own flavor of hls.js for now](https://github.com/alchemyyy/hls.js).
 
 ***WARNING:*** This plugin essentially overwrites the stock player, even though it allows access to the old backend. This means there most likely will be compatibility issues between this and other things that modify the player UX. Feel free to report any of these issues and I'll look into fixing them.
 
 <h2 align="center">Development</h2>
+
+This is meant to be a replacement solution to the Jellyfin desktop client "ecosystem". My philosophy here is that its a lot easier to develop a backend player, which is almost purely mechanically testable, than it is to modify or outright create a UX and stitch it into an existing native player program, with all the extra overhead of shipping and maintaining a standalone app a user base has to manually keep up to date. 
 
 ### Documentation
 
