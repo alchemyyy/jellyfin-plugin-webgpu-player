@@ -113,10 +113,10 @@ describe('UserSettings shim preferred video player', () => {
 });
 
 describe('UserSettings shim WebGPU audio downmix algorithm', () => {
-    it('defaults to standard Lo/Ro with dynamic peak limiting', () => {
+    it('defaults to AC-4', () => {
         const settings = new UserSettings();
 
-        expect(settings.webGPUAudioDownmixAlgorithm()).toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+        expect(settings.webGPUAudioDownmixAlgorithm()).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4);
     });
 
     it('persists a supported selection for the current user on this client', () => {
