@@ -25,7 +25,15 @@ import {
     type NumericControlConfiguration,
     type NumericSettingKey
 } from './SettingDefinitions';
-import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
+import {
+    createDefaultButtonHTML,
+    createDescribedSettingButtonsHTML,
+    createInfoButtonHTML,
+    getSettingDescriptionId,
+    HIDDEN_CLASS,
+    setStatus,
+    translateToHTML
+} from './SettingsPanelHTML';
 
 import 'elements/emby-button/emby-button';
 import 'elements/emby-button/paper-icon-button-light';
@@ -95,6 +103,8 @@ const PLAYBACK_INFO_OFFSET_PROPERTY = '--webgpu-playback-info-offset';
 const PLAYBACK_INFO_MINIMUM_SPACE_EM = 22;
 // The video OSD's input command that shows or hides the host's playback info
 const TOGGLE_PLAYBACK_INFO_COMMAND = 'togglestats';
+// The video OSD page; the host's view manager keeps pages of earlier views in the document, hidden by class, so more than one can match
+const VIDEO_OSD_PAGE_SELECTOR = '#videoOsdPage';
 // The video OSD's bottom controls: the title, the timeline, and the buttons
 const OSD_CONTROLS_SELECTOR = '.videoOsdBottom-maincontrols .osdControls';
 const OSD_CONTROLS_GAP_PX = 8;
@@ -207,7 +217,7 @@ function createNumericControlHTML(configuration: NumericControlConfiguration): s
                 </label>
                 <div class="webgpuSettingsSliderContainer">
                     <input
-                        aria-describedby="webgpu-${settingKey}-description"
+                        aria-describedby="${getSettingDescriptionId(settingKey)}"
                         id="webgpu-${settingKey}-slider"
                         class="webgpuSettingsSlider"
                         data-setting-slider="${settingKey}"
@@ -220,7 +230,7 @@ function createNumericControlHTML(configuration: NumericControlConfiguration): s
                 </div>
                 <div class="webgpuSettingsNumberContainer">
                     <input
-                        aria-describedby="webgpu-${settingKey}-description"
+                        aria-describedby="${getSettingDescriptionId(settingKey)}"
                         aria-label="${translateToHTML('WebGPUSettingNumericValue', label)}"
                         class="webgpuSettingsNumber"
                         data-setting-number="${settingKey}"
@@ -235,7 +245,7 @@ function createNumericControlHTML(configuration: NumericControlConfiguration): s
             </div>
             <div
                 class="webgpuSettingsControlDescription"
-                id="webgpu-${settingKey}-description"
+                id="${getSettingDescriptionId(settingKey)}"
             >${description}</div>
         </div>`;
 }
@@ -268,18 +278,18 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
                             <select
-                                aria-describedby="webgpu-settings-button-placement-description"
+                                aria-describedby="${getSettingDescriptionId('settingsButtonPlacement')}"
                                 data-setting-select="settingsButtonPlacement"
                                 id="webgpu-settings-button-placement"
                                 is="emby-select"
                                 label="${translateToHTML('WebGPUSettingsButtonPlacement')}"
                             >${createSettingOptionsHTML(SETTINGS_BUTTON_PLACEMENT_OPTIONS)}</select>
                         </div>
-                        ${createDefaultButtonHTML('settingsButtonPlacement', globalize.translate('WebGPUSettingNameSettingsButtonPlacement'))}
+                        ${createDescribedSettingButtonsHTML('settingsButtonPlacement', globalize.translate('WebGPUSettingNameSettingsButtonPlacement'))}
                     </div>
                     <div
-                        class="fieldDescription"
-                        id="webgpu-settings-button-placement-description"
+                        class="fieldDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('settingsButtonPlacement')}"
                     >${translateToHTML('WebGPUSettingsButtonPlacementHelp')}</div>
                 </section>
 
@@ -290,57 +300,66 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
+                                aria-describedby="${getSettingDescriptionId('enableCustomDecode')}"
                                 data-setting-checkbox="enableCustomDecode"
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
                             <span>${translateToHTML('WebGPUEnableCustomDecode')}</span>
                         </label>
-                        ${createDefaultButtonHTML('enableCustomDecode', globalize.translate('WebGPUSettingNameCustomDecode'))}
+                        ${createDescribedSettingButtonsHTML('enableCustomDecode', globalize.translate('WebGPUSettingNameCustomDecode'))}
                     </div>
-                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        ${translateToHTML('WebGPUEnableCustomDecodeHelp')}
-                    </div>
+                    <div
+                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('enableCustomDecode')}"
+                    >${translateToHTML('WebGPUEnableCustomDecodeHelp')}</div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
+                                aria-describedby="${getSettingDescriptionId('enableHDRToneMapping')}"
                                 data-setting-checkbox="enableHDRToneMapping"
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
                             <span>${translateToHTML('WebGPUEnableHDRToneMapping')}</span>
                         </label>
-                        ${createDefaultButtonHTML('enableHDRToneMapping', globalize.translate('WebGPUSettingNameHDRToneMapping'))}
+                        ${createDescribedSettingButtonsHTML('enableHDRToneMapping', globalize.translate('WebGPUSettingNameHDRToneMapping'))}
                     </div>
-                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        ${translateToHTML('WebGPUEnableHDRToneMappingHelp')}
-                    </div>
+                    <div
+                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('enableHDRToneMapping')}"
+                    >${translateToHTML('WebGPUEnableHDRToneMappingHelp')}</div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
+                                aria-describedby="${getSettingDescriptionId('enableGPUDecodeSlicing')}"
                                 data-setting-checkbox="enableGPUDecodeSlicing"
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
                             <span>${translateToHTML('WebGPUEnableGPUDecodeSlicing')}</span>
                         </label>
-                        ${createDefaultButtonHTML('enableGPUDecodeSlicing', globalize.translate('WebGPUSettingNameGPUDecodeSlicing'))}
+                        ${createDescribedSettingButtonsHTML('enableGPUDecodeSlicing', globalize.translate('WebGPUSettingNameGPUDecodeSlicing'))}
                     </div>
-                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        ${translateToHTML('WebGPUEnableGPUDecodeSlicingHelp')}
-                    </div>
+                    <div
+                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('enableGPUDecodeSlicing')}"
+                    >${translateToHTML('WebGPUEnableGPUDecodeSlicingHelp')}</div>
                     <div class="webgpuSettingsStatus" data-playback-status role="status">
                         ${translateToHTML('WebGPUPlaybackChangesRestartRequired')}
                     </div>
-                    <button
-                        aria-describedby="webgpu-probe-cache-description"
-                        class="raised webgpuSettingsClearProbeCache"
-                        is="emby-button"
-                        type="button"
-                    >${translateToHTML('WebGPUClearProbeCache')}</button>
+                    <div class="webgpuSettingsDescribedButtonRow">
+                        <button
+                            aria-describedby="${getSettingDescriptionId('probeCache')}"
+                            class="raised webgpuSettingsClearProbeCache"
+                            is="emby-button"
+                            type="button"
+                        >${translateToHTML('WebGPUClearProbeCache')}</button>
+                        ${createInfoButtonHTML('probeCache', globalize.translate('WebGPUSettingNameDecoderTestResults'))}
+                    </div>
                     <div
-                        class="fieldDescription"
-                        id="webgpu-probe-cache-description"
+                        class="fieldDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('probeCache')}"
                     >${translateToHTML('WebGPUClearProbeCacheHelp')}</div>
                 </section>
 
@@ -362,17 +381,19 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
+                                aria-describedby="${getSettingDescriptionId('automaticInputPeakNits')}"
                                 data-setting-checkbox="automaticInputPeakNits"
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
                             <span>${translateToHTML('WebGPUTrackSourcePeakMetadata')}</span>
                         </label>
-                        ${createDefaultButtonHTML('automaticInputPeakNits', globalize.translate('WebGPUSettingNameSourcePeakTracking'))}
+                        ${createDescribedSettingButtonsHTML('automaticInputPeakNits', globalize.translate('WebGPUSettingNameSourcePeakTracking'))}
                     </div>
-                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        ${translateToHTML('WebGPUTrackSourcePeakMetadataHelp')}
-                    </div>
+                    <div
+                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('automaticInputPeakNits')}"
+                    >${translateToHTML('WebGPUTrackSourcePeakMetadataHelp')}</div>
                     ${createSectionControlsHTML('render')}
                     <div class="webgpuSettingsStatus" data-render-status role="status"></div>
                     <button
@@ -399,18 +420,18 @@ function createPanelHTML(): string {
                             ></select>
                         </div>
                         <button
-                            class="raised webgpuSettingsChooseAudioOutput"
-                            data-audio-output-picker
-                            is="emby-button"
-                            type="button"
-                        >${translateToHTML('WebGPUChooseAudioOutput')}</button>
-                        <button
                             class="raised webgpuSettingsRedetectAudioOutput"
                             data-audio-output-redetect
                             is="emby-button"
                             title="${translateToHTML('WebGPURedetectAudioOutputHelp')}"
                             type="button"
                         >${translateToHTML('WebGPURedetectAudioOutput')}</button>
+                        <button
+                            class="raised webgpuSettingsChooseAudioOutput"
+                            data-audio-output-picker
+                            is="emby-button"
+                            type="button"
+                        >${translateToHTML('WebGPUChooseAudioOutput')}</button>
                     </div>
                     <div
                         class="fieldDescription"
@@ -425,63 +446,67 @@ function createPanelHTML(): string {
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
                             <select
-                                aria-describedby="webgpu-audio-speaker-layout-description"
+                                aria-describedby="${getSettingDescriptionId('speakerLayout')}"
                                 data-setting-select="speakerLayout"
                                 id="webgpu-audio-speaker-layout"
                                 is="emby-select"
                                 label="${translateToHTML('WebGPUSpeakerLayout')}"
                             >${createSettingOptionsHTML(AUDIO_SPEAKER_LAYOUT_OPTIONS)}</select>
                         </div>
-                        ${createDefaultButtonHTML('speakerLayout', globalize.translate('WebGPUSettingNameSpeakerLayout'))}
+                        ${createDescribedSettingButtonsHTML('speakerLayout', globalize.translate('WebGPUSettingNameSpeakerLayout'))}
                     </div>
                     <div
-                        class="fieldDescription"
-                        id="webgpu-audio-speaker-layout-description"
+                        class="fieldDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('speakerLayout')}"
                     >${translateToHTML('WebGPUSpeakerLayoutHelp')}</div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
+                                aria-describedby="${getSettingDescriptionId('binauralHeadphones')}"
                                 data-setting-checkbox="binauralHeadphones"
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
                             <span>${translateToHTML('WebGPUBinauralHeadphones')}</span>
                         </label>
-                        ${createDefaultButtonHTML('binauralHeadphones', globalize.translate('WebGPUSettingNameBinauralHeadphones'))}
+                        ${createDescribedSettingButtonsHTML('binauralHeadphones', globalize.translate('WebGPUSettingNameBinauralHeadphones'))}
                     </div>
-                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        ${translateToHTML('WebGPUBinauralHeadphonesHelp')}
-                    </div>
+                    <div
+                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('binauralHeadphones')}"
+                    >${translateToHTML('WebGPUBinauralHeadphonesHelp')}</div>
                     <div class="webgpuSettingsSelectRow">
                         <div class="selectContainer webgpuSettingsSelectContainer">
                             <select
-                                aria-describedby="webgpu-audio-downmix-algorithm-description"
+                                aria-describedby="${getSettingDescriptionId('audioDownmixAlgorithm')}"
                                 data-setting-select="audioDownmixAlgorithm"
                                 id="webgpu-audio-downmix-algorithm"
                                 is="emby-select"
                                 label="${translateToHTML('WebGPUDownmixAlgorithm')}"
                             >${createSettingOptionsHTML(AUDIO_DOWNMIX_ALGORITHM_OPTIONS)}</select>
                         </div>
-                        ${createDefaultButtonHTML('audioDownmixAlgorithm', globalize.translate('WebGPUSettingNameDownmixAlgorithm'))}
+                        ${createDescribedSettingButtonsHTML('audioDownmixAlgorithm', globalize.translate('WebGPUSettingNameDownmixAlgorithm'))}
                     </div>
                     <div
-                        class="fieldDescription"
-                        id="webgpu-audio-downmix-algorithm-description"
+                        class="fieldDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('audioDownmixAlgorithm')}"
                     >${translateToHTML('WebGPUAudioDownmixAlgorithmHelp')}</div>
                     <div class="webgpuSettingsCheckboxRow">
                         <label class="checkboxContainer">
                             <input
+                                aria-describedby="${getSettingDescriptionId('forceStereoDownmix')}"
                                 data-setting-checkbox="forceStereoDownmix"
                                 is="emby-checkbox"
                                 type="checkbox"
                             />
                             <span>${translateToHTML('WebGPUForceStereo')}</span>
                         </label>
-                        ${createDefaultButtonHTML('forceStereoDownmix', globalize.translate('WebGPUSettingNameForceStereo'))}
+                        ${createDescribedSettingButtonsHTML('forceStereoDownmix', globalize.translate('WebGPUSettingNameForceStereo'))}
                     </div>
-                    <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                        ${translateToHTML('WebGPUForceStereoHelp')}
-                    </div>
+                    <div
+                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('forceStereoDownmix')}"
+                    >${translateToHTML('WebGPUForceStereoHelp')}</div>
                     ${createSectionControlsHTML('audio')}
                     <div class="fieldDescription webgpuSettingsSafetyDescription">
                         ${translateToHTML('WebGPUDownmixGainsHelp')}
@@ -580,6 +605,17 @@ function findShownPlaybackInfo(): HTMLElement | null {
     for (const playbackInfoElement of playbackInfoElements) {
         if (!playbackInfoElement.classList.contains(HIDDEN_CLASS)) {
             return playbackInfoElement;
+        }
+    }
+    return null;
+}
+
+/** Returns the video OSD page that shows, else null. */
+function findShownVideoOsdPage(): HTMLElement | null {
+    const pages = document.querySelectorAll<HTMLElement>(VIDEO_OSD_PAGE_SELECTOR);
+    for (const page of pages) {
+        if (!page.classList.contains(HIDDEN_CLASS)) {
+            return page;
         }
     }
     return null;
@@ -954,6 +990,19 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         });
     };
 
+    // Each info button shows or hides its setting's description, which starts hidden
+    for (const infoButton of panel.querySelectorAll<HTMLButtonElement>('.webgpuSettingsInfoButton')) {
+        const description = requireElement<HTMLElement>(panel, `#${infoButton.getAttribute('aria-controls')}`);
+        const onInfoClick = (): void => {
+            const hidden = description.classList.toggle(HIDDEN_CLASS);
+            infoButton.setAttribute('aria-expanded', String(!hidden));
+        };
+        infoButton.addEventListener('click', onInfoClick);
+        cleanupCallbacks.push((): void => {
+            infoButton.removeEventListener('click', onInfoClick);
+        });
+    }
+
     for (const configuration of NUMERIC_CONTROL_CONFIGURATIONS) {
         const slider = requireElement<HTMLInputElement>(panel, `[data-setting-slider="${configuration.key}"]`);
         const numberInput = requireElement<HTMLInputElement>(panel, `[data-setting-number="${configuration.key}"]`);
@@ -1268,7 +1317,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         panel.removeEventListener('wheel', onPanelWheel);
     });
 
-    const playbackPage = document.getElementById('videoOsdPage');
+    const playbackPage = findShownVideoOsdPage();
     const OSDControls = playbackPage?.querySelector<HTMLElement>(OSD_CONTROLS_SELECTOR) ?? null;
     // The OSD controls hide when the pointer idles.
     // They stay anchored to the viewport's bottom edge, so the panel keeps the height they reserve there, measured while they showed

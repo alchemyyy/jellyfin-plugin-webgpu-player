@@ -368,6 +368,10 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
         function (this: Element): DOMRect {
+            // A hidden page lays nothing out, so its elements measure empty
+            if (this.closest('.hide')) {
+                return createBounds(0, 0, 0, 0);
+            }
             if (this.classList.contains('osdControls')) {
                 return harness.OSDControlsBounds;
             }
@@ -1009,6 +1013,34 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('');
         await runHostPlaybackInfoToggles();
         expect(playbackInfo.classList.contains('hide')).toBe(true);
+    });
+
+    it('ends above the controls of the OSD page that shows, not those of an earlier page the host keeps hidden', async () => {
+        // The host's view manager keeps an earlier playback's OSD page in the document, hidden, here ahead of the one that shows
+        const earlierPage = document.createElement('div');
+        earlierPage.id = 'videoOsdPage';
+        earlierPage.classList.add('hide');
+        earlierPage.innerHTML = '<div class="videoOsdBottom videoOsdBottom-maincontrols"><div class="osdControls"></div></div>';
+        document.body.prepend(earlierPage);
+        try {
+            installPlacementHarness({
+                OSDControlsBounds: createBounds(0, 900, 1920, 150),
+                panelLeft: 24,
+                playbackInfoBounds: createBounds(704, 80, 400, 300),
+                viewportHeight: 1080,
+                viewportWidth: 1920
+            });
+
+            const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
+            const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+            // 900 - 8 - 80
+            expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('812px');
+
+            requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+            await panelPromise;
+        } finally {
+            earlierPage.remove();
+        }
     });
 
     it('places playback info beside the panel from the right edge in a right-to-left layout', async () => {

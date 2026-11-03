@@ -106,21 +106,41 @@
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 0.45em;
         align-items: center;
+        // Each control after the first takes a column of its own on the row's line
+        grid-auto-flow: column;
     }
 
     .webgpuSettingsSelectRow {
         margin-bottom: 0.35em;
-        align-items: end;
+        row-gap: 0;
+
+        // Every control after the select shares the select's line, below its label, so the controls center on the select itself
+        > :not(.webgpuSettingsSelectContainer) {
+            grid-row: 2;
+        }
     }
 
-    .webgpuSettingsSelectContainer,
+    // Lays its label and select out on the row's two lines, and keeps its own box, which places the arrow emby-select adds
+    .webgpuSettingsSelectContainer {
+        display: grid;
+        grid-row: 1 / span 2;
+        grid-column: 1;
+        grid-template-rows: subgrid;
+        margin-bottom: 0;
+
+        > .selectLabel {
+            grid-row: 1;
+            margin-bottom: 0.1em;
+            font-weight: 500;
+        }
+
+        > select {
+            grid-row: 2;
+        }
+    }
+
     .webgpuSettingsCheckboxRow .checkboxContainer {
         margin-bottom: 0;
-    }
-
-    .webgpuSettingsSelectContainer > .selectLabel {
-        margin-bottom: 0.1em;
-        font-weight: 500;
     }
 
     .webgpuSettingsCheckboxRow .emby-checkbox-label {
@@ -128,6 +148,7 @@
     }
 
     .webgpuSettingsChooseAudioOutput,
+    .webgpuSettingsRedetectAudioOutput,
     .webgpuSettingsAddServerPass,
     .webgpuSettingsResetRender,
     .webgpuSettingsResetAudio,
@@ -137,8 +158,9 @@
         font-weight: 500;
     }
 
-    // An icon, so each row keeps its width for the control itself
-    .webgpuSettingsDefaultButton {
+    // Icons, so each row keeps its width for the control itself
+    .webgpuSettingsDefaultButton,
+    .webgpuSettingsInfoButton {
         margin: 0;
         padding: 0.2em;
         color: #ccc;
@@ -149,12 +171,17 @@
         }
     }
 
+    .webgpuSettingsInfoButton[aria-expanded="true"] {
+        color: #fff;
+    }
+
     .webgpuSettingsAddServerPass {
         align-self: end;
         white-space: nowrap;
     }
 
-    .webgpuSettingsChooseAudioOutput {
+    .webgpuSettingsChooseAudioOutput,
+    .webgpuSettingsRedetectAudioOutput {
         align-self: end;
         white-space: nowrap;
     }
@@ -253,6 +280,34 @@
         display: flex;
         gap: 0.45em;
         flex-wrap: wrap;
+    }
+
+    // A button beside the info button of its description
+    .webgpuSettingsDescribedButtonRow {
+        display: flex;
+        gap: 0.45em;
+        align-items: center;
+
+        > .emby-button {
+            margin: 0;
+        }
+    }
+
+    // A section title beside the info button of the section's description
+    .webgpuSettingsSectionHeader {
+        display: flex;
+        gap: 0.3em;
+        margin: 0.55em 0 0.3em;
+        align-items: center;
+
+        > .webgpuSettingsSectionTitle {
+            margin: 0;
+        }
+
+        // The icon's padding overhangs the title's line, so the header stays as tall as other section titles
+        > .webgpuSettingsInfoButton {
+            margin: -0.2em 0;
+        }
     }
 
     .webgpuSettingsFooter {

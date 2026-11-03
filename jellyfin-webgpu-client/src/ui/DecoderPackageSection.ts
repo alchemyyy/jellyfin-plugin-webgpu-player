@@ -11,7 +11,13 @@ import type {
 
 import { addDecoderPackage, loadStoredDecoderPackages, removeDecoderPackage } from '../DecoderPackages';
 import type { ServerDecoderPackage, ServerModuleCatalog } from '../ServerModules';
-import { HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
+import {
+    createInfoButtonHTML,
+    getSettingDescriptionId,
+    HIDDEN_CLASS,
+    setStatus,
+    translateToHTML
+} from './SettingsPanelHTML';
 
 // The decoders section of the playback settings panel: the decoder packages the user adds in this browser, and the ones the server offers.
 // The user's packages live in IndexedDB apart from the settings, and a playback reads them when it starts; a server package downloads when a playback needs it
@@ -87,14 +93,20 @@ function createFailureHTML(failure: StoredDecoderPackageFailure): string {
     ]);
 }
 
-/** Returns the decoders section's HTML: the help, the package list, and the add button. */
+/** Returns the decoders section's HTML: the title with the help's info button, the package list, and the add button. */
 export function createDecoderPackageSectionHTML(): string {
     return `
         <section class="webgpuSettingsSection" aria-labelledby="webgpu-decoders-title">
-            <h3 class="webgpuSettingsSectionTitle" id="webgpu-decoders-title">
-                ${translateToHTML('WebGPUDecoders')}
-            </h3>
-            <div class="fieldDescription">${translateToHTML('WebGPUDecoderPackagesHelp')}</div>
+            <div class="webgpuSettingsSectionHeader">
+                <h3 class="webgpuSettingsSectionTitle" id="webgpu-decoders-title">
+                    ${translateToHTML('WebGPUDecoders')}
+                </h3>
+                ${createInfoButtonHTML('decoderPackages', globalize.translate('WebGPUSettingNameDecoders'))}
+            </div>
+            <div
+                class="fieldDescription ${HIDDEN_CLASS}"
+                id="${getSettingDescriptionId('decoderPackages')}"
+            >${translateToHTML('WebGPUDecoderPackagesHelp')}</div>
             <div class="fieldDescription" data-server-decoders></div>
             <div class="webgpuSettingsDecoders" data-decoder-packages></div>
             <input

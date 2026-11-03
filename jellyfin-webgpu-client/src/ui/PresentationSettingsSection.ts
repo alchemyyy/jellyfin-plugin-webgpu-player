@@ -35,7 +35,13 @@ import {
     type WebGPUUserSettings
 } from '../WebGPUUserSettings';
 import { createSettingOptionsHTML, DEINTERLACE_MODE_OPTIONS } from './SettingDefinitions';
-import { createDefaultButtonHTML, HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
+import {
+    createDescribedSettingButtonsHTML,
+    getSettingDescriptionId,
+    HIDDEN_CLASS,
+    setStatus,
+    translateToHTML
+} from './SettingsPanelHTML';
 
 // The presentation and shader pass sections of the playback settings panel: HDR output, deinterlacing, and the user's WGSL shader files in this browser.
 // A file comes from this device or from the passes the server offers, which download when the user adds one.
@@ -258,22 +264,24 @@ export function createPresentationSectionHTML(): string {
             <div class="webgpuSettingsCheckboxRow">
                 <label class="checkboxContainer">
                     <input
+                        aria-describedby="${getSettingDescriptionId(HDR_OUTPUT_SETTING_KEY)}"
                         data-setting-checkbox="${HDR_OUTPUT_SETTING_KEY}"
                         is="emby-checkbox"
                         type="checkbox"
                     />
                     <span>${translateToHTML('WebGPUHDROutput')}</span>
                 </label>
-                ${createDefaultButtonHTML(HDR_OUTPUT_SETTING_KEY, globalize.translate('WebGPUSettingNameHDROutput'))}
+                ${createDescribedSettingButtonsHTML(HDR_OUTPUT_SETTING_KEY, globalize.translate('WebGPUSettingNameHDROutput'))}
             </div>
-            <div class="fieldDescription webgpuSettingsCheckboxDescription">
-                ${translateToHTML('WebGPUHDROutputHelp')}
-            </div>
+            <div
+                class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                id="${getSettingDescriptionId(HDR_OUTPUT_SETTING_KEY)}"
+            >${translateToHTML('WebGPUHDROutputHelp')}</div>
             <div aria-live="polite" class="webgpuSettingsStatus" data-hdr-output-status role="status"></div>
             <div class="webgpuSettingsSelectRow">
                 <div class="selectContainer webgpuSettingsSelectContainer">
                     <select
-                        aria-describedby="webgpu-deinterlace-mode-description"
+                        aria-describedby="${getSettingDescriptionId(DEINTERLACE_MODE_SETTING_KEY)}"
                         data-setting-select="${DEINTERLACE_MODE_SETTING_KEY}"
                         id="webgpu-deinterlace-mode"
                         is="emby-select"
@@ -282,11 +290,11 @@ export function createPresentationSectionHTML(): string {
                         ${createSettingOptionsHTML(DEINTERLACE_MODE_OPTIONS)}
                     </select>
                 </div>
-                ${createDefaultButtonHTML(DEINTERLACE_MODE_SETTING_KEY, globalize.translate('WebGPUSettingNameDeinterlace'))}
+                ${createDescribedSettingButtonsHTML(DEINTERLACE_MODE_SETTING_KEY, globalize.translate('WebGPUSettingNameDeinterlace'))}
             </div>
             <div
-                class="fieldDescription"
-                id="webgpu-deinterlace-mode-description"
+                class="fieldDescription ${HIDDEN_CLASS}"
+                id="${getSettingDescriptionId(DEINTERLACE_MODE_SETTING_KEY)}"
             >${translateToHTML('WebGPUDeinterlaceHelp')}</div>
             <div aria-live="polite" class="webgpuSettingsStatus" data-deinterlace-mode-status role="status"></div>
         </section>
