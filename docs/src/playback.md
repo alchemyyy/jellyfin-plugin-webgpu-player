@@ -53,7 +53,11 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 ## Transitions
 
 - Seek: a new presentation generation, then `controller.seek`.
-  Stale results are dropped by `customPlaybackSeekRevision`.
+  `customPlaybackSeekRevision` is checked before a queued seek reaches the controller and again when it settles, so a burst of seeks collapses to the newest, a stale result or failure is dropped, and a seek queued before a stop never runs.
+  A running seek is replaced by the next one, since the controller supersedes its generation.
+  A seek while setup has no controller yet becomes the startup position: the custom start's, or the HTML backend's if setup declines.
+  A seek that supersedes the decoder's startup does not cancel the play request; `play()` settles with the newest seek's startup, and a failure of that seek joins the fallback it already began.
+  Setup counts as starting for its whole bounded attempt, including an ineligible source, so seeks reach the HTML backend once setup declines.
 - Audio track switch: eligibility runs again.
   If the source is no longer eligible, the session renegotiates; otherwise it restarts as a seek at the current time.
   An external audio file's stream is never eligible (`audio-track-external`), since only the server muxes it in, so switching to one renegotiates rather than playing an embedded track.
