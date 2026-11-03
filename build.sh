@@ -3,13 +3,13 @@
 #
 # Initializes the client's submodules when needed (not recursively): the engine, the hls.js fork, and the pinned
 # Jellyfin Web, unless --jellyfin-web-path names another checkout, and of the engine's own only its Mediabunny fork.
+# Installs the engine's pinned decoder package and pass file releases, which the plugin offers to every client, with the
+# engine's scripts/pinned-releases.mjs, which downloads only the pinned files that are missing.
 # Builds the engine's WebAssembly modules in the background when they are missing (make, with Emscripten and rustup).
+# Before that build starts, without EMSDK, a failed Emscripten check installs the engine's own emsdk, and it installs
+# the Rust the engine's crates pin.
 # Meanwhile it runs `npm ci` in jellyfin-webgpu-client/ when its node_modules is missing, and builds the hls.js fork.
-# The engine's decoder packages, which the plugin offers to every client, build in the background once npm ci is done,
-# when they are missing; their build fetches the engine's codec source submodules itself.
-# Before either of those builds starts, without EMSDK, a failed Emscripten check installs the engine's own emsdk.
-# It also installs the Rust the engine's crates pin before them, since rustup installs are not safe side by side.
-# Once both builds are done, it runs `npm run build` there against a read-only Jellyfin Web source tree.
+# Once the WebAssembly build is done, it runs `npm run build` there against a read-only Jellyfin Web source tree.
 # Then it runs dotnet build or dotnet publish, which embeds the add-on build in bin/jellyfin-webgpu-client/ in the plugin.
 # Works in Git Bash on Windows and in bash on Linux and macOS.
 
@@ -43,18 +43,19 @@ Options:
   --jellyfin-web-path <path>  The Jellyfin Web checkout whose src/ the add-on build reads, passed to npm as
                               JELLYFIN_WEB_DIR. Nothing is written to it. Defaults to the pinned submodule in
                               jellyfin-webgpu-client/vendor/jellyfin-web/.
-  --skip-npm                  Reuse the existing add-on build in bin/jellyfin-webgpu-client/ instead of running
-                              the WebAssembly, decoder package, and npm builds.
+  --skip-npm                  Reuse the existing add-on build in bin/jellyfin-webgpu-client/ instead of installing
+                              the engine's pinned releases and running the WebAssembly and npm builds.
   --configuration <name>      The dotnet build configuration: Debug or Release (default).
   --publish                   Run dotnet publish instead of dotnet build.
   -h, --help                  Show this help.
 
-The first build of a checkout also builds the engine's WebAssembly modules and decoder packages. That needs GNU Make,
-Emscripten 4.0.13, rustup, CMake, Perl, and GNU patch; see the engine's docs/src/decoders.md and
-docs/src/decoder-packages.md.
+The first build of a checkout also builds the engine's WebAssembly modules. That needs GNU Make, Emscripten 4.0.13,
+and rustup; see the engine's docs/src/decoders.md.
 Emscripten comes from the emsdk that EMSDK names, as emsdk_env sets it. Without EMSDK, a build whose Emscripten check
 fails installs the pinned version into the engine's own emsdk first, about 2 GB with Python 3 to run the installer,
 and the engine's Makefiles use it from then on.
+Every build installs the engine's pinned decoder packages and pass files, which tools/pinned-releases.json in the
+engine pins, downloading from GitHub only the pinned files that are missing.
 
 Examples:
   ./build.sh
@@ -64,7 +65,7 @@ USAGE
 }
 
 fail() {
-    # A background decoder build finishes first, so it never outlives this script and this message prints last
+    # A background WebAssembly build finishes first, so it never outlives this script and this message prints last
     wait
     printf 'build.sh: %s\n' "$*" >&2
     exit 1
@@ -84,12 +85,9 @@ engine_layout() {
     node -p 'require(process.argv[1])[process.argv[2]]' "$(native_path "$engine_directory/tools/constants.json")" "$1"
 }
 
-# Runs the Emscripten check each engine Makefile pins; a failed check prints the version it needs
+# Runs the Emscripten check the engine's WebAssembly Makefile pins; a failed check prints the version it needs
 check_emscripten() {
-    local makefile_path
-    for makefile_path in "$wasm_path" "$decoders_path"; do
-        make --no-print-directory -C "$(native_path "$engine_directory/$makefile_path")" toolchain || return 1
-    done
+    make --no-print-directory -C "$(native_path "$engine_directory/$wasm_path")" toolchain
 }
 
 # Options
@@ -143,7 +141,8 @@ if [ "$skip_npm" = false ]; then
         jellyfin_web_path="$script_directory/$jellyfin_web_submodule_path"
     fi
 
-    # Not recursive: the engine's codec source submodules serve only its decoder projects, whose build fetches them
+    # Not recursive: of the engine's own submodules the add-on build needs only the Mediabunny fork, since the engine's
+    # pinned releases stand in for its decoder and pass projects
     for submodule_path in "${submodule_paths[@]}"; do
         if [ ! -e "$script_directory/$submodule_path/.git" ]; then
             git -C "$script_directory" submodule update --init -- "$submodule_path" \
@@ -163,17 +162,19 @@ if [ "$skip_npm" = false ]; then
     [ -d "$jellyfin_web_directory/src" ] \
         || fail "No Jellyfin Web source tree at $jellyfin_web_directory (src is missing)"
 
-    # The engine's WebAssembly modules and decoder packages are build outputs of their own toolchains,
-    # so only a checkout without them builds them
+    # The decoder packages and pass files the add-on carries: the engine's pinned releases, which download only when missing
+    scripts_path="$(engine_layout scriptsDirectory)" || fail 'Cannot read the engine layout (Node.js is required)'
+    printf 'Installing the engine pinned decoder package and pass file releases\n'
+    node "$(native_path "$engine_directory/$scripts_path/pinned-releases.mjs")" \
+        || fail "The engine's pinned releases did not install; see the engine's docs/src/setup.md"
+
+    # The engine's WebAssembly modules are build outputs of their own toolchains, so only a checkout without them builds them
     wasm_path="$(engine_layout wasmDirectory)" || fail 'Cannot read the engine layout (Node.js is required)'
-    decoders_path="$(engine_layout decodersDirectory)" || fail 'Cannot read the engine layout (Node.js is required)'
     wasm_output_directory="$engine_directory/$(engine_layout wasmOutputDirectory)" \
         || fail 'Cannot read the engine layout (Node.js is required)'
-    decoder_package_directory="$engine_directory/$(engine_layout decoderOutputDirectory)" \
-        || fail 'Cannot read the engine layout (Node.js is required)'
 
-    # The toolchains both builds need, readied before either starts
-    if [ ! -d "$wasm_output_directory" ] || [ ! -d "$decoder_package_directory" ]; then
+    # The toolchains the WebAssembly build needs, readied before it starts
+    if [ ! -d "$wasm_output_directory" ]; then
         # Without EMSDK, the engine's Makefiles use the engine's own emsdk,
         # so a failed Emscripten check installs it at the pinned version
         if [ -z "${EMSDK:-}" ] && ! check_emscripten 2>/dev/null; then
@@ -190,7 +191,7 @@ if [ "$skip_npm" = false ]; then
         fi
 
         # Every engine crate pins one Rust, which rustup installs on first use;
-        # rustup installs are not safe side by side, so this one runs before both builds
+        # rustup installs are not safe side by side, so this one runs before the build
         (cd "$engine_directory/$wasm_path/$rust_toolchain_crate" && "${CARGO:-cargo}" --version >/dev/null) \
             || fail "The engine's pinned Rust toolchain is not available; see the engine's docs/src/decoders.md"
     fi
@@ -208,27 +209,12 @@ if [ "$skip_npm" = false ]; then
         (cd "$client_directory" && npm ci) || fail 'npm ci failed'
     fi
 
-    # The decoder packages are build outputs of the same toolchains, and the add-on build carries them.
-    # Their build checks each package with the engine's own loader through esbuild, which npm ci installed
-    decoder_package_build_process_id=''
-    if [ ! -d "$decoder_package_directory" ]; then
-        printf 'Building the engine decoder packages into %s\n' "$decoder_package_directory"
-        decoders_directory="$(native_path "$engine_directory/$decoders_path")"
-        decoder_package_script="$(native_path "$engine_directory/$(engine_layout scriptsDirectory)/decoder-packages.mjs")"
-        { make -C "$decoders_directory" sources && node "$decoder_package_script"; } &
-        decoder_package_build_process_id=$!
-    fi
-
-    # npm run build builds the fork too, but only after the decoders; it finds the bundle built here and skips it
+    # npm run build builds the fork too, but only after the WebAssembly build; it finds the bundle built here and skips it
     (cd "$client_directory" && node scripts/build-hls.js) || fail 'The hls.js fork build failed'
 
     if [ -n "$wasm_build_process_id" ]; then
         wait "$wasm_build_process_id" \
             || fail "The engine WebAssembly build failed; see the engine's docs/src/decoders.md for the toolchain"
-    fi
-    if [ -n "$decoder_package_build_process_id" ]; then
-        wait "$decoder_package_build_process_id" \
-            || fail "The engine decoder package build failed; see the engine's docs/src/decoder-packages.md for the toolchain"
     fi
 
     # The variable is scoped to the build command, so the caller's environment is left as it was

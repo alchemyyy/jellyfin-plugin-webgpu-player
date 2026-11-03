@@ -16,8 +16,9 @@
 # through the add-on. A read the server redirects to another origin, such as a split tunnel's media host, is followed here too.
 # The server needs no plugin; an installed one, and its data, stay as they are.
 #
-# Needs Git, Node.js, npm, and the .NET SDK, and a checkout built once with ./build.sh, for the add-on's npm packages and the
-# engine's WebAssembly modules and decoder packages. Works in Git Bash on Windows and in bash on Linux and macOS.
+# Needs Git, Node.js, npm, and the .NET SDK, and a checkout built once with ./build.sh, for the add-on's npm packages, the
+# engine's WebAssembly modules, and its pinned decoder packages and pass files. Works in Git Bash on Windows and in bash
+# on Linux and macOS.
 
 set -euo pipefail
 

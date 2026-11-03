@@ -53,12 +53,14 @@ execFileSync(
     { stdio: 'inherit' }
 );
 const WEBGPU_PLAYER_BUILD_INFO = require(WEBGPU_PLAYER_BUILD_INFO_FILE);
-// The asset build writes the pass files, but the decoder packages build with their own toolchains, so a checkout may lack them
-if (!fs.existsSync(WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY)) {
-    throw new Error(
-        `The engine's decoder packages are not built: ${WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY} is missing. `
-        + 'Run ./build.sh in the plugin root, or `make -C wgpud sources` and `npm run decoders` in the engine.'
-    );
+// The decoder packages and pass files are the engine's pinned releases, which its install step downloads, so a checkout may lack them
+for (const moduleDirectory of [ WEBGPU_PLAYER_DECODER_PACKAGE_DIRECTORY, WEBGPU_PLAYER_PASS_DIRECTORY ]) {
+    if (!fs.existsSync(moduleDirectory)) {
+        throw new Error(
+            `The engine's pinned decoder packages and pass files are not installed: ${moduleDirectory} is missing. `
+            + 'Run ./build.sh in the plugin root, or `npm run pinned-releases` in the engine.'
+        );
+    }
 }
 
 let COMMIT_SHA = '';
