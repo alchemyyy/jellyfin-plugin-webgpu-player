@@ -1,7 +1,10 @@
 # Releases the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
-# The release job sets the version, builds and packages the plugin, publishes the GitHub release with the zip, and then commits the version and manifest.json to main.
-# The release notes list the merged pull requests and the commits since the previous release tag.
+# Validate checks the branch, the version, the changelog, and that the release tag is free, before anything builds.
+# Build sets the version, builds and packages the plugin, and records the zip in manifest.json, while Release notes lists the merged pull requests and the commits since the previous release tag.
+# Publish release commits the version and manifest.json, tags that commit, and publishes the GitHub release with the zip; Update main then puts the release commit on main.
+# Only those two jobs can write to the repository. Update main needs only the pushed tag, so rerunning it alone retries main after a failed push.
 name: Release
+run-name: Release ${{ inputs.version }}
 
 on:
   workflow_dispatch:
@@ -27,37 +30,30 @@ defaults:
   run:
     shell: bash
 
+# NOTE: Scripts read the inputs from the environment only, because ${{ }} inside a script would splice the changelog into shell code
 env:
   PLUGIN_NAME: WebGPU Player
+  VERSION: ${{ inputs.version }}
+  CHANGELOG: ${{ inputs.changelog || format('Release {0}', inputs.version) }}
+  # The release notes carry the changelog only when one was given
+  RELEASE_SUMMARY: ${{ inputs.changelog }}
+  TAG: v${{ inputs.version }}
 
 jobs:
-  release:
+  validate:
+    name: Validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    # Pushes the release commit and tag, and creates the release; the release notes look up the pull requests
-    permissions:
-      contents: write
-      pull-requests: read
-    # NOTE: Scripts read the inputs from the environment only, because ${{ }} inside a script would splice the changelog into shell code
-    env:
-      VERSION: ${{ inputs.version }}
-      CHANGELOG: ${{ inputs.changelog || format('Release {0}', inputs.version) }}
-      # The release notes carry the changelog only when one was given
-      RELEASE_SUMMARY: ${{ inputs.changelog }}
-      TAG: v${{ inputs.version }}
+    timeout-minutes: 10
     steps:
-      # The last step rebases the release commit onto main and pushes it, which would carry another branch's commits into main
+      # Update main rebases the release commit onto main and pushes it, which would carry another branch's commits into main
       - name: Stop unless run on main
         if: github.ref != 'refs/heads/main'
         run: |
           echo "::error::Run the release on main, not $GITHUB_REF_NAME"
           exit 1
 
-      # The full history and tags give the release notes the commits since the previous release
       - name: Check out the plugin
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Stop if the release tag exists
         run: |
@@ -66,11 +62,32 @@ jobs:
             exit 1
           fi
 
-      # The build reads only the submodules' pinned trees; checkout's fetch-depth 0 would clone their full history too
+      # setup-uv publishes exact version tags only
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      # set-version rejects a malformed version, or a changelog build.yaml cannot hold, before it writes; what it writes here goes unused
+      - name: Check the version and changelog
+        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG"
+
+  build:
+    name: Build
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      # The build runs npm, cargo, and emsdk installs, none of which needs the token
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The build reads only the submodules' pinned trees, not their history
       - name: Check out the client submodules
         run: git submodule update --init --depth 1 --jobs 3
 
-      # setup-uv publishes exact version tags only
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -129,11 +146,43 @@ jobs:
         run: |
           uv run .github/scripts/release.py package \
             --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
-            --output-directory "$RUNNER_TEMP/package" \
+            --output-directory bin/package \
             --manifest manifest.json \
             --repository "$GITHUB_REPOSITORY"
 
-      # Before the release commit, so HEAD is the commit that was built
+      # The release commit's files as the build wrote them, and the zip in bin/package/, laid out as in the checkout
+      - name: Upload the release
+        uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: |
+            build.yaml
+            Directory.Build.props
+            manifest.json
+            bin/package/*.zip
+          if-no-files-found: error
+
+  release-notes:
+    name: Release notes
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The notes look up the pull requests that carried the commits
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # The full history and tags give the notes the commits since the previous release; HEAD is the commit Build builds
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
       - name: Write the release notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -142,6 +191,37 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --changelog "$RELEASE_SUMMARY" \
             --output-file "$RUNNER_TEMP/release-notes.md"
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [build, release-notes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Pushes the release tag and creates the release
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+
+      # build.yaml, Directory.Build.props, and manifest.json as Build wrote them, over this checkout of the same commit, and the zip in bin/package/
+      - name: Download the release
+        uses: actions/download-artifact@v8
+        with:
+          name: release
+
+      - name: Download the release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}
 
       - name: Commit the version and manifest.json, and tag the release
         run: |
@@ -157,12 +237,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git push origin "refs/tags/$TAG"
-          gh release create "$TAG" "$RUNNER_TEMP"/package/*.zip \
+          gh release create "$TAG" bin/package/*.zip \
             --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
+          echo "Published [$PLUGIN_NAME $VERSION]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"
 
-      # Commits pushed to main during the build go under the release commit; the tag keeps the commit that was built
+  update-main:
+    name: Update main
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Pushes the release commit to main
+    permissions:
+      contents: write
+    steps:
+      # The tag's release commit, with the full history to rebase it onto main
+      - name: Check out the release
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0
+
+      # Commits pushed to main during the release go under the release commit; the tag keeps the commit that was built
       - name: Publish manifest.json on main
         run: |
-          git fetch origin main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rebase origin/main
           git push origin HEAD:main
+          echo "manifest.json lists $VERSION on main as of $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"

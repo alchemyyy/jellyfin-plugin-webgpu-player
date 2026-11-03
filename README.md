@@ -150,7 +150,7 @@ Open `http://127.0.0.1:5173/web/` and sign in to your server. Jellyfin Web runs 
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
 | `.github/scripts/release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
 | `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |
-| `.github/workflows/release.yml` | Release workflow, run by hand with the version to release: builds, packages, and publishes it |
+| `.github/workflows/release.yml` | Release workflow, run by hand with the version to release; its jobs validate it, build and package the plugin, write the release notes, publish the GitHub release, and put the release commit with `manifest.json` on `main` |
 
 <h2 align="center">Localization</h2>
 
