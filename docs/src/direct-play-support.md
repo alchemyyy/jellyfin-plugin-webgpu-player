@@ -1,6 +1,6 @@
 # Direct play support
 
-Two matrices decide whether Jellyfin direct-plays an HEVC or Dolby Vision source, AV1 Profile 10 included, through the custom pipeline:
+Two matrices decide whether Jellyfin direct-plays an HEVC or Dolby Vision source, AV1 Profile 10 and AV1 outside Main 10 included, through the custom pipeline:
 
 1. The engine's support matrix, in its [HEVC and Dolby Vision support](https://alchemyyy.github.io/WebGPU-Player/codec-support.html) chapter: whether the engine plays the source (Eligible), by which route, and on what evidence.
 2. This chapter: whether Jellyfin negotiates DirectPlay for the source (Negotiated), given the label Jellyfin gives it and what the add-on's device profile can express.
@@ -17,6 +17,7 @@ The engine's [Supported formats](https://alchemyyy.github.io/WebGPU-Player/forma
 - the exact route selected when every probe and authorization passes.
 
 For representative rows they also assert the fallback routes, once with native VideoFrame HDR and Dolby Vision presentation withheld and once without native HEVC decode.
+The AV1 suite asserts its fallbacks once with the RPU authorization withheld and once without raw AV1 planes, and its variants outside Main 10 with and without an AV1 decoder package.
 
 Read every "Yes" as conditional:
 
@@ -81,7 +82,12 @@ Engine rows: [Dolby Vision](https://alchemyyy.github.io/WebGPU-Player/codec-supp
 | P4, CCID 2 | SDR, or HDR10 or HLG by transfer (SDR under a `dvhe` sample entry) | Yes |
 | P20, any CCID or none | HDR10, HLG, or SDR by transfer (SDR under a `dvh1` sample entry) | Yes |
 | P4, P5, P7, P8, or P20 over Rext or a named alias | Any | Item route |
-| P4, P5, P7, P8, or P20 over 8-bit Main | Any | Item route |
+| P8, CCID 2, over 8-bit Main | DOVIWithSDR | Item route; its SDR base presents natively |
+| P4 over 8-bit Main | SDR by transfer | Yes; its SDR base presents natively |
+| P5, or P7 or P8 with CCID 0, over 8-bit Main | Any | No; no route decodes 8-bit Main planes for the RPU, and no base is declared |
+
+Without native HEVC decode, a stream with a declared base negotiates through its item route when the HEVC decoder package decodes the base at its size on the presenter's device, which then presents an HDR base only under the HDR tone mapping setting.
+A base past the package's 8912896 coded samples, such as 8K, or whose frame pool the device cannot hold, is not advertised.
 
 ## Dolby Vision over AV1
 
@@ -95,11 +101,29 @@ Engine rows: [Dolby Vision over AV1](https://alchemyyy.github.io/WebGPU-Player/c
 | P10, CCID 4 | DOVIWithHLG | Yes |
 | P10, CCID 6, a reserved CCID, or a base whose color contradicts its CCID | DOVIInvalid | Yes |
 | P10 without a CCID (Matroska) | HDR10, HLG, or SDR by transfer | Yes, through the static HDR ranges |
-| P10 at 8 bits, or outside the Main profile | Any | Item route, with a declared SDR base |
+| P10 at 8 bits, or outside the Main profile, in a raw format variant `av1RawFormats` qualifies | DOVI, DOVIWithHDR10, DOVIWithHDR10Plus, DOVIWithSDR, DOVIWithHLG, or DOVIInvalid | Yes, at the variant's profile and depth, such as Main at 8 bits |
+| P10 at 8 bits, or outside the Main profile, in a variant the browser does not qualify, such as 12 bits in Chrome | Any | Item route, with a declared base its ordinary routes present |
 
 The MP4 `dav1` sample entry of a 10.0 stream maps to no codec in FFmpeg, and so in Jellyfin's probe, so the server never offers such a file for direct play, although the engine plays it; Matroska 10.0 plays.
 
 Profile 9 (AVC) has no RPU route in the engine; Jellyfin labels it by transfer, or SDR under a `dvav` or `dva1` sample entry, and its declared SDR base plays through the H.264 routes.
+
+## AV1 outside Main 10
+
+Engine rows: [AV1 outside Main 10](https://alchemyyy.github.io/WebGPU-Player/codec-support.html#av1-outside-main-10).
+
+| Engine variant | Jellyfin label | Negotiated | Notes |
+| --- | --- | --- | --- |
+| Main at 8 bits | SDR; Main | Yes | The native route; its raw I420 format serves only Profile 10 |
+| High: 4:4:4 at 8 or 10 bits | SDR, HDR10, HDR10Plus, or HLG; High | Yes, when `av1RawFormats` qualifies the variant | SDR needs both BT.709 SDR keys of the format, limited and full; HDR10 and HDR10Plus need its PQ key, and HLG its HLG key, which only the 10-bit formats have |
+| Professional: 4:2:2 at 8 or 10 bits | SDR, HDR10, HDR10Plus, or HLG; Professional | Yes, when `av1RawFormats` qualifies the variant | As High |
+| Professional at 12 bits | Any; Professional | Yes, when `av1RawFormats` qualifies the variant, else only with an AV1 decoder package | Chrome's software decoder refuses 12-bit AV1, so in Chrome these variants take the package |
+| Main at 10 bits without its raw route | SDR, HDR10, HDR10Plus, or HLG; Main | Only with an AV1 decoder package | |
+| Main 4:0:0 | As Main 4:2:0 | As Main 4:2:0 | |
+| Professional 4:0:0 at 12 bits | Any; Professional | With any AV1 decoder package that writes I420P12 | The profile cannot advertise `monochrome`, so without a package that declares it the stream fails eligibility and falls back |
+
+Each qualified variant is advertised at its own depth under the profile of its format, so a stream negotiates at its exact profile, depth, and range.
+A profile condition cannot express chroma format, so a High 4:2:0 stream, or a Professional 4:2:0 or 4:4:4 stream at 8 or 10 bits, negotiates through its profile's routes although no variant covers it, and then takes a decoder package or fails eligibility.
 
 ## Rejected
 
@@ -114,6 +138,34 @@ Engine rows: [Rejected](https://alchemyyy.github.io/WebGPU-Player/codec-support.
 A separate-track P7 (a base track and an EL track) selects the same routes, but these tests do not cover it, because their negotiation model reads a single video stream.
 The engine's eligibility tests cover it.
 
+## Package-only codecs
+
+A codec the engine decodes only through a decoder package direct-plays only when the user's packages or the server's catalog offer a package whose `accepts` names it; otherwise the profile advertises nothing for it and Jellyfin transcodes.
+These are MPEG-1 and MPEG-2 (package `mpeg2`), VC-1 and WMV3 (`vc1`), JPEG 2000 (`jpeg2000`), and MPEG-4 Part 2, H.263, and MS-MPEG4 v1, v2, and v3 (`mpeg4`).
+Each direct-plays as SDR at the depths its package writes, in every container the engine demuxes it from: MPEG-4 Part 2 and H.263 in AVI, ASF, Matroska, and MP4, MS-MPEG4 in AVI, ASF, and Matroska, JPEG 2000 in MOV, MJ2, and Matroska, and VC-1 and WMV3 in ASF too, which Jellyfin names `asf` for `.asf`, `.wmv`, and `.wma` files.
+JPEG 2000 in Matroska is a Video for Windows track, and its Digital Cinema profiles' X'Y'Z' (`xyz12le` at 12 bits) direct-plays like 12-bit 4:4:4 when it carries no color tags or BT.709 ones, since the package writes it as BT.709 Y'CbCr.
+MPEG-1 and MPEG-2 also direct-play from MPEG program streams, `.mpg` files and DVD-Video `.vob` files, which Jellyfin names `mpeg` by ffprobe's format name, with MP3, AC-3, or DTS audio; the profile offers `mpeg` only with the `mpeg2` package's codecs, as it offers them in MPEG-TS, and MP2 and DVD-Video LPCM (`pcm_dvd`) audio stay with the server.
+
+## Audio channel layouts
+
+Engine rows: [Formats](https://alchemyyy.github.io/WebGPU-Player/formats.html) and [Eligibility and routes](https://alchemyyy.github.io/WebGPU-Player/routes.html#audio-routes).
+A profile condition cannot express ChannelLayout, so the profile advertises channel counts, and eligibility checks a layout where the count alone does not settle it.
+
+| Codec | Jellyfin channels and layout | Negotiated | Custom pipeline |
+| --- | --- | --- | --- |
+| AC-3 | 1, 2, or 6 | Yes | Yes |
+| AC-3 | 5, `5.0` (3/2) | Yes, with an AC-3 package | Yes; a track that gains its LFE mid-stream rebinds to 5.1 |
+| AC-3 | 5, `4.1` (3/1 with LFE) | Yes, with an AC-3 package | Yes; its back center splits across the surrounds |
+| AC-3 | 5, 2/2 with LFE | Yes, with an AC-3 package | No: the package's speaker mask has no layout, so the attempt fails and renegotiates |
+| AC-3 | 3 | No | No: 2/1 and 3/0 both arrive as `3.0` |
+| FLAC | 3, `2.1` | Yes, as three-channel FLAC | Yes, as FL, FR, and LFE, by the mask the layout names (`audioMetadataLayout`) |
+| AAC, Opus, Vorbis, PCM | 3, `2.1` | Yes, as three channels | No: their three channels decode as 3.0, so eligibility refuses the layout and the item plays through the HTML player or renegotiates |
+| DTS, any profile | 1, 2, 3, or 6 | Yes, with a DTS package; DTS-ES only at 1 and 6 | Yes; three channels play as the package's `2.1`, `3.0`, or `3.0(back)` mask |
+| DTS other than DTS-ES | 5, `5.0` or `4.1` | Yes, with a DTS package | Yes; a 4.1 back center splits across the surrounds |
+| DTS-ES, DTS-HD HRA, DTS-HD MA, DTS-HD MA + DTS:X | 7, `6.1` | Yes, with a DTS package | Yes, as WAVE 6.1 |
+| DTS-HD HRA, DTS-HD MA, DTS-HD MA + DTS:X | 8 | Yes, with a DTS package | Yes |
+| DTS | 4, `4.0` | No | No: 4.0 has no layout |
+
 ## Subtitles
 
 The engine renders no subtitles; the add-on draws them in its HTML layers above the WebGPU canvas.
@@ -125,5 +177,20 @@ A selected track in any other format is burned in by the server, so the play met
 | WebVTT, and the text formats the server converts to it, such as SubRip | Yes | External, as WebVTT | The add-on's subtitle element |
 | ASS, SSA | Yes, with Worker, WebAssembly, and a 2D canvas | External | `@jellyfin/libass-wasm` |
 | PGS | Yes, with Worker, WebAssembly, and a 2D canvas | External | libbitsub's `PgsRenderer` |
-| VobSub (`dvdsub`) | No: not advertised, so it is burned in | Encode | None on the custom path, although the HTML backend holds libbitsub's `VobSubRenderer` |
+| VobSub (`dvdsub`) embedded in any container, or an external `.mks` | Yes, with Worker, WebAssembly, and a 2D canvas | External, as a Matroska subtitle file | libbitsub's `VobSubRenderer` |
+| VobSub as an external `.idx`/`.sub` pair | No: burned in | Encode | None |
 | Any other bitmap format, such as DVB subtitles | No: burned in | Encode | None |
+
+### VobSub delivery
+
+The add-on advertises VobSub as Jellyfin Web does, with the profile `{ Format: 'vobsub', Container: 'mks', Method: 'External' }`.
+The server's `StreamBuilder` matches a profile whose format names `dvdsub` or `vobsub` and whose container is `mks` to a VobSub track that is embedded, in MKV, MP4, VOB, or any container it probes, or that is an external `.mks` file.
+The server then extracts the track with FFmpeg into a Matroska subtitle file in its subtitle cache, since FFmpeg has no `.idx`/`.sub` muxer.
+An external `.idx`/`.sub` pair matches no External profile, so the server burns it in; remuxing the pair into an `.mks` beside the video, for example with `mkvmerge`, makes it deliverable.
+A profile without the `mks` container would match the pair too, but the server cannot serve it: the subtitle route answers 400.
+The delivery URL ends in `Stream.<format>`, `Stream.vobsub` here.
+Servers from 12.2 serve that name from the extracted file with HTTP ranges, but 12.1 hands it to its text converter, which answers 400.
+Every supported server serves the extracted file unchanged as `Stream.mks`, without ranges, so the add-on's HTML player requests `Stream.mks` for a server-delivered VobSub track.
+libbitsub reads a VobSub source as Matroska only when its file name hint ends in `.mks`, and otherwise as an `.idx`/`.sub` pair, so the hint is the requested file's name, and `subtitle.mks` when that name is neither.
+Both backends hand the track to the same renderer: the HTML backend samples its `<video>`, and the custom path samples the source-less `<video>` through `timeOffset`, as for PGS.
+With custom decode off the add-on negotiates with the stock profile, which advertises that VobSub profile only while Jellyfin Web's PGS rendering setting is on, so otherwise the server burns the track in.

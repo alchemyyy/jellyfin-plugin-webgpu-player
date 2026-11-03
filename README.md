@@ -63,8 +63,8 @@ Please oh please have your LLM generate and run tests on what it produces. This 
 - bash (Git Bash on Windows) and git.
 - The .NET 10 SDK, for the server plugin.
 - Node.js 24 or later and npm 11 or later, for the client add-on and the engine.
-- For the engine's WebAssembly decoders, which the first build of a checkout compiles: GNU Make, Emscripten 4.0.13 (activated with `emsdk_env` or named by `EMSDK`), and rustup. The engine pins Rust 1.96.1 with the `wasm32-unknown-unknown` target.
-- On Windows, long path support. The engine's decoder build creates paths over 260 characters, so enable `LongPathsEnabled` and Git's `core.longpaths`. GNU Make and the MSVC linker that cargo uses must accept long paths too.
+- For the engine's WebAssembly modules, which the first build of a checkout compiles: GNU Make, Emscripten 4.0.13, and rustup. Emscripten comes from the emsdk that `EMSDK` names, which `emsdk_env` sets; without `EMSDK`, `./build.sh` installs the pinned version into the engine's own emsdk when its Emscripten check fails (it needs Python 3 and about 2 GB), and the engine's Makefiles use that emsdk from then on. The engine pins Rust 1.96.1 with the `wasm32-unknown-unknown` target.
+- Network access to GitHub on a build that lacks a pinned decoder package or pass file of the engine, whose releases `./build.sh` installs.
 
 Only for specific tasks:
 
@@ -72,6 +72,7 @@ Only for specific tasks:
 - Python 3.10 or later and the pinned FFmpeg and FFprobe build (`2026-03-01-git-862338fe31-full_build-www.gyan.dev`), to generate or check the engine's codec vectors.
 - MKVToolNix, for the engine's Dolby Vision smoke media scripts.
 - mdBook 0.5.4, to build the plugin's and the engine's documentation.
+- CMake, Perl, GNU patch, and on Windows long path support, to build the engine's decoder packages from its `wgpud/` submodule instead of installing their pinned release; see the engine's [Set up a checkout](https://alchemyyy.github.io/WebGPU-Player/setup.html).
 - Chrome, Edge, or Firefox with WebGPU and WebCodecs, over HTTPS or `localhost`, and a Jellyfin server, 12.1 or later, to run it. Firefox on Windows decodes HEVC in software only, which is below real time at 4K. The File Transformation plugin is optional.
 
 ### Building from Source
@@ -85,7 +86,7 @@ cd jellyfin-plugin-webgpu-player
 `build.sh` initializes the submodules, builds the client add-on, embeds it, and builds the plugin. `./build.sh --help` lists its options.
 
 - Jellyfin Web is a shallow submodule pinned to the commit the add-on builds against, and is only read. `--jellyfin-web-path` builds against another checkout.
-- The first build of a checkout also compiles the engine's WebAssembly decoders, in the background while the add-on's npm build runs.
+- The first build of a checkout also compiles the engine's WebAssembly modules, in the background while the add-on's npm install and the hls.js build run. Every build installs the engine's pinned decoder package and pass file releases, downloading only the pinned files that are missing. The plugin carries every package and pass file and offers them to clients; its dashboard settings page manages them.
 - `--publish` runs `dotnet publish` instead of `dotnet build`, for packaging.
 - The add-on's own checks run from `jellyfin-webgpu-client/`: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`.
 
@@ -102,6 +103,19 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 - For a server on another machine, package with `--source-url-base http://<host>:8000` and use that host.
 - The server rejects a zip whose MD5 differs from the manifest's `checksum`, so package again after every build.
 
+### Live Development
+
+```sh
+./serve_jellyfin_web_client.sh --server http://<host>:8096
+```
+
+Open `http://127.0.0.1:5173/web/` and sign in to your server. Jellyfin Web runs this checkout's add-on and plugin against your server's library, and both build again on every change.
+
+- Run it from the folder to work in, after one `./build.sh`. The first run there clones the Jellyfin Web commit the add-on builds against into `jellyfin-web/` and builds it, once per commit, and stores the options in `serve_jellyfin_web_client.json`, so later runs need none.
+- Jellyfin Web, the add-on, and the plugin are served locally, and every other request goes to the server, so the browser sees one origin. A read the server redirects to another origin, such as a split tunnel's media host, is followed by the script, so the browser stays on that origin.
+- The plugin runs in a host of its own, `Jellyfin.Plugin.WebGPUPlayer.DevHost`, which signs requests in through your server and keeps its data in `webgpu-player-plugin/data/`. The server needs no plugin; an installed one, and its data, stay as they are.
+- Open pages reload after each successful add-on or plugin build and each edit of the plugin's settings page, and a failed add-on build shows its errors in place of Jellyfin Web. `"liveReload": false` in `serve_jellyfin_web_client.json` turns the reload off.
+
 ### Project Map
 
 | Path | Purpose |
@@ -109,7 +123,11 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 | `Jellyfin.Plugin.WebGPUPlayer/` | Server plugin: project, entry point and service registration |
 | `Jellyfin.Plugin.WebGPUPlayer/Transformations/` | The `index.html` and `config.json` rewrites: File Transformation registration and callbacks, the choice of rewriter, and the fallback middleware |
 | `Jellyfin.Plugin.WebGPUPlayer/Addon/` | Embedded add-on catalog and the asset route |
-| `bin/` | Build output, one folder per project (generated, gitignored): the two .NET projects, and the client add-on in `bin/jellyfin-webgpu-client/` |
+| `Jellyfin.Plugin.WebGPUPlayer/Modules/` | The decoder packages and pass files the server offers: the store of bundled files, uploads, and disabled keys in the plugin's data folder, the readers of package and pass headers, and their routes |
+| `Jellyfin.Plugin.WebGPUPlayer/ClientDefaults/` | The administrator's defaults for every client setting: the store of `client-defaults.json` in the plugin's data folder, its shape check, and its routes |
+| `Jellyfin.Plugin.WebGPUPlayer/Configuration/` | The plugin's dashboard settings page and its controller, which mount the add-on's client defaults editor and manage the server's decoders and passes |
+| `Jellyfin.Plugin.WebGPUPlayer.DevHost/` | A host of the plugin's routes for `serve_jellyfin_web_client.sh`, which signs requests in through a Jellyfin server of your own |
+| `bin/` | Build output, one folder per project (generated, gitignored): the .NET projects, and the client add-on in `bin/jellyfin-webgpu-client/` |
 | `jellyfin-webgpu-client/` | Client add-on: a private npm package with the add-on sources in `src/` and their webpack, Vitest, ESLint and stylelint configuration |
 | `jellyfin-webgpu-client/src/strings/` | The add-on's text: `en-us.json` is the source, and each translation is a `<locale>.json` beside it, written by Weblate |
 | `jellyfin-webgpu-client.tests/` | The add-on's Vitest suites, mirroring `jellyfin-webgpu-client/src/`. They import the add-on through `addons/webGPUPlayer/...` and have their own ESLint config, built on the client's |
@@ -120,6 +138,7 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 | `docs/` | The plugin's documentation, an mdBook; `docs/book/` is the built book |
 | `images/` | The plugin banner (the source SVG, and the PNG that the package carries and the repository manifest's `imageUrl` names on `main`), and the plugin logo, the source of the book's favicon |
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
+| `serve_jellyfin_web_client.sh` | Serves this checkout's add-on and plugin, built again on every change, in a local Jellyfin Web against a Jellyfin server of your own |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
 | `.github/scripts/release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
 | `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |
@@ -146,4 +165,4 @@ The Weblate component:
 | Language code style | BCP style using hyphen as a separator, lower cased |
 | Source language | English |
 
-Nothing else needs translating. The server plugin shows no text of its own, and Jellyfin does not translate plugin names or descriptions. The engine renders no text either: the add-on translates the codes it reports.
+Nothing else needs translating. The server plugin's settings page is English only, as Jellyfin's plugin pages are, and Jellyfin does not translate plugin names or descriptions. Its client defaults editor is the exception: the add-on renders it, in the user's language. The engine renders no text either: the add-on translates the codes it reports.

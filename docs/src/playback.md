@@ -10,7 +10,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 <a class="diagram-dark" href="diagrams/playback-layers.dark.svg"><img src="diagrams/playback-layers.dark.svg" alt="Playback layers: stock Jellyfin Web, the add-on's player, and the engine"></a>
 </div>
 
-`WebGPUPlayer`, `HTMLPlayerDelegate`, and `HtmlVideoPlayer` with its hls.js runtime are add-on code, and the rAF loop runs in `WebGPUPlayer`.
+`WebGPUPlayer`, `HTMLPlayerDelegate`, and `HtmlVideoPlayer` with its hls.js runtime are add-on code, and `WebGPUPlayer` runs the engine's frame loop, `CustomPlaybackFrameLoop`.
 The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#layers) chapter details its side of the diagram.
 
 ## Startup of a custom session
@@ -18,25 +18,33 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 1. `WebGPUPlayer.play` advances the presentation generation and consumes the stock-profile proof.
    It runs `prewarmBrowserAudioContext(48000)` (engine) synchronously inside `play()` (the user-activation window), calls `presenter.startSession`, and queues `startBackendPlayback`.
 2. `startCustomPlaybackBounded` runs the engine's eligibility check, described in [Negotiation](negotiation.md#flow).
-   It waits for the raw SDR prewarm.
+   It waits for the raw SDR prewarm, and for the stream's own raw SDR key when that key authorizes on first use, as every key outside BT.709 does.
    An HDR range-extension source also waits for the raw HDR prewarm, and a Dolby Vision source waits for its first-use key (Profile 4, or Profile 7 or single-layer reconstruction outside I420P10).
    Other HDR and Dolby Vision routes use only keys that have already settled.
    Its 25 s bound lasts until the controller starts, and the controller's own startup bound applies after that.
 3. The add-on loads the engine pipeline as the `webgpu-custom-playback` chunk.
    `HtmlVideoPlayer.prepareCustomPlayback` returns a source-less `<video>`.
-   The presenter enters push mode, and `configurePresentationColorPipeline` installs the shaders and authorizes the selected route.
+   The presenter enters push mode, and the engine's `configurePresentationColorPipeline` installs the shaders for the selected route.
 4. The engine's controller starts the session; see its [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#startup-of-a-custom-session) chapter.
-5. When the controller emits `ready` and `playing`, the rAF loop starts, `play()` resolves, and PlaybackManager emits `playbackstart`.
+5. When the controller emits `ready` and `playing`, the frame loop starts, `play()` resolves, and PlaybackManager emits `playbackstart`.
 
 ## Steady state
 
-- The rAF loop in `WebGPUPlayer` takes the controller's current frame and presents it.
-- No rAF runs while the page is hidden, so a 25 ms timer in `WebGPUPlayer` takes and discards due frames against the clock.
+- The frame loop takes the controller's current frame each animation frame and presents it.
+- No animation frame runs while the page is hidden, so the frame loop's 25 ms timer takes and discards due frames against the clock instead.
   Credits keep flowing and audio stays the master.
-- `WebGPUPlayer.selectDecodedAudioOutputChannelCount` returns 2 when the user forces stereo, and otherwise defers to the engine's `selectCustomAudioOutputChannelCountForMaximum`.
-- The add-on triggers a live audio layout switch when the output reports `sinkchange` with a different channel count, and when force stereo or the downmix algorithm changes.
+- Before eligibility, `WebGPUPlayer` resolves the user's speaker layout against the destination's channel count with the engine's `selectCustomAudioSpeakerLayout`, stereo when the user forces stereo, and hands it with the binaural choice to the engine's eligibility as `audioRenderTarget`.
+  At startup the count is the audio prewarm's `destination.maxChannelCount`; at a track switch it is the live output's, else the prewarm's; without either the layout is stereo.
+- Each decoded PCM track then plays to the engine's `selectCustomAudioOutputLayout` of that layout, the whole layout when the eligibility reports `audioRendersObjects`, and the binaural choice goes with it to `play`, `setAudioStreamIndex`, and `reconfigureAudioOutput`.
+- `play` and `setAudioStreamIndex` also take the track's `audioMetadataLayout` (`getAudioMetadataLayout`): Jellyfin's channel count, which screens a track whose container declares a count no layout has, as a Matroska header written from its first frames can, and the speaker mask of a 2.1 FLAC, whose decoder reports none.
+- Each playback keeps a snapshot of the audio settings it started with; the settings panel updates it as it applies a change.
+- The add-on triggers a live audio output switch when the output reports `sinkchange` with a different channel count, and when force stereo, the speaker layout, binaural rendering, or the downmix algorithm changes.
+  A binaural change that keeps the layout applies between packets without a pause.
+- The stats overlay's audio category shows the output layout and the number of objects a decoder package renders, each once the engine reports it.
 - Re-detect output, in the WebGPU settings, rebuilds every AudioContext sink so the browser re-reads the device.
   Chromium moves a default output to a new device without telling the page, which leaves a stale channel count until a rebuild.
+- The deinterlacing choice in the WebGPU settings reaches the presenter live through `WebGPUPlayer.setDeinterlaceMode`.
+  Double rate and single rate share one plan, so a switch between them shows at the next draw; a switch to or from off builds a new plan, and the frame loop's lookahead follows it (see the engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html)).
 
 ## Transitions
 
@@ -44,6 +52,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
   Stale results are dropped by `customPlaybackSeekRevision`.
 - Audio track switch: eligibility runs again.
   If the source is no longer eligible, the session renegotiates; otherwise it restarts as a seek at the current time.
+  An external audio file's stream is never eligible (`audio-track-external`), since only the server muxes it in, so switching to one renegotiates rather than playing an embedded track.
 - Stop: the delegate stops the backend synchronously, so `stopped` stays in order.
 
 ## Fallback and renegotiation
