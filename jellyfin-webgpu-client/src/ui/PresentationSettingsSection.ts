@@ -43,12 +43,13 @@ import {
     translateToHTML
 } from './SettingsPanelHTML';
 
-// The presentation and shader pass sections of the playback settings panel: HDR output, deinterlacing, and the user's WGSL shader files in this browser.
+// The presentation and shader pass sections of the playback settings panel: HDR output, black bar crop, deinterlacing, and the user's WGSL shader files in this browser.
 // A file comes from this device or from the passes the server offers, which download when the user adds one.
 // Until the user edits the list, it shows the server's default preset, and any edit makes the list the user's own; restoring the default follows the server's preset again.
 // The files' sources live in the pass source store in IndexedDB, and the settings hold each file's key
 
 const HDR_OUTPUT_SETTING_KEY = 'hdrOutput';
+const BLACK_BAR_CROP_SETTING_KEY = 'blackBarCrop';
 const DEINTERLACE_MODE_SETTING_KEY = 'deinterlaceMode';
 // The pass files the picker offers: WGSL sources, which are plain text
 const PASS_FILE_TYPES = `${PASS_FILE_EXTENSION},text/plain`;
@@ -71,9 +72,9 @@ export type PresentationSectionContext = Readonly<{
 }>;
 
 export type PresentationSectionController = Readonly<{
-    /** Hands the settings' HDR output, deinterlacing, and shader files to the player */
+    /** Hands the settings' HDR output, black bar crop, deinterlacing, and shader files to the player */
     apply: () => void
-    /** Shows the settings' HDR output, deinterlacing, and shader files, and deletes the sources of files the settings no longer hold */
+    /** Shows the settings' HDR output, black bar crop, deinterlacing, and shader files, and deletes the sources of files the settings no longer hold */
     synchronize: () => void
 }>;
 
@@ -254,7 +255,7 @@ function createMissingSourceFileHTML(file: StoredPresentationFile, index: number
     );
 }
 
-/** Returns the presentation section's HTML, the HDR output switch and the deinterlacing choice, then the shader pass section's: the file list, the server's passes, and the file buttons. */
+/** Returns the presentation section's HTML, the HDR output and black bar crop switches and the deinterlacing choice, then the shader pass section's: the file list, the server's passes, and the file buttons. */
 export function createPresentationSectionHTML(): string {
     return `
         <section class="webgpuSettingsSection" aria-labelledby="webgpu-presentation-title">
@@ -278,6 +279,23 @@ export function createPresentationSectionHTML(): string {
                 id="${getSettingDescriptionId(HDR_OUTPUT_SETTING_KEY)}"
             >${translateToHTML('WebGPUHDROutputHelp')}</div>
             <div aria-live="polite" class="webgpuSettingsStatus" data-hdr-output-status role="status"></div>
+            <div class="webgpuSettingsCheckboxRow">
+                <label class="checkboxContainer">
+                    <input
+                        aria-describedby="${getSettingDescriptionId(BLACK_BAR_CROP_SETTING_KEY)}"
+                        data-setting-checkbox="${BLACK_BAR_CROP_SETTING_KEY}"
+                        is="emby-checkbox"
+                        type="checkbox"
+                    />
+                    <span>${translateToHTML('WebGPUBlackBarCrop')}</span>
+                </label>
+                ${createDescribedSettingButtonsHTML(BLACK_BAR_CROP_SETTING_KEY, globalize.translate('WebGPUSettingNameBlackBarCrop'))}
+            </div>
+            <div
+                class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
+                id="${getSettingDescriptionId(BLACK_BAR_CROP_SETTING_KEY)}"
+            >${translateToHTML('WebGPUBlackBarCropHelp')}</div>
+            <div aria-live="polite" class="webgpuSettingsStatus" data-black-bar-crop-status role="status"></div>
             <div class="webgpuSettingsSelectRow">
                 <div class="selectContainer webgpuSettingsSelectContainer">
                     <select
@@ -353,6 +371,8 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const { panel, player } = context;
     const HDROutputCheckbox = requireSectionElement<HTMLInputElement>(panel, `[data-setting-checkbox="${HDR_OUTPUT_SETTING_KEY}"]`);
     const HDROutputStatusElement = requireSectionElement<HTMLElement>(panel, '[data-hdr-output-status]');
+    const blackBarCropCheckbox = requireSectionElement<HTMLInputElement>(panel, `[data-setting-checkbox="${BLACK_BAR_CROP_SETTING_KEY}"]`);
+    const blackBarCropStatusElement = requireSectionElement<HTMLElement>(panel, '[data-black-bar-crop-status]');
     const fileList = requireSectionElement<HTMLElement>(panel, '[data-presentation-passes]');
     const passFileInput = requireSectionElement<HTMLInputElement>(panel, '[data-presentation-pass-files]');
     const statusElement = requireSectionElement<HTMLElement>(panel, '[data-presentation-status]');
@@ -362,6 +382,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const serverPassSelect = requireSectionElement<HTMLSelectElement>(panel, '[data-server-passes]');
     const addServerPassButton = requireSectionElement<HTMLButtonElement>(panel, '.webgpuSettingsAddServerPass');
     const HDROutputDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${HDR_OUTPUT_SETTING_KEY}"]`);
+    const blackBarCropDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${BLACK_BAR_CROP_SETTING_KEY}"]`);
     const deinterlaceModeSelect = requireSectionElement<HTMLSelectElement>(panel, `[data-setting-select="${DEINTERLACE_MODE_SETTING_KEY}"]`);
     const deinterlaceModeStatusElement = requireSectionElement<HTMLElement>(panel, '[data-deinterlace-mode-status]');
     const deinterlaceModeDefaultButton = requireSectionElement<HTMLButtonElement>(panel, `[data-default-setting="${DEINTERLACE_MODE_SETTING_KEY}"]`);
@@ -571,6 +592,19 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         });
     };
 
+    const applyBlackBarCrop = (notice: string | null): void => {
+        void player.setBlackBarCropEnabled(context.getSettings().presentation.blackBarCrop).then((): void => {
+            if (context.isActive()) {
+                const applied = globalize.translate('WebGPUBlackBarCropApplied');
+                setStatus(blackBarCropStatusElement, joinSentences(applied, notice) ?? applied);
+            }
+        }, (error: unknown): void => {
+            if (context.isActive()) {
+                setStatus(blackBarCropStatusElement, globalize.translate('WebGPUBlackBarCropFailed', getErrorMessage(error)));
+            }
+        });
+    };
+
     const applyDeinterlaceMode = (notice: string | null): void => {
         void player.setDeinterlaceMode(context.getSettings().presentation.deinterlaceMode).then((): void => {
             if (context.isActive()) {
@@ -732,6 +766,16 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         onHDROutputChange();
     };
 
+    const onBlackBarCropChange = (): void => {
+        const saveFailure = savePresentation({ ...context.getSettings().presentation, blackBarCrop: blackBarCropCheckbox.checked });
+        applyBlackBarCrop(describeSaveFailure(saveFailure));
+    };
+
+    const onBlackBarCropDefault = (): void => {
+        blackBarCropCheckbox.checked = createDefaultWebGPUUserSettings().presentation.blackBarCrop;
+        onBlackBarCropChange();
+    };
+
     const onDeinterlaceModeChange = (): void => {
         // The select offers only the modes; the settings' normalization keeps any other value out of storage
         const saveFailure = savePresentation({ ...context.getSettings().presentation, deinterlaceMode: deinterlaceModeSelect.value as DeinterlaceMode });
@@ -826,6 +870,8 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     const listeners: Array<[EventTarget, string, (event: Event) => void]> = [
         [ HDROutputCheckbox, 'change', onHDROutputChange ],
         [ HDROutputDefaultButton, 'click', onHDROutputDefault ],
+        [ blackBarCropCheckbox, 'change', onBlackBarCropChange ],
+        [ blackBarCropDefaultButton, 'click', onBlackBarCropDefault ],
         [ deinterlaceModeSelect, 'change', onDeinterlaceModeChange ],
         [ deinterlaceModeDefaultButton, 'click', onDeinterlaceModeDefault ],
         [ addFilesButton, 'click', onAddFiles ],
@@ -850,6 +896,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     return {
         apply: (): void => {
             applyHDROutput(null);
+            applyBlackBarCrop(null);
             applyDeinterlaceMode(null);
             // A reset's default files may hold the user's sources under other parameter values, so the list renders anew
             renderedReport = null;
@@ -857,6 +904,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         },
         synchronize: (): void => {
             HDROutputCheckbox.checked = context.getSettings().presentation.hdrOutput;
+            blackBarCropCheckbox.checked = context.getSettings().presentation.blackBarCrop;
             deinterlaceModeSelect.value = context.getSettings().presentation.deinterlaceMode;
             renderFiles();
             releaseDroppedSources();

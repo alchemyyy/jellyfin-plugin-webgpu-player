@@ -47,6 +47,11 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
   Chromium moves a default output to a new device without telling the page, which leaves a stale channel count until a rebuild.
 - The deinterlacing choice in the WebGPU settings reaches the presenter live through `WebGPUPlayer.setDeinterlaceMode`.
   Double rate and single rate share one plan, so a switch between them shows at the next draw; a switch to or from off builds a new plan, and the frame loop's lookahead follows it (see the engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html)).
+- The black bar crop choice in the WebGPU settings reaches the presenter live through `WebGPUPlayer.setBlackBarCropEnabled`.
+  While it is on, the presenter finds the black bars encoded into the video from the frames as they play and presents only the picture, which fits the video box by its own shape, so a letterboxed film fills an ultrawide screen and the Cover aspect mode zooms the picture, not the bars; on a screen of the frame's own shape a letterboxed film looks the same.
+  A picture a few lines from a standard film or television aspect ratio, such as 2.39:1 or 1.85:1, from the table the Detect Aspect Ratio plugin snaps to, presents at exactly that ratio, as long as that shows no more than half a line of each bar.
+  The crop holds through dark scenes and fades; a picture that grows into the bars, such as a film's IMAX scenes, shows whole at once, and the bars crop again only after the picture keeps to them across shots for about half a minute.
+  Subtitle layers keep their placement over the video box.
 - `WebGPUPlayer.isFetching` mirrors actual backend file-loading state, not custom decoder startup or seeking.
   This keeps "Fetching additional data" paired with `beginFetch`/`endFetch`; normal playback waiting does not leave a phantom subtitle-loading message.
 

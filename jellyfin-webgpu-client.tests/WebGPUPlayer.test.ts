@@ -772,6 +772,7 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         }));
         updateRenderSettings = vi.fn(() => true);
         setHDROutputEnabled = vi.fn((): Promise<void> => Promise.resolve());
+        setBlackBarCropEnabled = vi.fn((): Promise<void> => Promise.resolve());
         setDeinterlaceMode = vi.fn((): Promise<void> => Promise.resolve());
         setPresentationPreset = vi.fn((): Promise<PlanReport> => Promise.resolve({ activePasses: [], inactivePasses: [] }));
         setPresentationParameter = vi.fn();
@@ -1064,6 +1065,7 @@ type MockPresenter = {
     recordAnimationFrame: MockFunction
     prewarmDolbyVisionPresentationAuthorization: MockFunction
     prewarmExternalHDRPresentationAuthorization: MockFunction
+    setBlackBarCropEnabled: MockFunction
     setDecodedFramePushMode: MockFunction
     setDeinterlaceMode: MockFunction
     setHDROutputEnabled: MockFunction
@@ -1810,10 +1812,11 @@ describe('WebGPUPlayer HTML delegation', () => {
         })).toBe(25_000_000);
     });
 
-    it('hands the stored HDR output to its presenter at once, the stored shader files at the first WebGPU play, and delegates live changes', async () => {
+    it('hands the stored HDR output and black bar crop to its presenter at once, the stored shader files at the first WebGPU play, and delegates live changes', async () => {
         indexedDBFake.clear();
         const parameters = { [SATURATION_PARAMETER_NAME]: STORED_SATURATION };
         const presentation = {
+            blackBarCrop: true,
             files: [
                 { parameters, sourceKey: await addPassSource(SATURATION_PASS_SOURCE) },
                 { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) }
@@ -1825,6 +1828,7 @@ describe('WebGPUPlayer HTML delegation', () => {
         const player = new WebGPUPlayer();
         const presenter = getPresenter();
         expect(presenter.setHDROutputEnabled).toHaveBeenCalledWith(presentation.hdrOutput);
+        expect(presenter.setBlackBarCropEnabled).toHaveBeenCalledWith(presentation.blackBarCrop);
         // The sources stay in IndexedDB until a play needs them
         expect(presenter.setPresentationPreset).not.toHaveBeenCalled();
 
@@ -1838,6 +1842,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         player.getPresentationPlanReport();
         expect(presenter.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, STORED_SATURATION);
+        await player.setBlackBarCropEnabled(false);
+        expect(presenter.setBlackBarCropEnabled).toHaveBeenLastCalledWith(false);
         expect(presenter.getPresentationPlanReport).toHaveBeenCalledTimes(1);
 
         // Later plays reuse what the presenter keeps
@@ -1874,12 +1880,14 @@ describe('WebGPUPlayer HTML delegation', () => {
         // The presenter keeps its settings for the player's next session
         player.destroy();
         presenter.setHDROutputEnabled.mockClear();
+        presenter.setBlackBarCropEnabled.mockClear();
         presenter.setDeinterlaceMode.mockClear();
 
         try {
-            setClientDefaults({ deinterlaceMode: 'off', hdrOutput: true });
+            setClientDefaults({ blackBarCrop: true, deinterlaceMode: 'off', hdrOutput: true });
 
             expect(presenter.setHDROutputEnabled.mock.calls).toEqual([ [ true ] ]);
+            expect(presenter.setBlackBarCropEnabled.mock.calls).toEqual([ [ true ] ]);
             expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ 'single-rate' ] ]);
         } finally {
             setClientDefaults({});

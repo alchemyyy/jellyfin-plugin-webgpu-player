@@ -28,7 +28,7 @@ The plugin's `README.md` maps the server plugin, and the engine's [Module map](h
 - `DefaultPresentationFiles.ts`: the server's default shader preset as a user's default files: resolved against the catalog, downloaded into the pass source store once per preset and file version, and cached per user.
 - `ui/WebGPUPlaybackSettingsDialog.ts`: the in-player settings panel, with the settings button placement, live render and downmix updates, and restart-required options marked.
 - `ui/SettingDefinitions.ts`: what the settings controls show: each numeric setting's label, description, range, and unit, and each select's options.
-- `ui/PresentationSettingsSection.ts`: the panel's presentation and shader pass sections: the HDR output switch, the deinterlacing choice, and the shader file list with each pass's plan state and each file's live parameters and constants, the server's passes to add, and the files from this device.
+- `ui/PresentationSettingsSection.ts`: the panel's presentation and shader pass sections: the HDR output and black bar crop switches, the deinterlacing choice, and the shader file list with each pass's plan state and each file's live parameters and constants, the server's passes to add, and the files from this device.
 - `ui/DecoderPackageSection.ts`: the panel's decoders section: the user's own packages, and the names of the server's.
 - `ui/SettingsPanelHTML.ts`: the HTML helpers the panel's sections share.
 - `ui/ClientDefaultsEditor.ts`: the administrator's editor of the server's client defaults, its own chunk: a row per setting, set on the server or showing the built-in value, and the default shader preset with each file's parameters.

@@ -86,6 +86,8 @@ export type WebGPUUserSettings = Readonly<{
     }>
     // Each applies live: the presenter replans the active session and keeps them for later ones
     presentation: Readonly<{
+        /** Whether presentation crops the black bars encoded into the video */
+        blackBarCrop: boolean
         /** How interlaced video presents: a frame per field, a frame per frame, or woven frames as decoded */
         deinterlaceMode: DeinterlaceMode
         /** The user's own shader preset; null follows the server's default preset */
@@ -243,6 +245,7 @@ export function createBuiltInWebGPUUserSettings(): WebGPUUserSettings {
             enableHDRToneMapping: true
         },
         presentation: {
+            blackBarCrop: false,
             deinterlaceMode: DEFAULT_DEINTERLACE_MODE,
             files: null,
             hdrOutput: false
@@ -281,6 +284,7 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
             enableHDRToneMapping: serverDefaults.enableHDRToneMapping
         },
         presentation: {
+            blackBarCrop: serverDefaults.blackBarCrop,
             deinterlaceMode: serverDefaults.deinterlaceMode,
             hdrOutput: serverDefaults.hdrOutput
         },
@@ -444,6 +448,7 @@ function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUU
             )
         },
         presentation: {
+            blackBarCrop: normalizeBoolean(presentation.blackBarCrop, defaults.presentation.blackBarCrop),
             deinterlaceMode: DEINTERLACE_MODES.find((mode: DeinterlaceMode): boolean => mode === presentation.deinterlaceMode)
                 ?? defaults.presentation.deinterlaceMode,
             files: Array.isArray(presentation.files) ? normalizePresentationFiles(presentation.files) : defaults.presentation.files,
@@ -538,6 +543,7 @@ export function saveWebGPUUserSettings(
 const SETTING_PATHS: Readonly<Partial<Record<ClientDefaultKey, readonly string[]>>> = Object.freeze({
     automaticInputPeakNits: [ 'render', 'automaticInputPeakNits' ],
     binauralHeadphones: [ 'audio', 'binauralHeadphones' ],
+    blackBarCrop: [ 'presentation', 'blackBarCrop' ],
     brightness: [ 'render', 'settings', 'display', 'brightness' ],
     centerLevel: [ 'audio', 'downmix', 'centerLevel' ],
     contrast: [ 'render', 'settings', 'display', 'contrast' ],

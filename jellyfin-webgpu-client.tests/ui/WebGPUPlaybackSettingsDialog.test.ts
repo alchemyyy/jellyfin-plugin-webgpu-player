@@ -392,9 +392,9 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-// One default button per setting the panel offers, the settings button placement, HDR output, deinterlacing, GPU decode slicing,
+// One default button per setting the panel offers, the settings button placement, HDR output, black bar crop, deinterlacing, GPU decode slicing,
 // the speaker layout, and binaural rendering included
-const DEFAULT_SETTING_BUTTON_COUNT = 23;
+const DEFAULT_SETTING_BUTTON_COUNT = 24;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -409,6 +409,7 @@ const DUPLICATE_REJECTION_DETAIL = 'pass 3';
 const MISSING_SHAPE_HEADER_FAILURE = "header-invalid: line 1: Missing required directive 'shape'";
 const PARAMETER_PENDING_ERROR = `pass-unknown: '${SATURATION_PASS_NAME}'`;
 const HDR_OUTPUT_FAILURE = 'no HDR display';
+const BLACK_BAR_CROP_FAILURE = 'out-of-memory';
 const DEINTERLACE_FAILURE = 'device-lost';
 const SATURATION_PASS_FILE_NAME = 'saturation.wgsl';
 const INVERT_PASS_FILE_NAME = 'invert.wgsl';
@@ -441,7 +442,7 @@ const SERVER_UNAVAILABLE_FAILURE = 'server-request-failed: WebGPUPlayer/Catalog 
 
 type PresentationPlayerMethods = Pick<
     WebGPUPlayer,
-    'getPresentationPlanReport' | 'setDeinterlaceMode' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
+    'getPresentationPlanReport' | 'setBlackBarCropEnabled' | 'setDeinterlaceMode' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
 >;
 
 /** A file the panel lists, as its title and the state text of each of its passes. */
@@ -454,6 +455,7 @@ type PassRow = Readonly<{
 function createPresentationPlayerMethods(): PresentationPlayerMethods {
     return {
         getPresentationPlanReport: vi.fn((): PlanReport => EMPTY_PLAN_REPORT),
+        setBlackBarCropEnabled: vi.fn((): Promise<void> => Promise.resolve()),
         setDeinterlaceMode: vi.fn((): Promise<void> => Promise.resolve()),
         setHDROutputEnabled: vi.fn((): Promise<void> => Promise.resolve()),
         setPresentationParameter: vi.fn(),
@@ -2190,6 +2192,32 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         await panelPromise;
     });
 
+    it('saves black bar crop, applies it live, and restores its default', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const blackBarCropCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="blackBarCrop"]');
+        const blackBarCropStatus = requirePanelElement<HTMLElement>(panel, '[data-black-bar-crop-status]');
+        expect(blackBarCropCheckbox.checked).toBe(false);
+
+        blackBarCropCheckbox.checked = true;
+        blackBarCropCheckbox.dispatchEvent(new Event('change'));
+        await flushMicrotasks();
+        expect(presentationMethods.setBlackBarCropEnabled).toHaveBeenLastCalledWith(true);
+        expect(readSavedPresentation().blackBarCrop).toBe(true);
+        expect(blackBarCropStatus.textContent).toBe(translateSourceString('WebGPUBlackBarCropApplied'));
+
+        vi.mocked(presentationMethods.setBlackBarCropEnabled).mockRejectedValueOnce(new Error(BLACK_BAR_CROP_FAILURE));
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="blackBarCrop"]').click();
+        await flushMicrotasks();
+        expect(blackBarCropCheckbox.checked).toBe(false);
+        expect(presentationMethods.setBlackBarCropEnabled).toHaveBeenLastCalledWith(false);
+        expect(readSavedPresentation().blackBarCrop).toBe(false);
+        expect(blackBarCropStatus.textContent).toBe(translateSourceString('WebGPUBlackBarCropFailed', BLACK_BAR_CROP_FAILURE));
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
     it('shows the stored deinterlacing mode, saves and applies each mode live, and restores its default', async () => {
         const presentationMethods = createPresentationPlayerMethods();
         storePresentation({ deinterlaceMode: 'off' });
@@ -2224,10 +2252,17 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
     it('restores and reapplies the presentation defaults on reset all', async () => {
         const presentationMethods = createPresentationPlayerMethods();
-        storePresentation({ deinterlaceMode: 'single-rate', files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ], hdrOutput: true });
+        storePresentation({
+            blackBarCrop: true,
+            deinterlaceMode: 'single-rate',
+            files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ],
+            hdrOutput: true
+        });
         const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const HDROutputCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="hdrOutput"]');
+        const blackBarCropCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="blackBarCrop"]');
         expect(HDROutputCheckbox.checked).toBe(true);
+        expect(blackBarCropCheckbox.checked).toBe(true);
         expect(readPassRows(panel)).toHaveLength(1);
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll').click();
@@ -2236,11 +2271,13 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const defaultPresentation = createDefaultWebGPUUserSettings().presentation;
         expect(readSavedPresentation()).toEqual(defaultPresentation);
         expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(defaultPresentation.hdrOutput);
+        expect(presentationMethods.setBlackBarCropEnabled).toHaveBeenLastCalledWith(defaultPresentation.blackBarCrop);
         expect(presentationMethods.setDeinterlaceMode).toHaveBeenLastCalledWith(defaultPresentation.deinterlaceMode);
         expect(requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="deinterlaceMode"]').value).toBe(defaultPresentation.deinterlaceMode);
         // No default preset on the server resolves to no files
         expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([]);
         expect(HDROutputCheckbox.checked).toBe(defaultPresentation.hdrOutput);
+        expect(blackBarCropCheckbox.checked).toBe(defaultPresentation.blackBarCrop);
         expect(readPassRows(panel)).toEqual([]);
         // The reset files' sources go with them
         expect(readStoredSources().size).toBe(0);

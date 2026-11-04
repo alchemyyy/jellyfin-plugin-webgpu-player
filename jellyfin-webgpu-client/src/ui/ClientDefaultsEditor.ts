@@ -136,6 +136,7 @@ const LEADING_SECTIONS: readonly SettingSection[] = Object.freeze([
     {
         rows: [
             { descriptionKey: 'WebGPUHDROutputHelp', key: 'hdrOutput', kind: 'boolean', labelKey: 'WebGPUHDROutput' },
+            { descriptionKey: 'WebGPUBlackBarCropHelp', key: 'blackBarCrop', kind: 'boolean', labelKey: 'WebGPUBlackBarCrop' },
             { descriptionKey: 'WebGPUDeinterlaceHelp', key: 'deinterlaceMode', kind: 'select', labelKey: 'WebGPUDeinterlace', options: DEINTERLACE_MODE_OPTIONS }
         ],
         titleKey: 'WebGPUPresentation'
@@ -203,6 +204,7 @@ function getSettingValues(
         audioDownmixAlgorithm,
         automaticInputPeakNits: settings.render.automaticInputPeakNits,
         binauralHeadphones: settings.audio.binauralHeadphones,
+        blackBarCrop: settings.presentation.blackBarCrop,
         brightness: display.brightness,
         centerLevel: downmix.centerLevel,
         contrast: display.contrast,

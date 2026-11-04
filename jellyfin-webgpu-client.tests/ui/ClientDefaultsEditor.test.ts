@@ -156,10 +156,11 @@ describe('client defaults editor', () => {
     });
 
     it('shows the value of each setting the server sets', async () => {
-        serverMockState.defaults = { brightness: 0.1, deinterlaceMode: 'off', hdrOutput: true, preferredVideoPlayer: 'html' };
+        serverMockState.defaults = { blackBarCrop: true, brightness: 0.1, deinterlaceMode: 'off', hdrOutput: true, preferredVideoPlayer: 'html' };
 
         const container = await renderEditor();
 
+        expect(getValueControl(container, 'blackBarCrop').checked).toBe(true);
         expect(Number(getValueControl(container, 'brightness').value)).toBe(0.1);
         expect(getValueControl(container, 'deinterlaceMode').value).toBe('off');
         expect(getValueControl(container, 'hdrOutput').checked).toBe(true);
@@ -188,6 +189,7 @@ describe('client defaults editor', () => {
         const container = await renderEditor();
 
         changeValue(getValueControl(container, 'brightness'), '9999');
+        getValueControl(container, 'blackBarCrop').checked = true;
         getValueControl(container, 'hdrOutput').checked = true;
         changeValue(getValueControl(container, 'deinterlaceMode'), 'single-rate');
         changeValue(getValueControl(container, 'preferredVideoPlayer'), 'webgpu');
@@ -202,6 +204,7 @@ describe('client defaults editor', () => {
 
         await vi.waitFor(() => expect(getStatus(container)).toBe('SettingsSaved'));
         expect(saveServerClientDefaults).toHaveBeenCalledWith({
+            blackBarCrop: true,
             brightness: HDR_RENDER_SETTING_RANGES.brightness.maximum,
             deinterlaceMode: 'single-rate',
             hdrOutput: true,

@@ -161,6 +161,7 @@ describe('WebGPUUserSettings', () => {
                 outputDeviceId: 'per-origin-output-id'
             },
             presentation: {
+                blackBarCrop: true,
                 deinterlaceMode: 'single-rate' as const,
                 files: [ { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, sourceKey: SATURATION_SOURCE_KEY } ],
                 hdrOutput: true
@@ -241,6 +242,7 @@ describe('WebGPUUserSettings', () => {
     it('reads a server default as a stored value: one out of range is clamped, and one the setting refuses leaves the built-in default', () => {
         const builtIn = createBuiltInWebGPUUserSettings();
         setClientDefaults({
+            blackBarCrop: 'true',
             brightness: 5,
             centerLevel: 1.5,
             deinterlaceMode: 'bob',
@@ -254,6 +256,7 @@ describe('WebGPUUserSettings', () => {
 
         expect(defaults.render.settings.display.brightness).toBe(1);
         expect(defaults.audio.downmix.centerLevel).toBe(1.5);
+        expect(defaults.presentation.blackBarCrop).toBe(builtIn.presentation.blackBarCrop);
         expect(defaults.presentation.deinterlaceMode).toBe(builtIn.presentation.deinterlaceMode);
         expect(defaults.playback.enableHDRToneMapping).toBe(builtIn.playback.enableHDRToneMapping);
         expect(defaults.render.settings.toneMapping.exposure).toBe(builtIn.render.settings.toneMapping.exposure);
@@ -318,6 +321,7 @@ describe('WebGPUUserSettings', () => {
         const normalized = normalizeWebGPUUserSettings({
             ...defaults,
             presentation: {
+                blackBarCrop: true,
                 files: [
                     {
                         parameters: {
@@ -342,10 +346,11 @@ describe('WebGPUUserSettings', () => {
         });
         const malformed = normalizeWebGPUUserSettings({
             ...defaults,
-            presentation: { files: INVERT_PASS_SOURCE, hdrOutput: String(true) }
+            presentation: { blackBarCrop: 1, files: INVERT_PASS_SOURCE, hdrOutput: String(true) }
         });
 
         expect(normalized.presentation).toEqual({
+            blackBarCrop: true,
             deinterlaceMode: defaults.presentation.deinterlaceMode,
             files: [
                 { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, sourceKey: SATURATION_SOURCE_KEY },
@@ -448,9 +453,25 @@ describe('WebGPUUserSettings', () => {
         expect(DEINTERLACE_MODES.map(normalizeMode)).toEqual(DEINTERLACE_MODES);
         // Saved before the choice existed, or a value no presenter takes
         expect(normalizeWebGPUUserSettings({ ...defaults, presentation: { files: [], hdrOutput: true } }).presentation)
-            .toEqual({ deinterlaceMode: 'double-rate', files: [], hdrOutput: true });
+            .toEqual({ blackBarCrop: false, deinterlaceMode: 'double-rate', files: [], hdrOutput: true });
         for (const invalidMode of [ 'bob', 'Off', '', null, 1, true ]) {
             expect(normalizeMode(invalidMode)).toBe('double-rate');
+        }
+    });
+
+    it('leaves black bar crop off unless this browser stored a boolean choice', () => {
+        const defaults = createDefaultWebGPUUserSettings();
+        const normalizeBlackBarCrop = (blackBarCrop: unknown): unknown => normalizeWebGPUUserSettings({
+            ...defaults,
+            presentation: { ...defaults.presentation, blackBarCrop }
+        }).presentation.blackBarCrop;
+
+        expect(defaults.presentation.blackBarCrop).toBe(false);
+        expect([ true, false ].map(normalizeBlackBarCrop)).toEqual([ true, false ]);
+        // Saved before the choice existed, or a value that is not a boolean
+        expect(normalizeWebGPUUserSettings({ ...defaults, presentation: { files: [], hdrOutput: true } }).presentation.blackBarCrop).toBe(false);
+        for (const invalidValue of [ 'true', 1, null, {} ]) {
+            expect(normalizeBlackBarCrop(invalidValue)).toBe(false);
         }
     });
 
@@ -480,7 +501,7 @@ describe('WebGPUUserSettings', () => {
         const changed = normalizeWebGPUUserSettings({
             ...defaults,
             playback: { enableCustomDecode: false, enableGPUDecodeSlicing: true, enableHDRToneMapping: false },
-            presentation: { deinterlaceMode: 'off', files: [ { parameters: {}, sourceKey: INVERT_SOURCE_KEY } ], hdrOutput: true }
+            presentation: { blackBarCrop: true, deinterlaceMode: 'off', files: [ { parameters: {}, sourceKey: INVERT_SOURCE_KEY } ], hdrOutput: true }
         });
 
         expect(resetWebGPURenderSettings(changed).playback).toEqual(changed.playback);
