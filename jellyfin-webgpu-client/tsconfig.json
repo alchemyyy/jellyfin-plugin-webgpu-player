@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.host.json",
   "compilerOptions": {
-    "target": "ES5",
+    "target": "ES2020",
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "allowJs": true,
     "skipLibCheck": true,
@@ -14,8 +14,7 @@
     "resolveJsonModule": true,
     "checkJs": false,
     "strictNullChecks": true,
-    "jsx": "react-jsx",
-    "downlevelIteration": true
+    "jsx": "react-jsx"
   },
   "include": [
     "src",

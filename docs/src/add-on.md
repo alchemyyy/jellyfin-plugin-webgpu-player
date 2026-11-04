@@ -172,6 +172,8 @@ Engine changes must also pass the engine's own checks, from its root.
 - `node_modules/webgpu-player` is npm's workspace junction to `vendor/webgpu-player`.
   Remove it alone (`cmd /c rmdir`) before deleting `node_modules` with a tool that follows junctions, or the engine checkout is deleted with it.
 - After the hls.js submodule moves, delete `vendor/webgpu-player-hls/dist`; the build rebuilds it only when it is missing.
+- `tsconfig.json` targets ES2020, as webpack's `target` does; never lower it to Jellyfin Web's ES5.
+  ts-loader compiles the add-on and the engine with it, and below ES2015 a class that extends `Error` builds plain `Error` objects, so every `instanceof` check of an engine error fails; `AddonBuild.test.ts` runs the engine's GPU decoder fit check as the build emits it.
 - The external playback tester, which is in neither repository, parses the `getStats()` labels `Playback pipeline`, `Decoded / presented frames`, and `Dropped / queued frames`.
   They come from the `WebGPUStats*` strings in `jellyfin-webgpu-client/src/strings/en-us.json`, so renaming them, or running a translated UI, breaks its playback proof.
   `Dropped / queued frames` counts the frames the session skipped and the stale frames the controller discarded; late frames, the worst lag, and clock resets have rows of their own.
