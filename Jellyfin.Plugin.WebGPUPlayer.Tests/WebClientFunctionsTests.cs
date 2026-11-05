@@ -32,7 +32,7 @@ public sealed class WebClientFunctionsTests
         string script = WebClientFunctions.BuildBootstrapScript(Entry);
         Assert.Equal(Page.Insert(Page.IndexOf(HeadCloseTag, StringComparison.Ordinal), script), result);
         Assert.Equal(1, CountOccurrences(result, WebClientFunctions.BootstrapMarker));
-        Assert.StartsWith("<script " + WebClientFunctions.BootstrapMarker + ">", script, StringComparison.Ordinal);
+        Assert.StartsWith("<script " + WebClientFunctions.BootstrapMarker + " data-cfasync=\"false\">", script, StringComparison.Ordinal);
         Assert.EndsWith("</script></head><body><div id=\"reactRoot\"></div></body></html>", result, StringComparison.Ordinal);
     }
 

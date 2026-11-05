@@ -38,9 +38,11 @@ public static class WebClientFunctions
     private const string PluginsProperty = "plugins";
     private const string AssetPath = "/" + AssetFunctions.RoutePrefix + "/";
 
-    // NOTE: Classic inline script, ES2017 plus dynamic import(); the settings object literal is appended as the IIFE argument
+    // NOTE: Classic inline script, ES2017 plus dynamic import(); the settings object literal is appended as the IIFE argument.
+    // data-cfasync="false" keeps Cloudflare's Rocket Loader from deferring it: the plugin manager reads the window factory while
+    // Jellyfin Web starts, and a deferred factory is defined too late for it, so the add-on never gets the plugin bag
     private const string BootstrapScriptStart = $$"""
-        <script {{BootstrapMarker}}>
+        <script {{BootstrapMarker}} data-cfasync="false">
         (function (settings) {
             'use strict';
             const pathname = window.location.pathname;
