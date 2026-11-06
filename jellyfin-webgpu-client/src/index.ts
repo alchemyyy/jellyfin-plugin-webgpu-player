@@ -53,11 +53,13 @@ function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWeb
     // Before the warm-up, whose first read of the probe store finds the probes that crashed an earlier page
     startProbeCrashReports();
     // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks; it waits for the server's defaults to decide whether it runs
-    void startCapabilityProbeWarmUp();
+    const capabilityWarmUp = startCapabilityProbeWarmUp();
     // A page that loaded an older add-on build than the server's catalog names reloads between plays
     installOutdatedPageReload();
     const player = new HostCompatibleWebGPUPlayer();
     installHostCompatibleMode(player);
+    // Where the probes warm up in the background, the stored decoder packages' GPU decoders compile behind them, into the browser's shader cache
+    void capabilityWarmUp.then((started: boolean): Promise<void> | undefined => (started ? player.warmStoredGPUVideoDecoders() : undefined));
     return player;
 }
 

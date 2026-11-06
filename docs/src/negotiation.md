@@ -18,7 +18,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    With custom decode enabled, `WebGPUPlayer.canPlayItem` also requires the engine's metadata-only prefilter, `hasPotentialCustomPlaybackVideoRoute`.
    When it declines, PlaybackManager picks the plain HTML player, which negotiates with the stock profile.
 2. Build the device profile, in `WebGPUPlayer.getDeviceProfile(item, options)`:
-   - First, when the call is the first one for playback of a request PlaybackManager began, `HostCompatibleWebGPUPlayer` may start reading the stream's head; see [The stream's head, read ahead](#the-streams-head-read-ahead).
+   - First, when the call is the first one for playback of a request PlaybackManager began, `HostCompatibleWebGPUPlayer` may start reading the stream's head and compiling its GPU decoder; see [The stream's head, read ahead](#the-streams-head-read-ahead) and [The GPU decoder, compiled ahead](#the-gpu-decoder-compiled-ahead).
    - A retry (`options.isRetry === true`) returns the stock profile unchanged.
    - Otherwise it adopts the stored playback preferences, keeps the stock profile as a per-item proof (`rememberNativeDeviceProfile`), and strips every bitrate field and condition (`createBitrateIndependentDeviceProfile`).
    - It stops there when custom decode is off or the engine's `getCustomPlaybackRuntimeAvailability` fails (secure context, Worker, `navigator.gpu`, `VideoFrame`).
@@ -46,6 +46,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    `startCustomPlaybackBounded` (25 s) calls the engine's `getCustomPlaybackEligibility` with the route flags and authorized keys the profile adopted.
    Every HDR and Dolby Vision flag also requires the user's HDR tone mapping setting, and `allowRawSDR` needs only a settled `:sdr` raw key.
    A direct play without a native video route downloads the server's video packages its video needs, and an eligibility that refused the audio track downloads the server's audio packages of the track's codec, then runs again.
+   An eligible frame-pool route starts compiling its GPU decoder at once (`precompileGPUVideoDecoder`), or joins the compile its negotiation started.
 6. Fall back.
    An ineligible, timed-out, or failed start falls back.
    Without the renegotiation flag, the add-on's HTML player plays the same source in the same session.
@@ -75,6 +76,21 @@ Nothing about the PlaybackInfo request or its decision changes.
 5. Release it.
    Once the start settles, the player cancels the read it claimed, which the engine ignores once its run took the source over; a start that ended without a run, such as an HTML fallback, releases it there.
    A new request, a stop, and a destroyed player cancel every read, and the engine releases one no run takes within 5 s.
+
+## The GPU decoder, compiled ahead
+
+A decoder package's GPU decoder compiles its pipelines before its first packet decodes, which with the browser's shader cache cold takes about 1.2 to 1.9 s for VC-1 on an RTX 5080, and about 5 ms warm.
+A playback's session compiles only once the decode worker has opened the file, so the add-on starts the compile earlier, at three points, each of which a later one joins in the engine's per-device cache; the engine's [Decoder packages](https://alchemyyy.github.io/WebGPU-Player/decoder-packages.html) chapter has the calls.
+
+1. In the background after page load, `WebGPUPlayer.warmStoredGPUVideoDecoders`; see [GPU decoder warm-up](add-on.md#gpu-decoder-warm-up).
+2. At the request's first `getDeviceProfile(item)` without options, once the client defaults settled, for the stream `predictDirectPlayStream` predicts, as for the head read above.
+   `WebGPUPlayer.precompilePredictedGPUVideoDecoder` goes on only when the engine's `predictGPUVideoDecodeTarget` predicts a GPU decoder: a codec no browser decodes, such as VC-1 or MPEG-2, so no native route comes first, in a container the engine plays that carries it.
+   It then loads the packages the profile counts for that codec and format, the user's and the catalog's, the server's from its store or by the same download the eligibility would start, and compiles the decoder the engine predicts among their offers.
+   The profile, PlaybackInfo, and the start run beside the compile, and nothing waits for it.
+3. At the eligibility, for its chosen decoder.
+
+A prediction the playback does not follow, such as a transcode, leaves a compiled decoder no playback uses.
+Against a server on the same network the negotiation takes about 0.1 s, so the prediction's head start over the eligibility is about that, and the background warm-up is what takes the compile off a first frame.
 
 ## How the profile is augmented
 

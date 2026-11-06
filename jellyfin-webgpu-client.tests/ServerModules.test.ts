@@ -235,6 +235,70 @@ describe('ServerModules', () => {
         expect(testState.storedPackages.get('hevc')?.contentHash).toBe(SECOND_HASH);
     });
 
+    it('loads the video packages the store holds in the versions the catalog names, in catalog order, without a download', async () => {
+        const vc1Entry = { ...AV1_ENTRY, codecs: [ 'vc1', 'wmv3' ], id: 'vc1', name: 'VC-1' };
+        const mpeg2Entry = { ...AV1_ENTRY, codecs: [ 'mpeg2video' ], id: 'mpeg2', name: 'MPEG-2' };
+        const missingEntry = { ...AV1_ENTRY, codecs: [ 'vp8' ], id: 'vp8', name: 'VP8' };
+        responses.set(CATALOG_URL, respondJSON({ ...CATALOG, decoderPackages: [ AV1_ENTRY, vc1Entry, EAC3_ENTRY, mpeg2Entry, missingEntry, HEVC_ENTRY ] }));
+        const av1Package: FakeDecoderPackage = { contentHash: FIRST_HASH, id: 'av1', kind: 'video' };
+        const hevcPackage: FakeDecoderPackage = { contentHash: FIRST_HASH, id: 'hevc', kind: 'video' };
+        // The store holds the HEVC package first, an older VC-1 version, the audio package, and the package the user's own package holds the id of
+        testState.storedPackages.set('hevc', hevcPackage);
+        testState.storedPackages.set('vc1', { contentHash: SECOND_HASH, id: 'vc1', kind: 'video' });
+        testState.storedPackages.set('eac3', { contentHash: FIRST_HASH, id: 'eac3', kind: 'audio' });
+        testState.storedPackages.set('mpeg2', { contentHash: FIRST_HASH, id: 'mpeg2', kind: 'video' });
+        testState.storedPackages.set('av1', av1Package);
+        // Every package could be downloaded, which the load must not do
+        responses.set(HEVC_PACKAGE_URL, respondPackage(1, hevcPackage));
+        responses.set(AV1_PACKAGE_URL, respondPackage(2, av1Package));
+        responses.set(`${SERVER_ADDRESS}/WebGPUPlayer/DecoderPackages/vc1`, respondPackage(3, { contentHash: FIRST_HASH, id: 'vc1', kind: 'video' }));
+        responses.set(EAC3_PACKAGE_URL, respondPackage(4, { contentHash: FIRST_HASH, id: 'eac3', kind: 'audio' }));
+        responses.set(`${SERVER_ADDRESS}/WebGPUPlayer/DecoderPackages/vp8`, respondPackage(5, { contentHash: FIRST_HASH, id: 'vp8', kind: 'video' }));
+        const { loadStoredServerVideoDecoderPackages } = await importServerModules();
+
+        const decoderPackages = await loadStoredServerVideoDecoderPackages(null, new Set<string>([ 'mpeg2' ]));
+
+        expect(decoderPackages).toEqual([ av1Package, hevcPackage ]);
+        expect(decoderPackages[0]).toBe(av1Package);
+        expect(decoderPackages[1]).toBe(hevcPackage);
+        expect(getRequestedURLs()).toEqual([ CATALOG_URL ]);
+        expect(testState.storeAddCount).toBe(0);
+        expect(testState.storedPackages.get('vc1')?.contentHash).toBe(SECOND_HASH);
+    });
+
+    it('loads no stored package without a signed-in server', async () => {
+        testState.storedPackages.set('hevc', { contentHash: FIRST_HASH, id: 'hevc', kind: 'video' });
+        testState.apiClientAvailable = false;
+        const { loadStoredServerVideoDecoderPackages } = await importServerModules();
+
+        await expect(loadStoredServerVideoDecoderPackages(null, NO_EXCLUDED_IDS)).resolves.toEqual([]);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reuses the stored packages the page already loaded, and keeps the ones it loads from the store as loaded', async () => {
+        const { loadServerVideoDecoderPackages, loadStoredServerVideoDecoderPackages } = await importServerModules();
+        const hevcPackage: FakeDecoderPackage = { contentHash: FIRST_HASH, id: 'hevc', kind: 'video' };
+        responses.set(HEVC_PACKAGE_URL, respondPackage(1, hevcPackage));
+        const [ downloaded ] = await loadServerVideoDecoderPackages(SERVER_ID, HEVC_I420P10_TARGET, NO_EXCLUDED_IDS);
+        // A store that lost the package after the page loaded it
+        testState.storedPackages.clear();
+
+        const reused = await loadStoredServerVideoDecoderPackages(null, NO_EXCLUDED_IDS);
+        expect(reused).toHaveLength(1);
+        expect(reused[0]).toBe(downloaded);
+
+        // The AV1 package loads from the store, and a playback then takes it without reading the store or downloading it
+        const av1Package: FakeDecoderPackage = { contentHash: FIRST_HASH, id: 'av1', kind: 'video' };
+        testState.storedPackages.set('av1', av1Package);
+        responses.set(AV1_PACKAGE_URL, respondPackage(2, { contentHash: FIRST_HASH, id: 'av1', kind: 'video' }));
+        await expect(loadStoredServerVideoDecoderPackages(null, new Set<string>([ 'hevc' ]))).resolves.toEqual([ av1Package ]);
+        testState.storedPackages.clear();
+        const [ played ] = await loadServerVideoDecoderPackages(SERVER_ID, { codec: 'av1', format: 'I420' }, NO_EXCLUDED_IDS);
+
+        expect(played).toBe(av1Package);
+        expect(getRequestedURLs().filter((url: string): boolean => url !== CATALOG_URL)).toEqual([ HEVC_PACKAGE_URL ]);
+    });
+
     it('downloads the audio package of the track\'s codec, and leaves out one that fails with a warning', async () => {
         const { loadServerAudioDecoderPackages } = await importServerModules();
 

@@ -26,6 +26,8 @@ import type {
 } from 'webgpu-player/capability/NativeMediaAudioCapabilities';
 import type { DolbyVisionAuthorizationRoute } from 'webgpu-player/validation/DolbyVisionPresentationAuthorization';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import type { VideoDecoderPackage } from 'webgpu-player/decode/packages/DecoderPackage';
+import type { StoredDecoderPackages } from 'webgpu-player/decode/packages/DecoderPackageStore';
 import { DEINTERLACE_MODES } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { UNKNOWN_VIDEO_STREAM_FIELDS, type VideoStreamFields } from 'webgpu-player/decode/video/VideoFields';
 import { addPassSource } from 'addons/webGPUPlayer/PresentationPassStore';
@@ -142,9 +144,10 @@ const userSettingsMockState = vi.hoisted(() => ({
     audioNormalizationMode: 'TrackGain',
     webGPUPlaybackSettings: null as string | null
 }));
-// The read of the server's defaults the player waits for before it reads the settings
+// The read of the server's defaults the player waits for before it reads the settings, and the sign-in the decoder warm-up waits for
 const clientDefaultsMockState = vi.hoisted(() => ({
-    settled: Promise.resolve() as Promise<void>
+    settled: Promise.resolve() as Promise<void>,
+    signedIn: Promise.resolve() as Promise<void>
 }));
 // The server's default shader files the player makes sure of before it opens the panel, and which a user who follows them plays with
 const defaultPresentationFilesMockState = vi.hoisted(() => ({
@@ -262,7 +265,8 @@ vi.mock('addons/webGPUPlayer/shims/userSettings', () => ({
 }));
 
 vi.mock('addons/webGPUPlayer/ServerClientDefaults', () => ({
-    whenClientDefaultsSettled: vi.fn(() => clientDefaultsMockState.settled)
+    whenClientDefaultsSettled: vi.fn(() => clientDefaultsMockState.settled),
+    whenUserSignedIn: vi.fn(() => clientDefaultsMockState.signedIn)
 }));
 
 vi.mock('addons/webGPUPlayer/DefaultPresentationFiles', () => ({
@@ -408,7 +412,9 @@ vi.mock('webgpu-player/capability/CustomDecodeCapabilities', async importOrigina
             audio: {},
             telemetry: { reason: 'complete' },
             video: {}
-        }))
+        })),
+        // The background turn comes at once here; a rejecting task counts as run, as the engine counts it
+        runCustomDecodeBackgroundTask: vi.fn((task: () => Promise<void>): Promise<boolean> => task().then((): boolean => true, (): boolean => true))
     };
 });
 
@@ -432,7 +438,8 @@ vi.mock('addons/webGPUPlayer/ServerModules', () => ({
     loadServerAudioDecoderPackages: vi.fn(() => Promise.resolve([])),
     loadServerDecoderPackageSummaries: vi.fn(() => Promise.resolve(decoderPackageMockState.serverPackageSummaries)),
     loadServerModuleCatalog: vi.fn(() => Promise.resolve({ decoderPackages: [], passes: [] })),
-    loadServerVideoDecoderPackages: vi.fn(() => Promise.resolve([]))
+    loadServerVideoDecoderPackages: vi.fn(() => Promise.resolve([])),
+    loadStoredServerVideoDecoderPackages: vi.fn(() => Promise.resolve([]))
 }));
 
 vi.mock('webgpu-player/presentation/PresentationSetup', async importOriginal => {
@@ -447,7 +454,9 @@ vi.mock('webgpu-player/presentation/PresentationSetup', async importOriginal => 
             return decoderPackageMockState.gpuVideoDecoderOffersFailure ?
                 Promise.reject(decoderPackageMockState.gpuVideoDecoderOffersFailure) :
                 Promise.resolve(decoderPackageMockState.gpuVideoDecoderOffers);
-        })
+        }),
+        precompilePredictedGPUVideoDecoder: vi.fn(() => Promise.resolve()),
+        warmGPUVideoDecoders: vi.fn(() => Promise.resolve())
     };
 });
 
@@ -977,15 +986,26 @@ import WebGPUPlayer, {
     CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS
 } from 'addons/webGPUPlayer/WebGPUPlayer';
 import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
-import { loadServerAudioDecoderPackages } from 'addons/webGPUPlayer/ServerModules';
+import {
+    loadServerAudioDecoderPackages,
+    loadServerVideoDecoderPackages,
+    loadStoredServerVideoDecoderPackages
+} from 'addons/webGPUPlayer/ServerModules';
+import { getStoredDecoderPackageIds, getVideoDecoderPackages, loadPlaybackDecoderPackages } from 'addons/webGPUPlayer/DecoderPackages';
 import { ensureDefaultPresentationFiles } from 'addons/webGPUPlayer/DefaultPresentationFiles';
 import { toggleWebGPUPlaybackSettingsPanel } from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
 import { getCustomPlaybackEligibility, type CustomAudioRenderTarget } from 'webgpu-player/capability/CustomPlaybackEligibility';
-import { createGPUVideoDecodeSessionFactory } from 'webgpu-player/presentation/PresentationSetup';
+import {
+    createGPUVideoDecodeSessionFactory,
+    getGPUVideoDecoderOffers,
+    precompilePredictedGPUVideoDecoder,
+    warmGPUVideoDecoders
+} from 'webgpu-player/presentation/PresentationSetup';
 import {
     CUSTOM_DECODE_AUDIO_PROBES,
     CUSTOM_DECODE_VIDEO_PROBES,
     probeCustomDecodeCapabilities,
+    runCustomDecodeBackgroundTask,
     type CustomDecodeCapabilities,
     type CustomDecodeProbe,
     type CustomDecodeProbeState
@@ -2358,6 +2378,179 @@ describe('WebGPUPlayer HTML delegation', () => {
         await profilePromise;
 
         expect(playbackPreferencesMockState.refreshWebGPUPlaybackPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    describe('GPU decoder warm-up', () => {
+        // A player that exposes the predicted precompile, as HostCompatibleWebGPUPlayer starts it at a playback request's first negotiation
+        class PrecompilingWebGPUPlayer extends WebGPUPlayer {
+            precompile(playbackOptions: unknown): Promise<void> {
+                return this.precompilePredictedGPUVideoDecoder(playbackOptions);
+            }
+        }
+
+        // Stand-ins for loaded packages, which the player only passes along
+        const USER_VIDEO_PACKAGE = { id: 'user-vc1', kind: 'video' } as unknown as VideoDecoderPackage;
+        const SERVER_VIDEO_PACKAGE = { id: 'vc1', kind: 'video' } as unknown as VideoDecoderPackage;
+        const STORED_SERVER_VIDEO_PACKAGE = { id: 'mpeg2', kind: 'video' } as unknown as VideoDecoderPackage;
+        const USER_PACKAGES: StoredDecoderPackages = {
+            failures: [],
+            packages: [ { addedAtMilliseconds: 0, decoderPackage: USER_VIDEO_PACKAGE, fileName: 'user-vc1.wasm' } ]
+        };
+        const USER_PACKAGE_IDS = new Set<string>([ 'user-vc1' ]);
+        const OFFERS = [ { decoderId: 'vc1:I420', package: SERVER_VIDEO_PACKAGE } ];
+
+        /** A direct play of an 8-bit SDR stream of the codec in Matroska, as a negotiation predicts it for the item of a server. */
+        function createDirectPlayOptions(codec: string, profile: string): Record<string, unknown> {
+            return {
+                item: { Id: 'item', ServerId: 'server' },
+                mediaSource: {
+                    Container: 'mkv',
+                    Id: 'source',
+                    MediaStreams: [ {
+                        AverageFrameRate: 23.976,
+                        BitDepth: 8,
+                        Codec: codec,
+                        Height: 1_080,
+                        Index: 0,
+                        IsInterlaced: false,
+                        Profile: profile,
+                        Type: 'Video',
+                        VideoRangeType: 'SDR',
+                        Width: 1_920
+                    } ]
+                }
+            };
+        }
+
+        /** Gives the player the user's VC-1 package, the server's, and the offers the device checks them into. */
+        function arrangePackages(): void {
+            vi.mocked(loadPlaybackDecoderPackages).mockResolvedValue(USER_PACKAGES);
+            vi.mocked(getVideoDecoderPackages).mockReturnValue([ USER_VIDEO_PACKAGE ]);
+            vi.mocked(getStoredDecoderPackageIds).mockReturnValue(USER_PACKAGE_IDS);
+            vi.mocked(loadServerVideoDecoderPackages).mockResolvedValue([ SERVER_VIDEO_PACKAGE ]);
+            vi.mocked(loadStoredServerVideoDecoderPackages).mockResolvedValue([ STORED_SERVER_VIDEO_PACKAGE ]);
+            decoderPackageMockState.gpuVideoDecoderOffers = OFFERS;
+        }
+
+        /** Returns every package the player handed the engine to warm. */
+        function getWarmedPackages(): unknown[] {
+            return vi.mocked(warmGPUVideoDecoders).mock.calls.flatMap(call => [ ...call[1] ]);
+        }
+
+        beforeEach(() => {
+            clientDefaultsMockState.signedIn = Promise.resolve();
+        });
+
+        it('precompiles the GPU decoder of a predicted VC-1 direct play among the user\'s and the server\'s offers', async () => {
+            const player = new PrecompilingWebGPUPlayer();
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            arrangePackages();
+            const options = createDirectPlayOptions('vc1', 'Advanced');
+
+            await player.precompile(options);
+
+            // The server's package that decodes the stream loads as the eligibility would load it, leaving out the user's ids
+            expect(loadServerVideoDecoderPackages).toHaveBeenCalledExactlyOnceWith('server', { codec: 'vc1', format: 'I420' }, USER_PACKAGE_IDS);
+            expect(getGPUVideoDecoderOffers).toHaveBeenCalledExactlyOnceWith(getPresenter(), [ USER_VIDEO_PACKAGE, SERVER_VIDEO_PACKAGE ], options);
+            expect(precompilePredictedGPUVideoDecoder).toHaveBeenCalledExactlyOnceWith(getPresenter(), OFFERS, options);
+            expect(vi.mocked(precompilePredictedGPUVideoDecoder).mock.calls[0][1]).toBe(OFFERS);
+        });
+
+        it.each([
+            [ 'H.264', 'h264', 'High' ],
+            [ 'HEVC', 'hevc', 'Main' ]
+        ])('precompiles nothing and loads no package for %s, which a browser decodes', async (_label, codec, profile) => {
+            const player = new PrecompilingWebGPUPlayer();
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            arrangePackages();
+            vi.mocked(loadPlaybackDecoderPackages).mockClear();
+
+            await player.precompile(createDirectPlayOptions(codec, profile));
+
+            expect(loadPlaybackDecoderPackages).not.toHaveBeenCalled();
+            expect(loadServerVideoDecoderPackages).not.toHaveBeenCalled();
+            expect(decoderPackageMockState.offerRequestCount).toBe(0);
+            expect(precompilePredictedGPUVideoDecoder).not.toHaveBeenCalled();
+        });
+
+        it('precompiles nothing and loads no package while custom decode is off', async () => {
+            const player = new PrecompilingWebGPUPlayer();
+            arrangePackages();
+            vi.mocked(loadPlaybackDecoderPackages).mockClear();
+
+            await player.precompile(createDirectPlayOptions('vc1', 'Advanced'));
+
+            expect(loadPlaybackDecoderPackages).not.toHaveBeenCalled();
+            expect(loadServerVideoDecoderPackages).not.toHaveBeenCalled();
+            expect(decoderPackageMockState.offerRequestCount).toBe(0);
+            expect(precompilePredictedGPUVideoDecoder).not.toHaveBeenCalled();
+        });
+
+        it('warms the user\'s video packages, then the server\'s stored ones, loaded at a background turn once a user signed in', async () => {
+            const player = new WebGPUPlayer();
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            arrangePackages();
+            vi.mocked(loadPlaybackDecoderPackages).mockClear();
+            const signedIn = createDeferred<void>();
+            clientDefaultsMockState.signedIn = signedIn.promise;
+            const backgroundTurn = createDeferred<boolean>();
+            const captured: { backgroundTask: (() => Promise<void>) | null } = { backgroundTask: null };
+            vi.mocked(runCustomDecodeBackgroundTask).mockImplementation((task: () => Promise<void>): Promise<boolean> => {
+                captured.backgroundTask = task;
+                return backgroundTurn.promise;
+            });
+
+            const warming = player.warmStoredGPUVideoDecoders();
+            await waitForMacrotask();
+            // The server's catalog needs a signed-in user
+            expect(runCustomDecodeBackgroundTask).not.toHaveBeenCalled();
+
+            signedIn.resolve();
+            await waitForMacrotask();
+            expect(runCustomDecodeBackgroundTask).toHaveBeenCalledTimes(1);
+            // Nothing loads before the background turn
+            expect(loadPlaybackDecoderPackages).not.toHaveBeenCalled();
+            expect(loadStoredServerVideoDecoderPackages).not.toHaveBeenCalled();
+            expect(warmGPUVideoDecoders).not.toHaveBeenCalled();
+
+            await captured.backgroundTask?.();
+            expect(loadPlaybackDecoderPackages).toHaveBeenCalledTimes(1);
+            expect(loadStoredServerVideoDecoderPackages).toHaveBeenCalledExactlyOnceWith(null, USER_PACKAGE_IDS);
+            backgroundTurn.resolve(true);
+            await warming;
+
+            expect(warmGPUVideoDecoders).toHaveBeenCalledExactlyOnceWith(getPresenter(), [ USER_VIDEO_PACKAGE, STORED_SERVER_VIDEO_PACKAGE ]);
+            // The warm-up never downloads: neither the server's packages a playback would download nor their offers
+            expect(loadServerVideoDecoderPackages).not.toHaveBeenCalled();
+            expect(decoderPackageMockState.offerRequestCount).toBe(0);
+        });
+
+        it('warms nothing while custom decode is off', async () => {
+            const player = new WebGPUPlayer();
+            arrangePackages();
+            vi.mocked(loadPlaybackDecoderPackages).mockClear();
+
+            await player.warmStoredGPUVideoDecoders();
+
+            expect(runCustomDecodeBackgroundTask).toHaveBeenCalledTimes(1);
+            expect(loadPlaybackDecoderPackages).not.toHaveBeenCalled();
+            expect(loadStoredServerVideoDecoderPackages).not.toHaveBeenCalled();
+            expect(getWarmedPackages()).toEqual([]);
+        });
+
+        it('warms nothing when the background drops the task', async () => {
+            const player = new WebGPUPlayer();
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            arrangePackages();
+            vi.mocked(loadPlaybackDecoderPackages).mockClear();
+            vi.mocked(runCustomDecodeBackgroundTask).mockResolvedValue(false);
+
+            await player.warmStoredGPUVideoDecoders();
+
+            expect(loadPlaybackDecoderPackages).not.toHaveBeenCalled();
+            expect(loadStoredServerVideoDecoderPackages).not.toHaveBeenCalled();
+            expect(getWarmedPackages()).toEqual([]);
+        });
     });
 
     it('advertises locked ASS, PGS, and VobSub renderers without the HTML PGS profile flag', async () => {

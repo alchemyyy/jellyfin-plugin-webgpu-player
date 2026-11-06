@@ -124,6 +124,15 @@ background ua: *Windows NT*
 - A line that is no rule is a problem, named by its line number and its reason: `syntax`, `timing`, `field`, `pattern`, or `too-many` for a rule past the 64th.
   The plugin's settings page refuses to save rules with problems; a client skips such lines with one console warning per page load, `WebGPU decoder tests: rules-invalid: lines <n> (<reason>), ... ignored`.
 
+## GPU decoder warm-up
+
+Where the decoder tests run in the background, `index.ts` then has the player compile the GPU decoders of the decoder packages this browser already stores, `WebGPUPlayer.warmStoredGPUVideoDecoders`.
+A decoder compiled once stays in the browser's shader cache, so a later playback's compile takes milliseconds rather than the 1.2 to 1.9 s a cold VC-1 compile takes; see [The GPU decoder, compiled ahead](negotiation.md#the-gpu-decoder-compiled-ahead).
+
+- It waits for a signed-in user, since the catalog needs one, then loads the packages in a background task of the engine (`runCustomDecodeBackgroundTask`), after the probes: the user's packages, then the server's that its store holds in the version the catalog names (`ServerModules.loadStoredServerVideoDecoderPackages`); it downloads nothing.
+- The engine's `warmGPUVideoDecoders` compiles only codecs no browser decodes, one package format at a time, each at a background turn, so none starts while `isPlaying()` reports a playback or within 10 s of a negotiation.
+- A client whose timing is `playback`, or that the engine skips, gets no warm-up, and its first playback of such a codec compiles from its negotiation instead.
+
 ## The player
 
 `WebGPUPlayer` (`jellyfin-webgpu-client/src/WebGPUPlayer.ts`) is the player PlaybackManager sees: id `webgpuplayer`, priority 0, and `syncPlayWrapAs = 'htmlvideoplayer'`.

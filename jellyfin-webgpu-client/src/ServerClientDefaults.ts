@@ -216,6 +216,20 @@ export function whenClientDefaultsSettled(): Promise<void> {
     return pendingRefresh?.promise ?? Promise.resolve();
 }
 
+/** Resolves once a user is signed in to the current server: at once when one is, else at the host's next sign-in; never rejects. */
+export function whenUserSignedIn(): Promise<void> {
+    if (getSignedInApiClient()) {
+        return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+        const onSignedIn = (): void => {
+            Events.off(ServerConnections, 'localusersignedin', onSignedIn);
+            resolve();
+        };
+        Events.on(ServerConnections, 'localusersignedin', onSignedIn);
+    });
+}
+
 /** Applies the current server's last read defaults, then reads them again now and on each sign-in; later calls do nothing. */
 export function startClientDefaultsSync(): void {
     if (syncStarted) {

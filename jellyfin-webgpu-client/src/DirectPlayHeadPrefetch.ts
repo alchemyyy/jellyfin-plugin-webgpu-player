@@ -18,7 +18,7 @@ const FOLDER_RIP_VIDEO_TYPES = new Set([ 'BluRay', 'Dvd', 'HdDvd' ]);
 const PLACEHOLDER_MEDIA_SOURCE_TYPE = 'Placeholder';
 
 /** Media source fields the prediction reads, as Jellyfin's item and PlaybackInfo responses carry them */
-type PredictedMediaSource = {
+export type PredictedMediaSource = {
     Container?: string | null
     ETag?: string | null
     Id?: string | null
@@ -56,10 +56,11 @@ export type StreamURLBuilder = {
     getUrl: (name: string, params?: Record<string, unknown>) => string
 };
 
-/** The direct play a negotiation is predicted to pick, by the static stream URL PlaybackManager builds for it */
+/** The direct play a negotiation is predicted to pick, by the static stream URL PlaybackManager builds for it, and the item's media source it plays */
 export type DirectPlayStreamPrediction = Readonly<{
     eTag: string | null
     itemId: string
+    mediaSource: PredictedMediaSource
     mediaSourceId: string
     url: string
 }>;
@@ -141,6 +142,7 @@ export function predictDirectPlayStream(
     return {
         eTag,
         itemId: item.Id,
+        mediaSource,
         mediaSourceId: mediaSource.Id,
         url: apiClient.getUrl(`Videos/${item.Id}/stream.${mediaSource.Container.toLowerCase()}`, streamParameters)
     };

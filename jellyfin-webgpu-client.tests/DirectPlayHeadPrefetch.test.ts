@@ -165,12 +165,14 @@ describe('predictDirectPlayStream', () => {
         expect(prediction).toEqual({
             eTag: 'etag',
             itemId: 'item',
+            mediaSource,
             mediaSourceId: 'source',
             url: createStreamInfoURL(apiClient, item, mediaSource)
         });
         expect(prediction?.url).toBe(
             'https://jellyfin.example/jf/Videos/item/stream.mkv?Static=true&mediaSourceId=source&deviceId=device%20id%2F1&ApiKey=token%2B%26%3D&Tag=etag'
         );
+        expect(prediction?.mediaSource).toBe(mediaSource);
     });
 
     it('builds the URL without a tag for a media source without an ETag', () => {
@@ -197,9 +199,11 @@ describe('predictDirectPlayStream', () => {
         expect(prediction).toEqual({
             eTag: 'other-etag',
             itemId: 'item',
+            mediaSource: requestedMediaSource,
             mediaSourceId: 'version',
             url: createStreamInfoURL(apiClient, item, requestedMediaSource)
         });
+        expect(prediction?.mediaSource).toBe(requestedMediaSource);
     });
 
     it.each([

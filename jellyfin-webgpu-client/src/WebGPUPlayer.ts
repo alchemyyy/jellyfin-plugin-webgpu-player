@@ -13,7 +13,7 @@ import { createStreamURLSource } from './DirectPlayHeadPrefetch';
 import { PLAYBACK_SUPERSEDED } from './constants/playbackResult';
 import { WebGPUPlayerEvent } from './constants/playerEvent';
 import { loadAddonStrings } from './host/globalize';
-import { whenClientDefaultsSettled } from './ServerClientDefaults';
+import { whenClientDefaultsSettled, whenUserSignedIn } from './ServerClientDefaults';
 import {
     translateAudioOutputLayout,
     translateAudioPath,
@@ -64,7 +64,8 @@ import {
 import {
     loadServerAudioDecoderPackages,
     loadServerDecoderPackageSummaries,
-    loadServerVideoDecoderPackages
+    loadServerVideoDecoderPackages,
+    loadStoredServerVideoDecoderPackages
 } from './ServerModules';
 import {
     createConfiguredHDRRenderSettings,
@@ -96,6 +97,7 @@ import {
     getPlaybackAudioCodec,
     hasPotentialCustomPlaybackVideoRoute,
     playbackAudioNeedsObjectRendering,
+    predictGPUVideoDecodeTarget,
     type CustomAudioRenderTarget,
     type CustomPlaybackEligibility,
     type CustomPlaybackEligibilityOptions,
@@ -105,7 +107,8 @@ import {
 import {
     type CustomDecodeCapabilities,
     hasProbedCustomDecodeSelection,
-    probeCustomDecodeCapabilities
+    probeCustomDecodeCapabilities,
+    runCustomDecodeBackgroundTask
 } from 'webgpu-player/capability/CustomDecodeCapabilities';
 import { getAudioNormalizationLinearGain } from 'webgpu-player/audio/AudioNormalization';
 import type CustomPlaybackController from 'webgpu-player/pipeline/CustomPlaybackController';
@@ -174,13 +177,16 @@ import {
     isRawOnlyHDRPresentation,
     isRawSDRRouteKey,
     isWebGPUPresentationInput,
+    precompileGPUVideoDecoder,
+    precompilePredictedGPUVideoDecoder,
     readPresentationInput,
     UNAUTHORIZED_PRESENTATION_ELIGIBILITY_OPTIONS,
     type CustomPresentationEligibilityOptions,
     type GPUVideoDecodeSessionFactoryOptions,
     type HDRRenderConfiguration,
     type PresentationInput,
-    type RawDolbyVisionRouteFlags
+    type RawDolbyVisionRouteFlags,
+    warmGPUVideoDecoders
 } from 'webgpu-player/presentation/PresentationSetup';
 import type { DeinterlaceMode } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import WebGPUPresenter, {
@@ -191,6 +197,7 @@ import WebGPUPresenter, {
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import type { VideoDecoderPackage } from 'webgpu-player/decode/packages/DecoderPackage';
 import type { StoredDecoderPackages } from 'webgpu-player/decode/packages/DecoderPackageStore';
 import type { GPUVideoDecoderOffer } from 'webgpu-player/decode/video/gpu/GPUVideoDecoderCatalog';
 
@@ -1132,6 +1139,47 @@ export default class WebGPUPlayer {
             this.customProfileAugmentationAvailable = true;
         }
         return profileResult.profile;
+    }
+
+    /**
+     * Starts compiling the GPU decoder a direct play of the options is predicted to take, while PlaybackManager still negotiates the playback,
+     * which the eligibility's own precompile then joins. Only a video codec no browser decodes is predicted, so no native route can come first;
+     * the server's package that decodes it loads now, as the eligibility would load it. Never rejects.
+     */
+    protected async precompilePredictedGPUVideoDecoder(playbackOptions: unknown): Promise<void> {
+        if (predictGPUVideoDecodeTarget(playbackOptions) === null || !await getWebGPUCustomDecodeEnabled()) {
+            return;
+        }
+        const decoderPackages = await loadPlaybackDecoderPackages();
+        const offers = await this.getGPUVideoDecoderOffers(
+            decoderPackages,
+            playbackOptions,
+            getItemServerId(getOptionalRecord(playbackOptions).item),
+            getStoredDecoderPackageIds(decoderPackages)
+        );
+        await precompilePredictedGPUVideoDecoder(this.presenter, offers, playbackOptions);
+    }
+
+    /**
+     * Compiles in the background the GPU decoders later playbacks would take from the decoder packages this browser stores: the user's, then the
+     * current server's in the version its catalog names. Their compiled shaders stay in the browser's shader cache, so a later page compiles them quickly.
+     * The packages load at the first background turn after the capability probes once a user is signed in, since the catalog needs one,
+     * and nothing is downloaded. Never rejects.
+     */
+    async warmStoredGPUVideoDecoders(): Promise<void> {
+        await whenUserSignedIn();
+        let videoDecoderPackages: VideoDecoderPackage[] = [];
+        await runCustomDecodeBackgroundTask(async (): Promise<void> => {
+            if (!await getWebGPUCustomDecodeEnabled()) {
+                return;
+            }
+            const decoderPackages = await loadPlaybackDecoderPackages();
+            videoDecoderPackages = [
+                ...getVideoDecoderPackages(decoderPackages),
+                ...await loadStoredServerVideoDecoderPackages(null, getStoredDecoderPackageIds(decoderPackages))
+            ];
+        });
+        await warmGPUVideoDecoders(this.presenter, videoDecoderPackages);
     }
 
     supports(feature: string): boolean {
@@ -2417,6 +2465,10 @@ export default class WebGPUPlayer {
         const eligibility = await this.getCustomPlaybackEligibilityForOptions(options, backendGeneration, audioRenderTarget);
         if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
             return { status: 'superseded' };
+        }
+        if (eligibility) {
+            // The frame-pool route's session compiles its decoder only once the worker has opened the file, so the compile starts now, alongside the setup
+            void precompileGPUVideoDecoder(this.presenter, eligibility);
         }
         if (!eligibility?.eligible || !this.webGPUPresentationEnabled) {
             this.warnCustomPlaybackIneligible(eligibility);

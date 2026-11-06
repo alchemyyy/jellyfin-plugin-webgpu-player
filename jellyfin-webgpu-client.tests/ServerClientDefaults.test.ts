@@ -107,6 +107,13 @@ function readStoredSettings(): unknown {
     return JSON.parse(testState.storage.get(SETTINGS_STORAGE_KEY) ?? 'null');
 }
 
+/** Counts the sign-in listeners the host's events keep on the connections. */
+function countSignInListeners(serverConnections: object): number {
+    const callbacks: unknown = Reflect.get(serverConnections, '_callbacks');
+    const listeners: unknown = callbacks && typeof callbacks === 'object' ? Reflect.get(callbacks, 'localusersignedin') : undefined;
+    return Array.isArray(listeners) ? listeners.length : 0;
+}
+
 beforeEach(() => {
     localStorage.clear();
     testState.serverId = SERVER_ID;
@@ -256,6 +263,33 @@ describe('ServerClientDefaults', () => {
         expect(clientDefaults.getClientDefaults()).toEqual({ saturation: 0.5 });
         // A settled read leaves nothing to wait for
         await expect(sync.whenClientDefaultsSettled()).resolves.toBeUndefined();
+    });
+
+    it('reports a signed-in user at once, without listening for a sign-in', async () => {
+        const { serverConnections, sync } = await importModules();
+
+        await expect(sync.whenUserSignedIn()).resolves.toBeUndefined();
+        expect(countSignInListeners(serverConnections)).toBe(0);
+    });
+
+    it('waits without a signed-in user for the next sign-in, then stops listening', async () => {
+        testState.userId = null;
+        const { serverConnections, sync } = await importModules();
+
+        let signedIn = false;
+        const whenSignedIn = sync.whenUserSignedIn().then((): void => {
+            signedIn = true;
+        });
+        await Promise.resolve();
+        expect(signedIn).toBe(false);
+        expect(countSignInListeners(serverConnections)).toBe(1);
+
+        testState.userId = USER_ID;
+        Events.trigger(serverConnections, 'localusersignedin', [ { Id: USER_ID } ]);
+        await whenSignedIn;
+
+        expect(signedIn).toBe(true);
+        expect(countSignInListeners(serverConnections)).toBe(0);
     });
 
     it('saves defaults in the settings envelope, then applies and caches what the server stored', async () => {
