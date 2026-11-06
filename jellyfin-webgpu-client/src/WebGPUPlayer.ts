@@ -120,6 +120,10 @@ import type {
     CustomPlaybackState,
     CustomPlaybackTelemetry
 } from 'webgpu-player/pipeline/CustomPlaybackControllerTypes';
+import {
+    MAXIMUM_CUSTOM_PLAYBACK_RATE,
+    MINIMUM_CUSTOM_PLAYBACK_RATE
+} from 'webgpu-player/pipeline/CustomPlaybackRate';
 import type {
     CustomDecodeAudioOutputMode,
     CustomDecodeDolbyVisionProfile,
@@ -584,6 +588,25 @@ type PendingPausedPresentationRefresh = {
 };
 
 const CUSTOM_VOLUME_STEP = 2;
+// The speed menu the custom path offers, which lists each id verbatim as its name
+const CUSTOM_PLAYBACK_RATE_OPTIONS: readonly PlaybackRateOption[] = [
+    0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 6, 8, 10, 16
+].map(id => ({ id, name: `${id}x` }));
+
+/**
+ * Returns a copy of a speed menu that lists the current rate, inserted in id order when the menu lacks it.
+ * Jellyfin marks the menu's current entry and steps its speed keys by strict id match, so a rate outside the menu would mark nothing and send both keys to the first entry.
+ */
+function includePlaybackRateOption(options: readonly PlaybackRateOption[], playbackRate: number | null): PlaybackRateOption[] {
+    const menu = options.map(option => ({ ...option }));
+    if (playbackRate === null || !Number.isFinite(playbackRate) || menu.some(option => option.id === playbackRate)) {
+        return menu;
+    }
+    const followingIndex = menu.findIndex(option => option.id > playbackRate);
+    menu.splice(followingIndex === -1 ? menu.length : followingIndex, 0, { id: playbackRate, name: `${playbackRate}x` });
+    return menu;
+}
+
 export const CUSTOM_PLAYBACK_SETUP_TIMEOUT_MICROSECONDS = millisecondsToMicroseconds(25_000);
 const JELLYFIN_VOLUME_CURVE_EXPONENT = 3;
 const MAX_JELLYFIN_VOLUME = 100;
@@ -923,9 +946,10 @@ export default class WebGPUPlayer {
     private pendingPausedPresentationRefresh: PendingPausedPresentationRefresh | null = null;
     private customPlaybackHasPlayed = false;
     private customPlaybackAudioSelectionRevision = 0;
+    private customPlaybackRateRevision = 0;
     private customPlaybackSeekRevision = 0;
-    /** The newest seek on the current controller, which a startup it supersedes follows instead of abandoning the play request. */
-    private latestCustomPlaybackSeek: Promise<CustomPlaybackStartResult | undefined> | null = null;
+    /** The newest seek or rate restart on the current controller, which a startup it supersedes follows instead of abandoning the play request. */
+    private latestCustomPlaybackRestart: Promise<CustomPlaybackStartResult | undefined> | null = null;
     /** The newest seek requested while custom setup has no controller yet, which becomes the startup position. */
     private pendingCustomPlaybackSeekTimeMicroseconds: Microseconds | null = null;
     private customPlaybackSetupRevision = 0;
@@ -942,6 +966,8 @@ export default class WebGPUPlayer {
     private customPlaybackNormalizationGain = 1;
     private customPlaybackRecoveryTimeMicroseconds: Microseconds | null = null;
     private htmlPlaybackNormalizationGain: number | null = null;
+    /** The rate the session last requested, which a media element's load resets to 1 and the custom path keeps across its startup and fallback. */
+    private requestedPlaybackRate = 1;
     private currentPlaybackOptions: unknown = null;
     private currentNativeDeviceProfileProof: NativeDeviceProfileProof | null = null;
     private currentPlaybackRequiresSourceRenegotiation = false;
@@ -1186,9 +1212,11 @@ export default class WebGPUPlayer {
         switch (feature) {
             case 'AirPlay':
             case 'PictureInPicture':
-            case 'PlaybackRate':
             case 'SetBrightness':
                 return this.hasAuthoritativeHTMLPlaybackSurface() && this.htmlDelegate.player.supports(feature);
+            case 'PlaybackRate':
+                return this.isCustomPlaybackPathActive()
+                    || (this.hasAuthoritativeHTMLPlaybackSurface() && this.htmlDelegate.player.supports(feature));
             default:
                 return this.htmlDelegate.player.supports(feature);
         }
@@ -1234,6 +1262,7 @@ export default class WebGPUPlayer {
         this.customPlaybackSeekRevision += 1;
         this.customPlaybackSetupRevision += 1;
         this.customPlaybackRecoveryTimeMicroseconds = null;
+        this.requestedPlaybackRate = 1;
         const customPlaybackStop = this.detachCustomPlaybackController();
         const previousSessionGeneration = this.backendSessionGeneration;
         const generation = this.advancePresentationGeneration();
@@ -1437,6 +1466,7 @@ export default class WebGPUPlayer {
             }
 
             this.attachNativePresentation();
+            this.restoreHTMLPlaybackRate();
             return playResult;
         } catch (error) {
             this.beginCustomPlaybackAudioPrewarmClose(generation);
@@ -1498,7 +1528,7 @@ export default class WebGPUPlayer {
                         customPlaybackController.seek(requestedTimeMicroseconds) :
                         undefined
                 ));
-                this.latestCustomPlaybackSeek = seekPromise;
+                this.latestCustomPlaybackRestart = seekPromise;
                 void seekPromise.then(result => {
                     if (!result || this.customPlaybackSeekRevision !== seekRevision) {
                         return;
@@ -1712,28 +1742,36 @@ export default class WebGPUPlayer {
         return this.htmlDelegate.player.isMuted();
     }
 
-    setPlaybackRate(value: number): void {
-        const customPlaybackController = this.getActiveCustomPlaybackController();
-        if (customPlaybackController) {
-            customPlaybackController.setPlaybackRate(value);
+    setPlaybackRate(value: number | string): void {
+        const requestedRate = Number(value);
+        if (!Number.isFinite(requestedRate) || requestedRate <= 0) {
             return;
         }
-        this.htmlDelegate.player.setPlaybackRate(value);
+        const playbackRate = Math.min(Math.max(requestedRate, MINIMUM_CUSTOM_PLAYBACK_RATE), MAXIMUM_CUSTOM_PLAYBACK_RATE);
+        this.requestedPlaybackRate = playbackRate;
+        const customPlaybackController = this.getActiveCustomPlaybackController();
+        if (customPlaybackController) {
+            this.applyCustomPlaybackRate(customPlaybackController, this.backendSessionGeneration);
+            return;
+        }
+        // Custom startup applies the rate once its controller exists, and a same-session fallback once the HTML backend plays
+        if (!this.isCustomPlaybackPathActive()) {
+            this.htmlDelegate.player.setPlaybackRate(playbackRate);
+        }
     }
 
     getPlaybackRate(): number | null {
-        const customPlaybackController = this.getActiveCustomPlaybackController();
-        if (customPlaybackController) {
-            return customPlaybackController.playbackRate;
+        if (this.isCustomPlaybackPathActive()) {
+            return this.requestedPlaybackRate;
         }
         return this.htmlDelegate.player.getPlaybackRate();
     }
 
     getSupportedPlaybackRates(): PlaybackRateOption[] {
-        if (this.getActiveCustomPlaybackController()) {
-            return [{ id: 1, name: '1x' }];
-        }
-        return this.htmlDelegate.player.getSupportedPlaybackRates();
+        const options = this.isCustomPlaybackPathActive() ?
+            CUSTOM_PLAYBACK_RATE_OPTIONS :
+            this.htmlDelegate.player.getSupportedPlaybackRates();
+        return includePlaybackRateOption(options, this.getPlaybackRate());
     }
 
     setBrightness(value: number): void {
@@ -2583,6 +2621,7 @@ export default class WebGPUPlayer {
             // Playback can start in a hidden tab, such as a queued next item
             this.synchronizeCustomPlaybackPageVisibility();
             this.initializeCustomPlaybackGain(customPlaybackController, options, userSettingsModule.selectAudioNormalization());
+            this.applyCustomPlaybackRate(customPlaybackController, backendGeneration);
             const audioDownmixAlgorithm = selectAudioDownmixAlgorithm(
                 eligibility.audioTrackIndex,
                 userSettingsModule.webGPUAudioDownmixAlgorithm()
@@ -2612,7 +2651,7 @@ export default class WebGPUPlayer {
                 videoOutputMode: eligibility.videoOutputMode,
                 videoTrackIndex: eligibility.videoTrackIndex
             });
-            const startResult = await this.followCustomPlaybackStartupSeeks(customPlaybackController, backendGeneration, initialStartResult);
+            const startResult = await this.followCustomPlaybackStartupRestarts(customPlaybackController, backendGeneration, initialStartResult);
             if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
                 return { status: 'superseded' };
             }
@@ -2628,25 +2667,25 @@ export default class WebGPUPlayer {
         return this.resolveCustomPlaybackStartResult(completedStartResult);
     }
 
-    /** A seek supersedes the startup's decode generation, not the play request, so the request settles with the newest seek's startup. */
-    private async followCustomPlaybackStartupSeeks(
+    /** A seek or rate restart supersedes the startup's decode generation, not the play request, so the request settles with the newest restart's startup. */
+    private async followCustomPlaybackStartupRestarts(
         customPlaybackController: CustomPlaybackController,
         backendGeneration: number,
         initialResult: CustomPlaybackStartResult
     ): Promise<CustomPlaybackStartResult> {
         let result = initialResult;
-        let followedSeek: Promise<CustomPlaybackStartResult | undefined> | null = null;
+        let followedRestart: Promise<CustomPlaybackStartResult | undefined> | null = null;
         while (result.status === 'superseded' && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
-            const seek = this.latestCustomPlaybackSeek;
-            if (!seek || seek === followedSeek) {
+            const restart = this.latestCustomPlaybackRestart;
+            if (!restart || restart === followedRestart) {
                 break;
             }
-            followedSeek = seek;
+            followedRestart = restart;
             try {
-                result = (await seek) ?? result;
+                result = (await restart) ?? result;
             } catch (error) {
-                // A newer seek replaced the one that failed, so only the newest seek's failure ends the startup
-                if (seek === this.latestCustomPlaybackSeek && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
+                // A newer restart replaced the one that failed, so only the newest restart's failure ends the startup
+                if (restart === this.latestCustomPlaybackRestart && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
                     throw error;
                 }
             }
@@ -3272,6 +3311,7 @@ export default class WebGPUPlayer {
             }
             this.lastKnownTimeMicroseconds = latestRecoveryTimeMicroseconds;
             this.customPlaybackRecoveryTimeMicroseconds = null;
+            this.restoreHTMLPlaybackRate();
             return result;
         } catch (error) {
             if (this.isRequestedSessionCurrent(backendGeneration)) {
@@ -3308,6 +3348,18 @@ export default class WebGPUPlayer {
             playerStartPositionTicks: microsecondsToJellyfinTicks(mediaTimeMicroseconds),
             suppressInitialUnpause: this.customPlaybackHasPlayed
         };
+    }
+
+    /** Applies the requested rate to an HTML backend whose load reset its element to rate 1. */
+    private restoreHTMLPlaybackRate(): void {
+        if (this.requestedPlaybackRate === 1) {
+            return;
+        }
+        try {
+            this.htmlDelegate.player.setPlaybackRate(this.requestedPlaybackRate);
+        } catch (error) {
+            console.warn('The HTML backend refused the requested playback rate', error);
+        }
     }
 
     private updateCustomPlaybackAudioSelection(audioStreamIndex: number): void {
@@ -3384,6 +3436,34 @@ export default class WebGPUPlayer {
         this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
     }
 
+    /** Hands the requested rate to the controller, and follows the generation restart a change across the audible range starts. */
+    private applyCustomPlaybackRate(customPlaybackController: CustomPlaybackController, backendGeneration: number): void {
+        if (customPlaybackController.playbackRate === this.requestedPlaybackRate) {
+            return;
+        }
+        const restart = customPlaybackController.setPlaybackRate(this.requestedPlaybackRate);
+        if (!restart) {
+            return;
+        }
+        // Only a newer restart or a teardown supersedes this one; a live change leaves its result to settle
+        const rateRevision = this.customPlaybackRateRevision + 1;
+        this.customPlaybackRateRevision = rateRevision;
+        // The restart supersedes a paused refresh's seek, and a startup it supersedes settles with it
+        this.cancelPendingPausedPresentationRefresh();
+        this.latestCustomPlaybackRestart = restart;
+        void restart.then((result: CustomPlaybackStartResult): void => {
+            if (!this.isCustomPlaybackRateCurrent(customPlaybackController, backendGeneration, rateRevision)) {
+                return;
+            }
+            this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
+        }).catch((error: unknown): void => {
+            if (this.customPlaybackRateRevision !== rateRevision) {
+                return;
+            }
+            this.requestCustomPlaybackFallbackForError(customPlaybackController, backendGeneration, error);
+        });
+    }
+
     private detachCustomPlaybackController(): Promise<void> | null {
         const customPlaybackController = this.customPlaybackController;
         if (!customPlaybackController) {
@@ -3427,8 +3507,9 @@ export default class WebGPUPlayer {
         this.customPlaybackAudioSettings = null;
         this.customPlaybackAudioSelectionRevision += 1;
         this.customPlaybackSeekRevision += 1;
+        this.customPlaybackRateRevision += 1;
         this.customPlaybackBackendGeneration = null;
-        this.latestCustomPlaybackSeek = null;
+        this.latestCustomPlaybackRestart = null;
         this.customPlaybackEmitUnpause = false;
     }
 
@@ -3453,6 +3534,15 @@ export default class WebGPUPlayer {
         selectionRevision: number
     ): boolean {
         return this.customPlaybackAudioSelectionRevision === selectionRevision
+            && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration);
+    }
+
+    private isCustomPlaybackRateCurrent(
+        customPlaybackController: CustomPlaybackController,
+        backendGeneration: number,
+        rateRevision: number
+    ): boolean {
+        return this.customPlaybackRateRevision === rateRevision
             && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration);
     }
 
