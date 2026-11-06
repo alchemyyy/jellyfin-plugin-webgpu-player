@@ -4632,6 +4632,7 @@ describe('augmentDeviceProfileForCustomDecode H.264 raw formats beyond High', ()
         const stream = createH264Stream(profile, bitDepth, pixelFormat);
         // A browser whose software decoder decodes and copies every vector the selection downloads
         const probed = await new CustomDecodeCapabilityProbe({
+            canHoldVideoFrameFormat: () => true,
             h264RawFormatVectorLoader: (assetPath: string): Promise<ArrayBuffer> => {
                 const definition = H264_RAW_FORMAT_VARIANTS
                     .map((variant: H264RawFormatVariant) => H264_RAW_FORMAT_PROBE_DEFINITIONS[variant])

@@ -196,6 +196,7 @@ The engine deinterlaces every route but Dolby Vision's, for each codec whose dec
 - The profile advertises the engine's audio routes per codec and channel count, as the engine's [audio routes](https://alchemyyy.github.io/WebGPU-Player/routes.html#audio-routes) list them.
 - AAC, Opus, FLAC, and Vorbis advertise 3 and 6 channels only with the codec's 5.1 verdict and 8 only with its 7.1 verdict, each a probe of its own (`getDecodedAudioRouteChannelCounts`); without either they advertise 1 and 2.
   Jellyfin reports FFmpeg's 7.1 and 7.1(wide) alike as `7.1`, so an 8-channel route covers both by count.
+- On WebKit before Safari 27, or of unknown version, the AAC 5.1 and 7.1 tests read `unsupported` with the reason `browser-defect` (WebKit bug 308322), so custom playback leaves surround AAC to the server there; the HTML player is unaffected.
 - The profile uses `AudioSampleRate NotEquals 0`, because Jellyfin reuses conditions as transcode targets.
 - AC-3, E-AC-3, and PCM have no runtime probe, so `appendMeasuredNativeAudioRouteProfiles` never emits its 48 kHz profile.
 - A profile condition cannot express ChannelLayout, so three-channel routes and E-AC-3 and TrueHD 7.1 are advertised by channel count and qualified by layout only at eligibility.

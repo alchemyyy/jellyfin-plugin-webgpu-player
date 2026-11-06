@@ -91,12 +91,12 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The add-on starts the engine's warm-up when Jellyfin Web constructs the player, which is when the host's PlaybackManager is bound, so the engine can hold its background probes while `isPlaying()` reports a playback, paused ones included.
   The store's build key is the engine's asset key with webpack's `__webpack_hash__`, because the add-on's profile rules and its copy of the probe code change without the engine's assets; a commit hash would not do, since every uncommitted build of a commit reads the same `<sha>-dirty`.
   The settings dialog offers the engine's clear, for a change no fingerprint shows that has not yet failed a start.
-- A browser on which a capability probe stopped the page warms up no more, and its negotiations leave that probe out (11-05).
+- A browser call of a capability probe that stopped the page is blocked for that browser, while the other calls and the background tests go on (11-05).
   On iOS, from version 2.0.0.0, every page load reloaded about 8 s in, in Safari and in the Jellyfin app, until Safari reported that a problem repeatedly occurred, as it does when a page's web content process keeps ending.
   Version 2.0.0.0 started the engine's warm-up at load, which on WebKit runs a probe's first browser call after two 2 s idle bounds; a probe whose call ends the web content process reaches no verdict, so every reload runs it again.
   Version 1.1.0.1 probed only in `getDeviceProfile`, so a page that only browsed never ran one.
-  The engine now records each probe's browser calls under a Web Lock of the page, and the next page reads a probe that was in one when its page stopped as crashed, for that build and browser: see [Probes that stop the page](https://alchemyyy.github.io/WebGPU-Player/routes.html#probes-that-stop-the-page).
-  The add-on keeps starting the warm-up at load where its decoder test timing allows, since most browsers gain from it, and an affected browser stops once, on the first load of a build, rather than on every load; an administrator can keep such clients from running any test until they play, below.
+  The engine now records each probe's browser calls under a Web Lock of the page, and the next page blocks the call that was in flight when its page stopped, for that build and browser, or retries several such calls one at a time: see [Probes that stop the page](https://alchemyyy.github.io/WebGPU-Player/routes.html#probes-that-stop-the-page).
+  The add-on keeps starting the warm-up at load where its decoder test timing allows, since most browsers gain from it, and an affected browser stops once per crashing call, on the first load of a build, rather than on every load; an administrator can keep such clients from running any test until they play, below.
 - When the decoder tests run is a client setting under the administrator's device types and rules (11-05); [The client add-on](add-on.md#decoder-test-timing) has the values and the rules syntax.
   A phone used only as a remote control never plays through this player, yet the warm-up ran every test on it at each page load, and on iOS WebKit one of them can stop the page.
   The setting has three values: `background` keeps the warm-up and the engine's refresh of a stored verdict after use, `playback` turns both off so a playback runs the tests it needs, as version 1.1.0.1 did, and `automatic`, the default, leaves it to the administrator.
@@ -108,7 +108,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - A probe crash the engine finds is reported to the server, which writes it to its log (11-05); [The client add-on](add-on.md#probe-crash-reports) has the route and its limits.
   A crash takes its page, and the page's console with it, so nothing the crashed page logged survives for a user to copy into a report.
   The next page knows the crash, but on iOS its storage and console are readable only through a Mac's Web Inspector, which few users who meet the crash have.
-  The server's log is the one place an administrator reads with what they already have, under Dashboard > Logs, so the add-on posts each crash there, with the browser calls the probe had in flight, and the settings panel shows the same probes to the user.
+  The server's log is the one place an administrator reads with what they already have, under Dashboard > Logs, so the add-on posts each crash there, with the browser calls the probe had in flight, and the settings panel shows the same blocked and suspect calls, grouped by test, to the user.
   The report runs once per crash, on the page that finds it, so it costs nothing on a browser that never crashes, and a failed post is only logged, since the crash stays in the browser's stored verdicts.
 - PlaybackInfo bodies are gzipped on the wire rather than the device profile compacted (11-05).
   Every PlaybackInfo POST carries the whole device profile, about 167 KB of JSON with 279 codec profiles, and behind a slow upstream its upload cost about 110 ms of each play while Jellyfin answered in about 20 ms.
@@ -148,7 +148,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   Local and release builds read the same pinned commit, which had been pinned only in the release workflow while local builds read a sibling checkout.
   `build.sh --jellyfin-web-path` and `JELLYFIN_WEB_DIR` still name another checkout.
 - Live development proxies the developer's server under one origin (10-28).
-  `serve_jellyfin_web_client.sh` serves a clone of the pinned Jellyfin Web and the add-on's watch build on `127.0.0.1`, and forwards every other request, the WebSocket included, to the server.
+  `serve_jellyfin_web_client.sh` serves the pinned Jellyfin Web, built in its submodule, and the add-on's watch build on `127.0.0.1`, and forwards every other request, the WebSocket included, to the server.
   The API, media, and the plugin's routes then stay on the page's origin, as when the server serves Jellyfin Web, rather than depending on the server's CORS policy.
   Jellyfin Web served this way never goes past the proxy: the API client it creates from the page's own address takes only that address, not the server's LocalAddress.
   A read the server redirects to another origin, such as a split tunnel's media host, is followed by the proxy, not the browser, without the page's credentials, as a browser follows it.
@@ -157,6 +157,8 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The plugin's routes, `/WebGPUPlayer/...`, go to `Jellyfin.Plugin.WebGPUPlayer.DevHost`, a host of this checkout's plugin that the script builds with the add-on's watch build embedded, and builds and starts again on every change of the plugin's sources.
   The host signs each request in as the server's user its credentials name, from the server's `Users/Me`, so the plugin's administrator routes stay closed to other users; its data folder is the script's own.
   Plugin edits then take effect without deploying the plugin, and the installed plugin and its data stay as they are.
+- Live development builds Jellyfin Web in its submodule (11-05), into the gitignored `node_modules/` and `dist/` there, rather than in a second clone of the same commit in the folder to work in.
+  The add-on's webpack, Vitest, ESLint, and type check resolve npm packages only from the add-on's `node_modules`, so the host's installs never reach them.
 - Unstable builds are GitHub pre-releases of the same plugin, which a second repository manifest, `manifest.json` on the `unstable` branch, lists (11-05).
   Jellyfin merges the versions of every enabled repository that lists a plugin's GUID, and its plugin update task installs the newest version above the installed one, so a server that adds the unstable manifest beside main's follows both, and any other server never sees an unstable build.
   A second GUID would make a second plugin: both would serve the same `/WebGPUPlayer/...` routes, register the same File Transformation ids and client plugin name, and share one data folder and configuration, which Jellyfin names by the assembly, not the GUID.

@@ -28,7 +28,7 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 3. `jellyfin-webgpu-client/src/index.ts` configures the engine: the asset base is the add-on route plus `libraries/`, the cache key is the engine build's asset key, and `isHDRToneMappingEnabled` reads the user's preference.
    It names the build whose capability probe verdicts the engine stores, the engine's asset key joined with webpack's `__webpack_hash__`, which also changes with the add-on's own probe code and profile rules.
    It then binds the host bridge, starts the probe crash reports (`ProbeCrashReports.ts`, below), starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
-   The warm-up runs only with custom decode on and the runtime available, and only on a client whose [decoder test timing](#decoder-test-timing) is `background`; the engine skips it on a client that asks to save data or has fewer than four threads, and on a browser where a probe once stopped the page, for that build.
+   The warm-up runs only with custom decode on and the runtime available, and only on a client whose [decoder test timing](#decoder-test-timing) is `background`; the engine skips it on a client that asks to save data or has fewer than four threads.
    It tells the engine at once that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
    `index.ts` does not wait for the warm-up, which decides whether it runs once the server's client defaults settle and logs that decision once to the console.
 4. The plugin serves the add-on build at `<BaseUrl>/WebGPUPlayer/assets/<path>`, the engine's served folder included.
@@ -72,7 +72,10 @@ With the override still active, later plays never reload again in that tab; a pl
 ## Probe crash reports
 
 A capability probe's browser call can crash the browser's page process, as WebKit's does on some iOS devices, and the page reloads.
-The engine records which probe was in a browser call, and which calls it had in flight, so the next page of that browser finds the crash, skips the probe, and keeps it with the stored verdicts.
+The engine records each browser call (a step) in flight, so the next page of that browser finds the crash and blocks the exact call, not the whole test, for that build and browser.
+When several calls were in flight, the next round retries them one at a time, and the engine may then keep a ceiling on the calls a playback's tests run at once.
+The engine's [Probes that stop the page](https://alchemyyy.github.io/WebGPU-Player/routes.html#probes-that-stop-the-page) and its [decisions](https://alchemyyy.github.io/WebGPU-Player/decisions.html) have the rules.
+The settings panel lists the blocked and suspect steps grouped by test, from the engine's `crashedProbes`.
 `ProbeCrashReports.ts` sends each crash to the server, so an administrator can read it without the browser's developer tools.
 
 - `index.ts` starts it once the host's ServerConnections is bound and before the warm-up, whose first read of the probe store finds a crash of an earlier page.
@@ -93,6 +96,9 @@ The engine records which probe was in a browser call, and which calls it had in 
 The decoder tests are the engine's capability probes, which find what this browser decodes and presents.
 `CapabilityProbeWarmUp.ts` runs them in the background after the page loads, the warm-up, only on a client whose decoder test timing is `background`; elsewhere a playback runs the tests it needs, as version 1.1.0.1 did.
 A phone used only as a remote control never plays, so it gains nothing from them, and on iOS WebKit one of them can stop the page (see [Probe crash reports](#probe-crash-reports)).
+The background tests, the warm-up and the re-checks of stored verdicts, run one browser call at a time, and a crash no longer stops them.
+A playback's tests run their calls in parallel within the engine's limits, and a background test the playback needs switches to parallel when the playback takes it over.
+A decode that fails while other decoders ran is run again alone before its result is stored; see the engine's [probe manager](https://alchemyyy.github.io/WebGPU-Player/routes.html#the-probe-manager).
 
 - The setting "Decoder tests" (`playback.decoderTestTiming` in `WebGPUUserSettings.ts`, client default key `decoderTestTiming`) is `automatic`, the built-in default, `background`, or `playback`.
   An administrator sets its default on the plugin's settings page, and each browser can choose its own in the WebGPU settings dialog.
@@ -227,6 +233,7 @@ Every setting is the user's own in the browser profile, else the default an admi
 You need Node.js 24 and npm 11, and the toolchain of the engine's WebAssembly modules from its [Set up a checkout](https://alchemyyy.github.io/WebGPU-Player/setup.html) chapter.
 The server plugin also needs the .NET 10 SDK.
 Jellyfin Web is a read-only input, the shallow submodule in `vendor/jellyfin-web/`, pinned to the commit the add-on builds against.
+Only `serve_jellyfin_web_client.sh` writes there: its gitignored `node_modules/` and `dist/`, which the add-on's build, checks, and tests never resolve from.
 
 1. In the plugin root, run `git submodule update --init`; the Jellyfin Web submodule is fetched shallow.
    Then run `npm ci` in `jellyfin-webgpu-client/`, and there `npm run pinned-releases -w webgpu-player`, which installs the engine's pinned decoder packages and pass files that the add-on build carries.
