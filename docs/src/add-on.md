@@ -28,7 +28,7 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 3. `jellyfin-webgpu-client/src/index.ts` configures the engine: the asset base is the add-on route plus `libraries/`, the cache key is the engine build's asset key, and `isHDRToneMappingEnabled` reads the user's preference.
    It names the build whose capability probe verdicts the engine stores, the engine's asset key joined with webpack's `__webpack_hash__`, which also changes with the add-on's own probe code and profile rules.
    It then binds the host bridge, starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
-   The warm-up runs only with custom decode on and the runtime available, and the engine skips it on a client that asks to save data or has fewer than four threads.
+   The warm-up runs only with custom decode on and the runtime available, and the engine skips it on a client that asks to save data or has fewer than four threads, and on a browser where a probe once stopped the page, for that build.
    It tells the engine that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
 4. The plugin serves the add-on build at `<BaseUrl>/WebGPUPlayer/assets/<path>`, the engine's served folder included.
 
@@ -150,7 +150,7 @@ Every setting is the user's own in the browser profile, else the default an admi
   A checkbox or select setting with a description has an info button before its restore button, which shows or hides the description, hidden at first; a numeric setting shows its description as its tooltip.
   The "Clear decoder test results" button and the decoders section's title each have such an info button beside them for their descriptions.
   The controls render from `ui/SettingDefinitions.ts`, which holds each numeric setting's label, description, range, and unit, and each select's options.
-- The playback section's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again.
+- The playback section's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again, a probe that once stopped the page included.
   The engine keeps those verdicts in localStorage under its own key, apart from these settings.
 - The shader pass section adds files from this device, or from the passes the server offers, which download when added.
   It shows the default shader files while the user follows them; any change stores the list as the user's own, and "Restore default shader passes" follows the default again.
