@@ -311,6 +311,55 @@ export async function loadServerVideoDecoderPackages(
     return decoderPackages.filter((decoderPackage: DecoderPackage): decoderPackage is VideoDecoderPackage => decoderPackage.kind === VIDEO_KIND);
 }
 
+/** Returns the stored version of a catalog entry when the store holds that version, which the page then keeps as loaded, else null; never downloads. */
+async function loadStoredServerDecoderPackage(entry: ServerDecoderPackage): Promise<DecoderPackage | null> {
+    const loaded = loadedPackages.get(entry.id);
+    if (loaded?.contentHash === entry.contentHash) {
+        try {
+            return await loaded.promise;
+        } catch {
+            return null;
+        }
+    }
+    try {
+        const stored = await packageStore.load(entry.id);
+        if (stored?.decoderPackage.contentHash !== entry.contentHash) {
+            return null;
+        }
+        if (loadedPackages.get(entry.id)?.contentHash !== entry.contentHash) {
+            loadedPackages.set(entry.id, { contentHash: entry.contentHash, promise: Promise.resolve(stored.decoderPackage) });
+        }
+        return stored.decoderPackage;
+    } catch (error) {
+        console.warn(`${WARNING_PREFIX}: package-stale: ${entry.id} ${getErrorMessage(error)}`);
+        return null;
+    }
+}
+
+/**
+ * Returns the server's video packages this browser already stores in the version the catalog names, in catalog order, leaving out the ids the user's own packages hold.
+ * Nothing is downloaded: a package the store lacks, or holds in another version, is left out.
+ */
+export async function loadStoredServerVideoDecoderPackages(
+    serverId: string | null | undefined,
+    excludedIds: ReadonlySet<string>
+): Promise<VideoDecoderPackage[]> {
+    if (!getApiClient(serverId)) {
+        return [];
+    }
+    const decoderPackages: VideoDecoderPackage[] = [];
+    for (const entry of (await loadPlaybackCatalog(serverId)).decoderPackages) {
+        if (entry.kind !== VIDEO_KIND || excludedIds.has(entry.id)) {
+            continue;
+        }
+        const decoderPackage = await loadStoredServerDecoderPackage(entry);
+        if (decoderPackage?.kind === VIDEO_KIND) {
+            decoderPackages.push(decoderPackage);
+        }
+    }
+    return decoderPackages;
+}
+
 /** Loads the server's audio packages that decode a playback's audio codec, leaving out the ids the user's own packages hold. */
 export async function loadServerAudioDecoderPackages(
     serverId: string | null | undefined,

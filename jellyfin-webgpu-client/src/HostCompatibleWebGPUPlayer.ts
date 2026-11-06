@@ -72,8 +72,8 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
     private startedSinceHostRequest = false;
     // The reads of the stream heads that negotiations are predicted to direct play
     private readonly headPrefetches = new DirectPlayHeadPrefetches();
-    // The playback request whose first negotiation for playback may read its stream's head, until that negotiation, a start, or the request's end
-    private headPrefetchRequest: PlaybackRequest | null = null;
+    // The playback request whose first negotiation for playback may read its stream's head and compile its GPU decoder, until that negotiation, a start, or the request's end
+    private playbackRequest: PlaybackRequest | null = null;
 
     /** Keeps the fork's purpose semantics; a purpose-less call returns the cap PlaybackManager stored. */
     getMaxStreamingBitrate(request?: StreamingBitrateRequest): number | null {
@@ -95,9 +95,17 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
         return super.canPlayItem(item, playOptions);
     }
 
-    /** Returns the fork's profile, marked so the PlaybackInfo interceptor applies the fork's request rules. */
+    /**
+     * Returns the fork's profile, marked so the PlaybackInfo interceptor applies the fork's request rules.
+     * The first negotiation for playback of PlaybackManager's request reads the predicted stream's head alongside, and starts compiling the GPU decoder
+     * the stream is predicted to take.
+     */
     async getDeviceProfile(item: unknown, options?: unknown): Promise<unknown> {
-        this.startHeadPrefetch(item, options);
+        const request = this.takePlaybackRequestNegotiation(options);
+        if (request) {
+            this.startHeadPrefetch(item, request);
+            this.startGPUVideoDecoderPrecompile(item, request);
+        }
         const negotiationItem: NegotiationItem = item && typeof item === 'object' ? item as NegotiationItem : {};
         const interceptorsActive = ensurePlaybackInfoInterceptors(negotiationItem.ServerId);
         const profile = await super.getDeviceProfile(item, options);
@@ -111,7 +119,7 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
      * A start of the stream whose head a negotiation read ahead claims that read, and releases it once the start is over; any other start ends it.
      */
     play(options: unknown): Promise<unknown> {
-        this.headPrefetchRequest = null;
+        this.playbackRequest = null;
         const headPrefetch = this.headPrefetches.claim(options);
         const playPromise = super.play(options).finally((): void => {
             this.headPrefetches.release(headPrefetch);
@@ -145,7 +153,7 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     destroy(): void {
         this.hostRequestRevision += 1;
-        this.headPrefetchRequest = null;
+        this.playbackRequest = null;
         this.headPrefetches.cancel();
         super.destroy();
     }
@@ -155,7 +163,7 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
         const hadPendingPlay = this.hasPendingPlay();
         this.hostRequestRevision += 1;
         this.startedSinceHostRequest = false;
-        this.headPrefetchRequest = null;
+        this.playbackRequest = null;
         this.headPrefetches.cancel();
         this.cancelPendingPlay();
         return hadPendingPlay;
@@ -163,14 +171,14 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     /**
      * Notes a request PlaybackManager began that starts a playback, with the media source it names, whose first negotiation may then read the
-     * stream's head; returns the function that ends the request once it settled.
+     * stream's head and compile its GPU decoder; returns the function that ends the request once it settled.
      */
     beginPlaybackRequest(mediaSourceId: string | null): () => void {
         const request: PlaybackRequest = { mediaSourceId };
-        this.headPrefetchRequest = request;
+        this.playbackRequest = request;
         return (): void => {
-            if (this.headPrefetchRequest === request) {
-                this.headPrefetchRequest = null;
+            if (this.playbackRequest === request) {
+                this.playbackRequest = null;
             }
         };
     }
@@ -183,26 +191,45 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
         return !this.startedSinceHostRequest || this.hasPendingPlay();
     }
 
-    /**
-     * Starts reading the head of the stream that the first negotiation for playback of PlaybackManager's request is predicted to direct play, so
-     * the read overlaps the device profile and PlaybackInfo.
-     * Only an item this player would play with custom decode is read ahead: no HTML player preference, custom decode on, and its runtime present.
-     */
-    private startHeadPrefetch(item: unknown, deviceProfileOptions: unknown): void {
-        const request = this.headPrefetchRequest;
+    /** Takes PlaybackManager's pending request at its first negotiation for playback, or returns null for any other negotiation. */
+    private takePlaybackRequestNegotiation(deviceProfileOptions: unknown): PlaybackRequest | null {
+        const request = this.playbackRequest;
         // Stream changes and retries pass options, and a request's later negotiations, such as for its next item, read their own heads
         if (!request || getPlaybackInfoNegotiationPurpose(deviceProfileOptions) !== PlaybackInfoNegotiationPurpose.Selection) {
-            return;
+            return null;
         }
-        this.headPrefetchRequest = null;
+        this.playbackRequest = null;
+        return request;
+    }
+
+    /**
+     * Predicts the stream a request's negotiation direct plays, for an item this player would play with custom decode:
+     * no HTML player preference, custom decode on, and its runtime present.
+     */
+    private predictRequestStream(item: unknown, request: PlaybackRequest): DirectPlayStreamPrediction | null {
+        if (!this.canPlayItem(item) || !isStoredWebGPUCustomDecodeEnabled() || !getCustomPlaybackRuntimeAvailability().available) {
+            return null;
+        }
+        const serverId = item && typeof item === 'object' ? (item as NegotiationItem).ServerId : null;
+        const apiClient: StreamURLBuilder | null = serverId ? ServerConnections.getApiClient(serverId) ?? null : null;
+        return apiClient ? predictDirectPlayStream(item, request.mediaSourceId, apiClient) : null;
+    }
+
+    /** Starts reading the head of the stream that the request's first negotiation for playback is predicted to direct play, so the read overlaps the device profile and PlaybackInfo. */
+    private startHeadPrefetch(item: unknown, request: PlaybackRequest): void {
         // The negotiation adopts the server's latest client defaults first, which may turn custom decode off
-        this.headPrefetches.start(whenClientDefaultsSettled(), (): DirectPlayStreamPrediction | null => {
-            if (!this.canPlayItem(item) || !isStoredWebGPUCustomDecodeEnabled() || !getCustomPlaybackRuntimeAvailability().available) {
-                return null;
-            }
-            const serverId = item && typeof item === 'object' ? (item as NegotiationItem).ServerId : null;
-            const apiClient: StreamURLBuilder | null = serverId ? ServerConnections.getApiClient(serverId) ?? null : null;
-            return apiClient ? predictDirectPlayStream(item, request.mediaSourceId, apiClient) : null;
+        this.headPrefetches.start(whenClientDefaultsSettled(), (): DirectPlayStreamPrediction | null => this.predictRequestStream(item, request));
+    }
+
+    /**
+     * Starts compiling the GPU decoder of the stream the request's first negotiation for playback is predicted to direct play, without waiting,
+     * so the compile overlaps the device profile, PlaybackInfo, and the playback's setup.
+     */
+    private startGPUVideoDecoderPrecompile(item: unknown, request: PlaybackRequest): void {
+        // The negotiation adopts the server's latest client defaults first, which may turn custom decode off
+        void whenClientDefaultsSettled().then((): Promise<void> | undefined => {
+            const prediction = this.predictRequestStream(item, request);
+            return prediction ? this.precompilePredictedGPUVideoDecoder({ item, mediaSource: prediction.mediaSource }) : undefined;
         });
     }
 

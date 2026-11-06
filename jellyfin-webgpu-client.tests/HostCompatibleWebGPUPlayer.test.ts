@@ -28,7 +28,13 @@ const testState = vi.hoisted(() => {
         getApiClient: vi.fn((): unknown => apiClient),
         headPrefetches: [] as FakeHeadPrefetches[],
         markNegotiation: vi.fn((profile: unknown): unknown => ({ ...(profile as object), marked: true })),
-        prediction: { eTag: null, itemId: 'item', mediaSourceId: 'source', url: 'https://jellyfin.example/Videos/item/stream.mkv' },
+        prediction: {
+            eTag: null,
+            itemId: 'item',
+            mediaSource: { Container: 'mkv', Id: 'source' },
+            mediaSourceId: 'source',
+            url: 'https://jellyfin.example/Videos/item/stream.mkv'
+        },
         predictDirectPlayStream: vi.fn<(...predictArguments: unknown[]) => unknown>(() => null),
         preferredVideoPlayer: vi.fn((): string => 'auto'),
         runtimeAvailability: vi.fn((): { available: boolean } => ({ available: true })),
@@ -103,6 +109,7 @@ vi.mock('addons/webGPUPlayer/WebGPUPlayer', () => {
         canPlayItemResult = true;
         baseStop = vi.fn<(destroyPlayer: boolean) => Promise<void>>(() => Promise.resolve());
         baseDestroy = vi.fn();
+        basePrecompile = vi.fn<(playbackOptions: unknown) => Promise<void>>(() => Promise.resolve());
 
         getMaxStreamingBitrate(bitrateRequest?: { fallbackBitrate?: number | null, purpose?: string }): number | null {
             return bitrateRequest?.purpose === 'transcode-output' ? bitrateRequest.fallbackBitrate ?? null : null;
@@ -128,6 +135,10 @@ vi.mock('addons/webGPUPlayer/WebGPUPlayer', () => {
             this.baseDestroy();
         }
 
+        precompilePredictedGPUVideoDecoder(playbackOptions: unknown): Promise<void> {
+            return this.basePrecompile(playbackOptions);
+        }
+
         hasPendingPlay(): boolean {
             return this.pendingPlay;
         }
@@ -144,6 +155,7 @@ import HostCompatibleWebGPUPlayer from 'addons/webGPUPlayer/HostCompatibleWebGPU
 
 type FakeBase = {
     baseDestroy: Mock
+    basePrecompile: Mock
     baseStop: Mock
     canPlayItemResult: boolean
     cancelPendingPlayCount: number
@@ -176,6 +188,13 @@ async function hasSettled(promise: Promise<unknown>): Promise<boolean> {
         })
     ]);
     return outcome !== pending;
+}
+
+/** Lets queued promise callbacks run. */
+async function flushTasks(): Promise<void> {
+    await new Promise<void>(resolve => {
+        setTimeout(resolve, 0);
+    });
 }
 
 function createPlayer(): HostCompatibleWebGPUPlayer & FakeBase {
@@ -383,6 +402,17 @@ describe('HostCompatibleWebGPUPlayer', () => {
     });
 
     describe('head reads', () => {
+        const settledClientDefaults = testState.clientDefaultsSettled;
+
+        beforeEach(() => {
+            // The decoder precompile predicts the stream too once the client defaults settle; holding them leaves every prediction to the head reads
+            testState.clientDefaultsSettled = createDeferred().promise.then(() => undefined);
+        });
+
+        afterEach(() => {
+            testState.clientDefaultsSettled = settledClientDefaults;
+        });
+
         it('begin at the request\'s first negotiation for playback, before PlaybackInfo reaches the player', async () => {
             const player = createPlayer();
             const headPrefetches = getHeadPrefetches();
@@ -556,6 +586,111 @@ describe('HostCompatibleWebGPUPlayer', () => {
             endThirdRequest();
             await player.getDeviceProfile(ITEM);
             expect(headPrefetches.starts).toHaveLength(1);
+        });
+    });
+
+    describe('GPU decoder precompiles', () => {
+        it('begin at the request\'s first negotiation for playback, with the predicted media source', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest('source');
+
+            await player.getDeviceProfile(ITEM);
+            await flushTasks();
+
+            expect(testState.predictDirectPlayStream).toHaveBeenCalledWith(ITEM, 'source', testState.apiClient);
+            expect(player.basePrecompile).toHaveBeenCalledTimes(1);
+            expect(player.basePrecompile).toHaveBeenCalledWith({ item: ITEM, mediaSource: testState.prediction.mediaSource });
+            const [ playbackOptions ] = player.basePrecompile.mock.calls[0] as [ { item: unknown, mediaSource: unknown } ];
+            expect(playbackOptions.item).toBe(ITEM);
+            expect(playbackOptions.mediaSource).toBe(testState.prediction.mediaSource);
+        });
+
+        it('wait for the client defaults to settle, which may turn custom decode off', async () => {
+            const clientDefaultsSettled = testState.clientDefaultsSettled;
+            const settle = createDeferred();
+            testState.clientDefaultsSettled = settle.promise.then(() => undefined);
+            try {
+                const player = createPlayer();
+                player.beginPlaybackRequest(null);
+                await player.getDeviceProfile(ITEM);
+                await flushTasks();
+                expect(testState.predictDirectPlayStream).not.toHaveBeenCalled();
+                expect(player.basePrecompile).not.toHaveBeenCalled();
+
+                testState.customDecodeEnabled.mockReturnValue(false);
+                settle.resolve();
+                await flushTasks();
+                expect(player.basePrecompile).not.toHaveBeenCalled();
+            } finally {
+                testState.clientDefaultsSettled = clientDefaultsSettled;
+            }
+        });
+
+        it('do not begin without a playback request', async () => {
+            const player = createPlayer();
+
+            await player.getDeviceProfile(ITEM);
+            await flushTasks();
+
+            expect(player.basePrecompile).not.toHaveBeenCalled();
+        });
+
+        it('do not begin for a stream change or retry', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+
+            await player.getDeviceProfile(ITEM, { isRetry: false });
+            await player.getDeviceProfile(ITEM, { isRetry: true });
+            await flushTasks();
+
+            expect(player.basePrecompile).not.toHaveBeenCalled();
+        });
+
+        it('begin only at a request\'s first negotiation', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+
+            await player.getDeviceProfile(ITEM);
+            await player.getDeviceProfile({ ...ITEM, Id: 'next' });
+            await flushTasks();
+
+            expect(player.basePrecompile).toHaveBeenCalledTimes(1);
+            expect(player.basePrecompile).toHaveBeenCalledWith({ item: ITEM, mediaSource: testState.prediction.mediaSource });
+        });
+
+        it('do not begin once the request started', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+
+            void player.play(STREAM_INFO);
+            await player.getDeviceProfile(ITEM);
+            await flushTasks();
+
+            expect(player.basePrecompile).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            [ 'the user prefers the HTML player', (): void => {
+                testState.preferredVideoPlayer.mockReturnValue('html');
+            } ],
+            [ 'custom decode is off', (): void => {
+                testState.customDecodeEnabled.mockReturnValue(false);
+            } ],
+            [ 'the custom playback runtime is unavailable', (): void => {
+                testState.runtimeAvailability.mockReturnValue({ available: false });
+            } ],
+            [ 'no direct play is predicted', (): void => {
+                testState.predictDirectPlayStream.mockReturnValue(null);
+            } ]
+        ])('do not begin when %s', async (_description, arrange) => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+            arrange();
+
+            await player.getDeviceProfile(ITEM);
+            await flushTasks();
+
+            expect(player.basePrecompile).not.toHaveBeenCalled();
         });
     });
 });
