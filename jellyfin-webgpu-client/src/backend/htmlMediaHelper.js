@@ -342,7 +342,8 @@ export function bindEventsToHlsPlayer(
             return;
         }
 
-        console.error('HLS Error: Type: ' + data.type + ' Details: ' + (data.details || '') + ' Fatal: ' + (data.fatal || false));
+        // data.error carries the cause, such as a worker's exception with its file and line, or a stall's buffer state
+        console.error('HLS Error: Type: ' + data.type + ' Details: ' + (data.details || '') + ' Fatal: ' + (data.fatal || false) + (data.error?.message ? ' Error: ' + data.error.message : ''));
 
         // try to recover network error
         if (data.type === hlsRuntime.ErrorTypes.NETWORK_ERROR
