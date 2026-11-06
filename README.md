@@ -40,6 +40,19 @@ The plugin itself is basically a wrapper for injecting modifications into the Je
 
 ***WARNING:*** This plugin essentially overwrites the stock player, even though it allows access to the old backend. This means there most likely will be compatibility issues between this and other things that modify the player UX. Feel free to report any of these issues and I'll look into fixing them.
 
+<h4 align="center">Unstable Builds</h4>
+
+Unstable builds are cut from `main` between releases and published as [pre-releases](https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases). To get them, add this second repository beside the one above:
+```
+https://raw.githubusercontent.com/alchemyyy/jellyfin-plugin-webgpu-player/refs/heads/unstable/manifest.json
+```
+
+Both repositories list the same plugin, so Jellyfin offers the versions of both, and its Update Plugins task, which runs at startup and every 24 hours, moves the server to the newest: each unstable build, and each release when it ships. An unstable build's version is the release it follows with a build number in its last part, so 2.0.1.3 is the third unstable build after 2.0.1.0.
+
+- To leave the unstable builds, remove their repository. Jellyfin never downgrades a plugin, so the server keeps its unstable build until the next release, which is always newer. To go back at once, uninstall the plugin and install it again.
+- To roll back to an earlier build, uninstall the plugin, install that version from the plugin's page, which lists every version with its changelog, and restart Jellyfin. Installing an older version over a newer one does nothing, since Jellyfin loads only the newest version installed.
+- The Update Plugins task installs the newest version again at the next startup or within a day. To stay on an earlier build, disable that scheduled task, which stops updates to every plugin, or set `"autoUpdate": false` in the `meta.json` in the plugin's folder in the server's `plugins` directory.
+
 <h2 align="center">Development</h2>
 
 This is meant to be a replacement solution to the Jellyfin desktop client "ecosystem". My philosophy here is that its a lot easier to develop a backend player, which is almost purely mechanically testable, than it is to modify or outright create a UX and stitch it into an existing native player program, with all the extra overhead of shipping and maintaining a standalone app a user base has to manually keep up to date. 
@@ -148,9 +161,11 @@ Open `http://127.0.0.1:5173/web/` and sign in to your server. Jellyfin Web runs 
 | `build.sh` | Builds the add-on, embeds it, and builds or publishes the plugin |
 | `serve_jellyfin_web_client.sh` | Serves this checkout's add-on and plugin, built again on every change, in a local Jellyfin Web against a Jellyfin server of your own |
 | `build.yaml` | Plugin metadata: name, GUID, version and its changelog, `targetAbi`, and the artifacts to package |
-| `.github/scripts/release.py` | Sets the version, packages the published plugin with a `meta.json` into a plugin repository manifest, and writes the GitHub release notes |
-| `manifest.json` | Jellyfin plugin repository manifest, updated by the release workflow |
-| `.github/workflows/release.yml` | Release workflow, run by hand with the version to release; its jobs validate it, build and package the plugin, write the release notes, publish the GitHub release, and put the release commit with `manifest.json` on `main` |
+| `.github/scripts/release.py` | Sets the version, numbers unstable builds, packages the published plugin with a `meta.json` into a plugin repository manifest, records a packaged zip in another manifest, and writes the GitHub release notes |
+| `manifest.json` | Jellyfin plugin repository manifest of the releases, updated by the release workflow. The `unstable` branch holds only the manifest of the unstable builds, which the unstable release workflow updates |
+| `.github/workflows/release.yml` | Release workflow, run by hand with the version to release, which ends in `.0`; its jobs validate it, build and package the plugin, write the release notes, publish the GitHub release, and put the release commit with `manifest.json` on `main` |
+| `.github/workflows/release-unstable.yml` | Unstable release workflow, run by hand on `main`; its jobs number the build after the latest release, build and package it, write the release notes, publish it as a GitHub pre-release tagged `v<version>-unstable`, and record it in `manifest.json` on the `unstable` branch |
+| `.github/workflows/build-plugin.yml` | The build both release workflows call: it sets the version, builds and packages the plugin, and uploads the zip |
 
 <h2 align="center">Localization</h2>
 

@@ -2,24 +2,33 @@
 # requires-python = ">=3.10"
 # dependencies = ["ruamel.yaml>=0.18"]
 # ///
-"""Sets the plugin version, and packages the published plugin for a Jellyfin plugin repository.
+"""Sets the plugin version, numbers unstable builds, and packages the published plugin for a Jellyfin plugin repository.
 
 build.yaml holds the plugin metadata, including the version and its changelog. Directory.Build.props stamps the same
 version on the assembly.
 
     uv run .github/scripts/release.py set-version 1.1.0.0 --changelog "Fix seeking"
+    uv run .github/scripts/release.py unstable-version
     uv run .github/scripts/release.py package
     uv run .github/scripts/release.py package --source-url-base http://192.168.1.10:8000
+    uv run .github/scripts/release.py record bin/package/webgpu-player_1.1.0.1.zip --source-url-base <url> --manifest <file>
     uv run .github/scripts/release.py release-notes v1.3.0.0 --repository alchemyyy/jellyfin-plugin-webgpu-player
 
-set-version writes the version into both files and the changelog into build.yaml; build the plugin after it. package
-zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image, and inserts
-or replaces that version in a plugin repository manifest whose imageUrl names the image committed on main. Both land in
-bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow writes the committed
-manifest.json instead, with the GitHub release as the download source.
+set-version writes the version into both files and the changelog into build.yaml; build the plugin after it. A stable
+release ends in .0, which set-version --stable checks, because unstable builds number the fourth part: unstable-version
+prints the next one from the release tags, the latest stable release's first three parts with the next fourth, so every
+unstable build sorts above the release it follows and below the next one.
+
+package zips the artifacts of the dotnet publish output (./build.sh --publish) with a meta.json and the plugin image,
+and inserts or replaces that version in a plugin repository manifest whose imageUrl names the image committed on main.
+Both land in bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow writes the
+committed manifest.json instead, with the GitHub release as the download source. record inserts or replaces a zip that
+package wrote in another manifest, from the meta.json the zip carries; the unstable release workflow records each build
+in the manifest.json of the unstable branch, with the build's GitHub pre-release as the download source.
 
 release-notes writes the GitHub release body: the install steps, the merged pull requests, and the commits since the
-previous release tag. It reads the history from git and the pull requests through the GitHub CLI.
+previous release tag, or for an unstable build since the previous release or unstable build. It reads the history from
+git and the pull requests through the GitHub CLI.
 """
 
 import argparse
@@ -63,8 +72,11 @@ VERSION_PATTERN: re.Pattern[str] = re.compile(r"(0|[1-9][0-9]{0,4})(\.(0|[1-9][0
 MAXIMUM_VERSION_PART: int = 65534
 # Wide enough that the YAML emitter never refolds a changelog
 YAML_LINE_WIDTH: int = 4096
-# Release tags are v and the four-part version
+# Release tags are v and the four-part version, and an unstable build's tag ends in -unstable as well
 RELEASE_TAG_PREFIX: str = "v"
+UNSTABLE_TAG_SUFFIX: str = "-unstable"
+# The branch whose manifest.json lists the unstable builds, a plugin repository a server adds beside main's
+UNSTABLE_BRANCH: str = "unstable"
 # The release workflow commits the version and manifest.json as this author, which is not a change worth listing
 RELEASE_BOT_EMAIL: str = "41898282+github-actions[bot]@users.noreply.github.com"
 GITHUB_URL: str = "https://github.com"
@@ -94,6 +106,13 @@ class PullRequestEntry:
     title: str
     author_login: str
     url: str
+
+
+@dataclass(frozen=True)
+class ReleaseTag:
+    name: str
+    version: tuple[int, ...]
+    unstable: bool
 
 
 def fail(message: str) -> NoReturn:
@@ -188,9 +207,12 @@ def write_build_properties(version: str) -> None:
     BUILD_PROPERTIES_FILE.write_text(project_text, encoding="utf-8", newline=read_newline(source_bytes))
 
 
-def set_version(version: str, changelog: str | None) -> None:
+def set_version(version: str, changelog: str | None, stable: bool) -> None:
     """Writes the version into build.yaml and Directory.Build.props, and the changelog into build.yaml."""
-    parse_version(version)
+    version_parts: tuple[int, ...] = parse_version(version)
+    # Unstable builds number the fourth part after the stable release they follow
+    if stable and version_parts[3] != 0:
+        fail(f"{version} is not a stable version, which ends in .0; the fourth part numbers unstable builds")
     if changelog is not None:
         changelog = changelog.strip()
         if not changelog:
@@ -273,23 +295,36 @@ def update_manifest(manifest_file: Path, metadata: dict, source_url: str, checks
     manifest_file.write_text(json.dumps(packages, indent=4) + "\n", encoding="utf-8", newline="\n")
 
 
+def read_image_url(repository: str) -> str:
+    """Returns the URL of the plugin image committed on main."""
+    # The catalog fetches the image committed on main, as it fetches manifest.json, so a release carries no image asset
+    return f"{GITHUB_RAW_URL}/{repository}/main/{IMAGE_FILE.relative_to(REPOSITORY_DIRECTORY).as_posix()}"
+
+
+def record(package_file: Path, source_url_base: str, manifest_file: Path, repository: str) -> None:
+    """Records a zip that package wrote in a manifest, from the meta.json the zip carries."""
+    if not package_file.is_file():
+        fail(f"No package at {package_file}")
+    with zipfile.ZipFile(package_file) as package_archive:
+        if METADATA_FILE_NAME not in package_archive.namelist():
+            fail(f"{package_file.name} carries no {METADATA_FILE_NAME}")
+        metadata: dict = json.loads(package_archive.read(METADATA_FILE_NAME))
+    checksum: str = hashlib.md5(package_file.read_bytes()).hexdigest()
+    source_url: str = f"{source_url_base.rstrip('/')}/{package_file.name}"
+    update_manifest(manifest_file, metadata, source_url, checksum, read_image_url(repository))
+    print(f"Recorded {metadata['version']} in {manifest_file}, downloaded from {source_url}")
+
+
 def package(source_url_base: str, output_directory: Path, manifest_file: Path, repository: str) -> None:
     """Packages the published plugin and records it in the manifest."""
     configuration: dict = read_build_configuration()
     check_build_properties_version(configuration["version"])
     timestamp: str = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     metadata: dict = build_metadata(configuration, timestamp)
-
-    package_file_name: str = f"{PACKAGE_SLUG}_{metadata['version']}.zip"
-    package_file: Path = output_directory / package_file_name
+    package_file: Path = output_directory / f"{PACKAGE_SLUG}_{metadata['version']}.zip"
     checksum: str = write_package(configuration, metadata, package_file)
-
-    source_url: str = f"{source_url_base.rstrip('/')}/{package_file_name}"
-    # The catalog fetches the image committed on main, as it fetches manifest.json, so a release carries no image asset
-    image_url: str = f"{GITHUB_RAW_URL}/{repository}/main/{IMAGE_FILE.relative_to(REPOSITORY_DIRECTORY).as_posix()}"
-    update_manifest(manifest_file, metadata, source_url, checksum, image_url)
     print(f"Packaged {package_file} (MD5 {checksum})")
-    print(f"Recorded {metadata['version']} in {manifest_file}, downloaded from {source_url}")
+    record(package_file, source_url_base, manifest_file, repository)
 
 
 def run_command(command: list[str]) -> str:
@@ -302,27 +337,75 @@ def run_command(command: list[str]) -> str:
     return result.stdout
 
 
-def parse_release_tag(tag: str) -> tuple[int, ...]:
-    """Parses a release tag such as v1.1.0.0 into its version parts."""
+def read_release_tag(tag: str) -> ReleaseTag | None:
+    """Reads a release tag, such as v1.1.0.0 or an unstable build's v1.1.0.1-unstable, or returns None for another tag."""
     if not tag.startswith(RELEASE_TAG_PREFIX):
-        fail(f"{tag} is not a release tag such as {RELEASE_TAG_PREFIX}1.1.0.0")
-    return parse_version(tag.removeprefix(RELEASE_TAG_PREFIX))
+        return None
+    unstable: bool = tag.endswith(UNSTABLE_TAG_SUFFIX)
+    version: str = tag.removeprefix(RELEASE_TAG_PREFIX).removesuffix(UNSTABLE_TAG_SUFFIX)
+    if VERSION_PATTERN.fullmatch(version) is None:
+        return None
+    return ReleaseTag(tag, tuple(int(part) for part in version.split(".")), unstable)
+
+
+def parse_release_tag(tag: str) -> ReleaseTag:
+    """Parses a release tag such as v1.1.0.0, or an unstable build's such as v1.1.0.1-unstable."""
+    release_tag: ReleaseTag | None = read_release_tag(tag)
+    if release_tag is None:
+        fail(
+            f"{tag} is not a release tag such as {RELEASE_TAG_PREFIX}1.1.0.0"
+            f" or {RELEASE_TAG_PREFIX}1.1.0.1{UNSTABLE_TAG_SUFFIX}"
+        )
+    return release_tag
+
+
+def list_release_tags() -> list[ReleaseTag]:
+    """Lists the repository's release tags, stable and unstable, skipping every other tag."""
+    release_tags: list[ReleaseTag] = []
+    for tag in run_command(["git", "tag", "--list", f"{RELEASE_TAG_PREFIX}*"]).split():
+        release_tag: ReleaseTag | None = read_release_tag(tag)
+        if release_tag is not None:
+            release_tags.append(release_tag)
+    return release_tags
 
 
 def find_previous_release_tag(tag: str) -> str | None:
-    """Returns the release tag with the highest version below the tag's, or None for the first release."""
-    version_parts: tuple[int, ...] = parse_release_tag(tag)
-    candidates: list[tuple[tuple[int, ...], str]] = []
-    for candidate_tag in run_command(["git", "tag", "--list", f"{RELEASE_TAG_PREFIX}*"]).split():
-        candidate_version: str = candidate_tag.removeprefix(RELEASE_TAG_PREFIX)
-        if VERSION_PATTERN.fullmatch(candidate_version) is None:
-            continue
-        candidate_parts: tuple[int, ...] = tuple(int(part) for part in candidate_version.split("."))
-        if candidate_parts < version_parts:
-            candidates.append((candidate_parts, candidate_tag))
+    """Returns the release tag with the highest version below the tag's, or None for the first release.
+
+    A stable release follows the previous stable release, so its notes cover the unstable builds between them; an
+    unstable build follows the previous release or unstable build, whichever is higher.
+    """
+    release_tag: ReleaseTag = parse_release_tag(tag)
+    candidates: list[ReleaseTag] = [
+        candidate for candidate in list_release_tags()
+        if candidate.version < release_tag.version and (release_tag.unstable or not candidate.unstable)
+    ]
     if not candidates:
         return None
-    return max(candidates)[1]
+    return max(candidates, key=lambda candidate: candidate.version).name
+
+
+def next_unstable_version() -> str:
+    """Returns the next unstable build's version, from the release tags.
+
+    It takes the latest stable release's first three parts, and a fourth part above that release's and above every
+    unstable build's of the same three, so it sorts above the release it follows and below the next one.
+    """
+    release_tags: list[ReleaseTag] = list_release_tags()
+    stable_versions: list[tuple[int, ...]] = [
+        release_tag.version for release_tag in release_tags if not release_tag.unstable
+    ]
+    if not stable_versions:
+        fail("No stable release tag to number an unstable build after")
+    stable_version: tuple[int, ...] = max(stable_versions)
+    build_numbers: list[int] = [
+        release_tag.version[3] for release_tag in release_tags
+        if release_tag.unstable and release_tag.version[:3] == stable_version[:3]
+    ]
+    build_number: int = max([stable_version[3], *build_numbers]) + 1
+    if build_number > MAXIMUM_VERSION_PART:
+        fail(f"No unstable build number is left above {'.'.join(str(part) for part in stable_version)}")
+    return ".".join(str(part) for part in (*stable_version[:3], build_number))
 
 
 def read_commits(previous_tag: str | None, target: str) -> list[CommitEntry]:
@@ -407,17 +490,28 @@ def truncate_release_notes(release_notes: str) -> str:
 def release_notes(tag: str, repository: str, changelog: str | None, target: str, output_file: Path | None) -> None:
     """Writes the release body for the tag: the install steps, then the pull requests and commits since the last release."""
     configuration: dict = read_build_configuration()
+    release_tag: ReleaseTag = parse_release_tag(tag)
     previous_tag: str | None = find_previous_release_tag(tag)
     commits: list[CommitEntry] = read_commits(previous_tag, target)
     pull_requests: list[PullRequestEntry] = read_pull_requests(repository, commits)
     manifest_url: str = f"{GITHUB_RAW_URL}/{repository}/main/{MANIFEST_FILE_NAME}"
+    install_steps: str = (
+        f"To install, add {manifest_url} as a plugin repository (Dashboard > Plugins),"
+        f" then install {configuration['name']} from the catalog."
+    )
+    if release_tag.unstable:
+        unstable_manifest_url: str = f"{GITHUB_RAW_URL}/{repository}/{UNSTABLE_BRANCH}/{MANIFEST_FILE_NAME}"
+        install_steps = (
+            f"This is an unstable build. To install unstable builds, add {unstable_manifest_url} as a plugin repository"
+            f" beside {manifest_url} (Dashboard > Plugins), then install {configuration['name']} from the catalog;"
+            " the server then updates it to each unstable build and to each stable release."
+        )
 
     lines: list[str] = []
     if changelog and changelog.strip():
         lines.extend([changelog.strip(), ""])
     lines.extend([
-        f"To install, add {manifest_url} as a plugin repository (Dashboard > Plugins),"
-        f" then install {configuration['name']} from the catalog.",
+        install_steps,
         "",
         "## Pull Requests",
         "",
@@ -436,7 +530,7 @@ def release_notes(tag: str, repository: str, changelog: str | None, target: str,
 
 
 def main() -> None:
-    """Runs the set-version, package, or release-notes command."""
+    """Runs the set-version, unstable-version, package, record, or release-notes command."""
     argument_parser: argparse.ArgumentParser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands: argparse._SubParsersAction = argument_parser.add_subparsers(dest="command", required=True)
 
@@ -445,6 +539,13 @@ def main() -> None:
     )
     set_version_parser.add_argument("version", help="A four-part version such as 1.1.0.0.")
     set_version_parser.add_argument("--changelog", help="The changelog of the version, written into build.yaml.")
+    set_version_parser.add_argument(
+        "--stable", action="store_true", help="Reject a version whose fourth part is not 0, the part unstable builds number.",
+    )
+
+    commands.add_parser(
+        "unstable-version", help="Print the next unstable build's version, numbered after the latest stable release tag.",
+    )
 
     package_parser: argparse.ArgumentParser = commands.add_parser(
         "package", help="Zip the published plugin and record it in a plugin repository manifest.",
@@ -471,10 +572,28 @@ def main() -> None:
         help="The GitHub repository as owner/name, whose main branch serves the plugin image (default: %(default)s).",
     )
 
+    record_parser: argparse.ArgumentParser = commands.add_parser(
+        "record", help="Record a zip that package wrote in a plugin repository manifest.",
+    )
+    record_parser.add_argument("package", type=Path, help="The zip, which carries its meta.json.")
+    record_parser.add_argument(
+        "--source-url-base", required=True, help="The URL the server downloads the zip from, without the file name.",
+    )
+    record_parser.add_argument(
+        "--manifest", type=Path, required=True, help="The manifest to update, which is created when missing.",
+    )
+    record_parser.add_argument(
+        "--repository",
+        default=DEFAULT_REPOSITORY,
+        help="The GitHub repository as owner/name, whose main branch serves the plugin image (default: %(default)s).",
+    )
+
     release_notes_parser: argparse.ArgumentParser = commands.add_parser(
         "release-notes", help="Write the GitHub release body with the pull requests and commits since the last release.",
     )
-    release_notes_parser.add_argument("tag", help=f"The release tag, such as {RELEASE_TAG_PREFIX}1.1.0.0.")
+    release_notes_parser.add_argument(
+        "tag", help=f"The release tag, such as {RELEASE_TAG_PREFIX}1.1.0.0 or {RELEASE_TAG_PREFIX}1.1.0.1{UNSTABLE_TAG_SUFFIX}.",
+    )
     release_notes_parser.add_argument(
         "--repository", required=True, help="The GitHub repository as owner/name, for links and pull requests.",
     )
@@ -489,11 +608,15 @@ def main() -> None:
     arguments: argparse.Namespace = argument_parser.parse_args()
     match arguments.command:
         case "set-version":
-            set_version(arguments.version, arguments.changelog)
+            set_version(arguments.version, arguments.changelog, arguments.stable)
+        case "unstable-version":
+            print(next_unstable_version())
         case "package":
             output_directory: Path = arguments.output_directory.resolve()
             manifest_file: Path = (arguments.manifest or output_directory / MANIFEST_FILE_NAME).resolve()
             package(arguments.source_url_base, output_directory, manifest_file, arguments.repository)
+        case "record":
+            record(arguments.package.resolve(), arguments.source_url_base, arguments.manifest.resolve(), arguments.repository)
         case "release-notes":
             release_notes(arguments.tag, arguments.repository, arguments.changelog, arguments.target, arguments.output_file)
 

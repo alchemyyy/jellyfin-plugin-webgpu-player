@@ -1,6 +1,6 @@
 # Releases the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
-# Validate checks the branch, the version, the changelog, and that the release tag is free, before anything builds.
-# Build sets the version, builds and packages the plugin, and records the zip in manifest.json, while Release notes lists the merged pull requests and the commits since the previous release tag.
+# Validate checks the branch, the version, which ends in .0 because unstable builds (release-unstable.yml) number the fourth part, the changelog, and that the release tag is free, before anything builds.
+# Build (build-plugin.yml) sets the version, builds and packages the plugin, and records the zip in manifest.json, while Release notes lists the merged pull requests and the commits since the previous release tag.
 # Publish release commits the version and manifest.json, tags that commit, and publishes the GitHub release with the zip; Update main then puts the release commit on main.
 # Only those two jobs can write to the repository. Update main needs only the pushed tag, so rerunning it alone retries main after a failed push.
 name: Release
@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 
-# One release at a time
+# One release at a time, unstable builds included, so a release and an unstable build never number or tag against each other
 concurrency:
   group: release
   cancel-in-progress: false
@@ -68,99 +68,20 @@ jobs:
         with:
           enable-cache: false
 
-      # set-version rejects a malformed version, or a changelog build.yaml cannot hold, before it writes; what it writes here goes unused
+      # set-version rejects a malformed version, one that does not end in .0, or a changelog build.yaml cannot hold, before anything builds; what it writes here goes unused
       - name: Check the version and changelog
-        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG"
+        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG" --stable
 
   build:
     name: Build
     needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      # The build runs npm, cargo, and emsdk installs, none of which needs the token
-      - name: Check out the plugin
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # The build reads only the submodules' pinned trees, not their history
-      - name: Check out the client submodules
-        run: git submodule update --init --depth 1 --jobs 3
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Set the version and changelog
-        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG"
-
-      - name: Read the engine's WebAssembly build settings
-        run: |
-          engine_directory="$(git config --file .gitmodules --get submodule.webgpu-player.path)"
-          # The engine names its folders in tools/constants.json
-          wasm_directory="$engine_directory/$(node -p 'require(process.argv[1])[process.argv[2]]' \
-            "$PWD/$engine_directory/tools/constants.json" wasmDirectory)"
-          # The engine's WebAssembly Makefile pins the toolchain
-          emscripten_version="$(make --no-print-directory --silent -C "$wasm_directory" \
-            --eval "print-variable: ; @echo \$(EMSCRIPTEN_VERSION)" print-variable)"
-          if [[ -z "$emscripten_version" ]]; then
-            echo "::error::The WebAssembly Makefile in $wasm_directory no longer defines EMSCRIPTEN_VERSION"
-            exit 1
-          fi
-          {
-            echo "WASM_DIRECTORY=$wasm_directory"
-            echo "PINNED_EMSCRIPTEN_VERSION=$emscripten_version"
-          } >> "$GITHUB_ENV"
-
-      # Both installs are mostly downloads, so the Rust toolchain installs in the background while Emscripten does
-      - name: Install the pinned Emscripten and Rust toolchains
-        run: |
-          # The Dolby Vision parser crate's rust-toolchain.toml names the toolchain and its WASM target
-          (cd "$WASM_DIRECTORY/libdovi" && rustup toolchain install --no-self-update) &
-          rust_install_process_id=$!
-          emsdk_directory="$RUNNER_TEMP/emsdk"
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$emsdk_directory"
-          "$emsdk_directory/emsdk" install "$PINNED_EMSCRIPTEN_VERSION"
-          "$emsdk_directory/emsdk" activate "$PINNED_EMSCRIPTEN_VERSION"
-          wait "$rust_install_process_id"
-          # The WebAssembly Makefile finds emcc through EMSDK
-          echo "EMSDK=$emsdk_directory" >> "$GITHUB_ENV"
-
-      - name: Build the plugin
-        run: ./build.sh --publish
-
-      - name: Package the plugin and record it in manifest.json
-        run: |
-          uv run .github/scripts/release.py package \
-            --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
-            --output-directory bin/package \
-            --manifest manifest.json \
-            --repository "$GITHUB_REPOSITORY"
-
-      # The release commit's files as the build wrote them, and the zip in bin/package/, laid out as in the checkout
-      - name: Upload the release
-        uses: actions/upload-artifact@v7
-        with:
-          name: release
-          path: |
-            build.yaml
-            Directory.Build.props
-            manifest.json
-            bin/package/*.zip
-          if-no-files-found: error
+    uses: ./.github/workflows/build-plugin.yml
+    # A reusable workflow's inputs cannot read the env context, so these repeat VERSION, CHANGELOG, and TAG
+    with:
+      version: ${{ inputs.version }}
+      changelog: ${{ inputs.changelog || format('Release {0}', inputs.version) }}
+      tag: v${{ inputs.version }}
+      manifest: manifest.json
 
   release-notes:
     name: Release notes

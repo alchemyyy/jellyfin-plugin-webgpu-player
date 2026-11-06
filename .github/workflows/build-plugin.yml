@@ -1,0 +1,128 @@
+# Builds and packages the plugin for the release workflows, release.yml and release-unstable.yml, which call it with the version, changelog, and tag to release.
+# It sets the version, builds the plugin with the engine's pinned toolchains, packages the zip with the tag's GitHub release as its download source, and records it in the manifest the caller names.
+# The release artifact carries build.yaml, Directory.Build.props, and that manifest as the build wrote them, and the zip in bin/package/, laid out as in the checkout.
+name: Build plugin
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to build, four parts without a leading v
+        required: true
+        type: string
+      changelog:
+        description: One-line changelog that build.yaml, meta.json, and the manifest carry
+        required: true
+        type: string
+      tag:
+        description: Release tag whose GitHub release serves the zip
+        required: true
+        type: string
+      manifest:
+        description: Manifest that records the zip, from the repository root
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# NOTE: Scripts read the inputs from the environment only, because ${{ }} inside a script would splice the changelog into shell code
+env:
+  VERSION: ${{ inputs.version }}
+  CHANGELOG: ${{ inputs.changelog }}
+  TAG: ${{ inputs.tag }}
+  MANIFEST: ${{ inputs.manifest }}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      # The build runs npm, cargo, and emsdk installs, none of which needs the token
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The build reads only the submodules' pinned trees, not their history
+      - name: Check out the client submodules
+        run: git submodule update --init --depth 1 --jobs 3
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set the version and changelog
+        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$CHANGELOG"
+
+      - name: Read the engine's WebAssembly build settings
+        run: |
+          engine_directory="$(git config --file .gitmodules --get submodule.webgpu-player.path)"
+          # The engine names its folders in tools/constants.json
+          wasm_directory="$engine_directory/$(node -p 'require(process.argv[1])[process.argv[2]]' \
+            "$PWD/$engine_directory/tools/constants.json" wasmDirectory)"
+          # The engine's WebAssembly Makefile pins the toolchain
+          emscripten_version="$(make --no-print-directory --silent -C "$wasm_directory" \
+            --eval "print-variable: ; @echo \$(EMSCRIPTEN_VERSION)" print-variable)"
+          if [[ -z "$emscripten_version" ]]; then
+            echo "::error::The WebAssembly Makefile in $wasm_directory no longer defines EMSCRIPTEN_VERSION"
+            exit 1
+          fi
+          {
+            echo "WASM_DIRECTORY=$wasm_directory"
+            echo "PINNED_EMSCRIPTEN_VERSION=$emscripten_version"
+          } >> "$GITHUB_ENV"
+
+      # Both installs are mostly downloads, so the Rust toolchain installs in the background while Emscripten does
+      - name: Install the pinned Emscripten and Rust toolchains
+        run: |
+          # The Dolby Vision parser crate's rust-toolchain.toml names the toolchain and its WASM target
+          (cd "$WASM_DIRECTORY/libdovi" && rustup toolchain install --no-self-update) &
+          rust_install_process_id=$!
+          emsdk_directory="$RUNNER_TEMP/emsdk"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$emsdk_directory"
+          "$emsdk_directory/emsdk" install "$PINNED_EMSCRIPTEN_VERSION"
+          "$emsdk_directory/emsdk" activate "$PINNED_EMSCRIPTEN_VERSION"
+          wait "$rust_install_process_id"
+          # The WebAssembly Makefile finds emcc through EMSDK
+          echo "EMSDK=$emsdk_directory" >> "$GITHUB_ENV"
+
+      - name: Build the plugin
+        run: ./build.sh --publish
+
+      - name: Package the plugin and record it in the manifest
+        run: |
+          uv run .github/scripts/release.py package \
+            --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
+            --output-directory bin/package \
+            --manifest "$MANIFEST" \
+            --repository "$GITHUB_REPOSITORY"
+
+      # build.yaml, Directory.Build.props, and the manifest as the build wrote them, and the zip in bin/package/, laid out as in the checkout
+      - name: Upload the release
+        uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: |
+            build.yaml
+            Directory.Build.props
+            ${{ inputs.manifest }}
+            bin/package/*.zip
+          if-no-files-found: error

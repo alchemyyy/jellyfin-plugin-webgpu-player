@@ -1,0 +1,241 @@
+# Releases an unstable build when run by hand on main (Actions > Release Unstable > Run workflow), with an optional changelog.
+# Validate numbers the build from the release tags, the latest stable release's version with the next build number in its fourth part, and checks the changelog.
+# Build (build-plugin.yml) builds and packages it, while Release notes lists the merged pull requests and the commits since the previous release or unstable build.
+# Publish pre-release tags the commit Build built and publishes it as a GitHub pre-release with the zip; Update the unstable manifest then records the zip in manifest.json on the unstable branch, the plugin repository a server adds beside main's.
+# Nothing reaches main: the version is set in the build alone, and the unstable branch holds only its manifest. Update the unstable manifest needs only the published zip, so rerunning it alone retries the manifest after a failed push.
+name: Release Unstable
+run-name: Release Unstable
+
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: One-line changelog, Unstable <version>, built from <commit> when left empty
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One release at a time, stable releases included, so a build number or the unstable manifest never races another release
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+# NOTE: Scripts read the inputs from the environment only, because ${{ }} inside a script would splice the changelog into shell code
+env:
+  PLUGIN_NAME: WebGPU Player
+  # The release notes carry the changelog only when one was given
+  RELEASE_SUMMARY: ${{ inputs.changelog }}
+  # The branch whose manifest.json lists the unstable builds, as release.py's UNSTABLE_BRANCH names it
+  UNSTABLE_BRANCH: unstable
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.number.outputs.version }}
+      tag: ${{ steps.number.outputs.tag }}
+      commit: ${{ steps.number.outputs.commit }}
+    steps:
+      # A build numbers after the latest stable release, whose code only main carries
+      - name: Stop unless run on main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run the unstable release on main, not $GITHUB_REF_NAME"
+          exit 1
+
+      # The build number counts the release tags, so the checkout takes them all
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # setup-uv publishes exact version tags only
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Number the build
+        id: number
+        run: |
+          version="$(uv run .github/scripts/release.py unstable-version)"
+          tag="v$version-unstable"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag already exists"
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "commit=${GITHUB_SHA::7}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Numbered the build $version" >> "$GITHUB_STEP_SUMMARY"
+
+      # set-version rejects a changelog build.yaml cannot hold before anything builds; what it writes here goes unused
+      - name: Check the changelog
+        if: inputs.changelog != ''
+        env:
+          VERSION: ${{ steps.number.outputs.version }}
+        run: uv run .github/scripts/release.py set-version "$VERSION" --changelog "$RELEASE_SUMMARY"
+
+  build:
+    name: Build
+    needs: validate
+    uses: ./.github/workflows/build-plugin.yml
+    # The build's own manifest lists this build alone and goes unused; Update the unstable manifest records the zip in the unstable branch's
+    with:
+      version: ${{ needs.validate.outputs.version }}
+      changelog: ${{ inputs.changelog || format('Unstable {0}, built from {1}', needs.validate.outputs.version, needs.validate.outputs.commit) }}
+      tag: ${{ needs.validate.outputs.tag }}
+      manifest: bin/package/manifest.json
+
+  release-notes:
+    name: Release notes
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The notes look up the pull requests that carried the commits
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      TAG: ${{ needs.validate.outputs.tag }}
+    steps:
+      # The full history and tags give the notes the commits since the previous release or unstable build; HEAD is the commit Build builds
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run .github/scripts/release.py release-notes "$TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --changelog "$RELEASE_SUMMARY" \
+            --output-file "$RUNNER_TEMP/release-notes.md"
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+
+  publish:
+    name: Publish pre-release
+    needs: [validate, build, release-notes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Pushes the build's tag and creates the pre-release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TAG: ${{ needs.validate.outputs.tag }}
+    steps:
+      # The commit Build built, which the tag names
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+
+      # The zip in bin/package/; the build's version files it brings along stay uncommitted
+      - name: Download the release
+        uses: actions/download-artifact@v8
+        with:
+          name: release
+
+      - name: Download the release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}
+
+      - name: Tag the build
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --annotate "$TAG" --message "$PLUGIN_NAME $VERSION (unstable)"
+          git push origin "refs/tags/$TAG"
+
+      # A pre-release never becomes the repository's latest release, so the stable release stays on top
+      # The pre-release goes up before the unstable manifest names it, so the manifest never names a missing zip
+      - name: Publish the GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" bin/package/*.zip --verify-tag --prerelease \
+            --title "$PLUGIN_NAME $VERSION (unstable)" --notes-file "$RUNNER_TEMP/release-notes.md"
+          echo "Published [$PLUGIN_NAME $VERSION (unstable)]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"
+
+  update-manifest:
+    name: Update the unstable manifest
+    needs: [validate, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Pushes the manifest to the unstable branch
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TAG: ${{ needs.validate.outputs.tag }}
+    steps:
+      # release.py, and the repository the unstable branch's worktree joins
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Download the release
+        uses: actions/download-artifact@v8
+        with:
+          name: release
+
+      # The first unstable build starts the branch, which holds only the manifest
+      - name: Check out the unstable branch
+        run: |
+          if git ls-remote --exit-code --heads origin "$UNSTABLE_BRANCH" > /dev/null; then
+            git fetch --depth 1 origin "$UNSTABLE_BRANCH"
+            git worktree add --detach "$RUNNER_TEMP/unstable" FETCH_HEAD
+          else
+            git worktree add --orphan -b "$UNSTABLE_BRANCH" "$RUNNER_TEMP/unstable"
+          fi
+
+      # Every earlier build keeps its entry, so a server can install any of them again
+      - name: Record the zip in the unstable manifest
+        run: |
+          uv run .github/scripts/release.py record bin/package/*.zip \
+            --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
+            --manifest "$RUNNER_TEMP/unstable/manifest.json" \
+            --repository "$GITHUB_REPOSITORY"
+
+      # A rerun after a push that went through finds the build listed already
+      - name: Publish the unstable manifest
+        working-directory: ${{ runner.temp }}/unstable
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add manifest.json
+          if git diff --cached --quiet; then
+            echo "manifest.json on $UNSTABLE_BRANCH lists $VERSION already" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit --message "Unstable $VERSION"
+          git push origin "HEAD:refs/heads/$UNSTABLE_BRANCH"
+          echo "manifest.json on $UNSTABLE_BRANCH lists $VERSION" >> "$GITHUB_STEP_SUMMARY"
