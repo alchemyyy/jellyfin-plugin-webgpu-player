@@ -8,7 +8,7 @@ Each assumes a checkout built as in [The client add-on](add-on.md#build-and-chec
 You need a Jellyfin server, 12.1 or later, with the media to test in its library and an account on it.
 
 1. From the folder to work in, run `serve_jellyfin_web_client.sh` from the plugin root with `--server` and the server's address, with its base URL when it has one, such as `http://<host>:8096`.
-   The first run clones the Jellyfin Web commit that `jellyfin-webgpu-client/vendor/jellyfin-web` pins into `jellyfin-web/` there, and builds it.
+   The first run builds Jellyfin Web in the submodule `jellyfin-webgpu-client/vendor/jellyfin-web`, into its gitignored `node_modules/` and `dist/`.
    It stores the options in `serve_jellyfin_web_client.json` there, so later runs need none, and they build Jellyfin Web again only for a new pin.
 2. Open `http://127.0.0.1:5173/web/` and sign in.
 3. Change the add-on's sources, or the engine's.

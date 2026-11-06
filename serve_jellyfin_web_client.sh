@@ -3,12 +3,14 @@
 #
 # Run it from the folder to work in, which keeps its files:
 #   serve_jellyfin_web_client.json  the settings: the server's address, the local port, and live reload
-#   jellyfin-web/                   a clone of the Jellyfin Web commit the add-on builds against, built once per commit
 #   webgpu-player-addon/            the add-on, built in development mode, and again on every change of its sources
 #   webgpu-player-plugin/           the plugin, in a host of its own, built with that add-on embedded, and again on every change
 #                                   of its sources; its data/ is the plugin's data folder: uploads and client defaults
 #
-# The browser opens http://127.0.0.1:<port>/web/, which serves Jellyfin Web from the clone, with the bootstrap the plugin
+# Jellyfin Web is built once per pinned commit in the submodule jellyfin-webgpu-client/vendor/jellyfin-web, into its own
+# node_modules/ and dist/, which its .gitignore covers, so the submodule stays clean and the add-on's tooling never reads them.
+#
+# The browser opens http://127.0.0.1:<port>/web/, which serves Jellyfin Web from that build, with the bootstrap the plugin
 # adds to it, and the add-on. The plugin's routes, /WebGPUPlayer/..., go to this checkout's plugin, which signs each request
 # in as the server's user whose credentials it carries, and the settings page and its controller come from
 # Jellyfin.Plugin.WebGPUPlayer/Configuration, read on every request. Every other request, the API, media, and the WebSocket,
@@ -25,16 +27,13 @@ set -euo pipefail
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 client_directory="$script_directory/jellyfin-webgpu-client"
 serve_script="$client_directory/scripts/serve-jellyfin-web-client.js"
-jellyfin_web_submodule_path='jellyfin-webgpu-client/vendor/jellyfin-web'
-# The submodule's name in .gitmodules, whose URL the clone fetches from
-jellyfin_web_submodule_name='jellyfin-web'
+web_directory="$script_directory/jellyfin-webgpu-client/vendor/jellyfin-web"
 workspace_directory="$(pwd)"
 config_file="$workspace_directory/serve_jellyfin_web_client.json"
-web_directory="$workspace_directory/jellyfin-web"
 addon_output_directory="$workspace_directory/webgpu-player-addon"
 plugin_output_directory="$workspace_directory/webgpu-player-plugin"
-readonly script_directory client_directory serve_script jellyfin_web_submodule_path jellyfin_web_submodule_name \
-    workspace_directory config_file web_directory addon_output_directory plugin_output_directory
+readonly script_directory client_directory serve_script web_directory workspace_directory config_file \
+    addon_output_directory plugin_output_directory
 
 configure_arguments=()
 
@@ -74,8 +73,8 @@ native_path() {
     printf '%s\n' "$1"
 }
 
-# The clone's own Git configuration records that this script made it, and the commit its build is of
-clone_config() {
+# The submodule's own Git configuration records the commit its build is of
+web_config() {
     git -C "$web_directory" config --local "$@"
 }
 
@@ -107,41 +106,27 @@ done
 [ -d "$client_directory/node_modules" ] \
     || fail "The add-on's npm packages are missing; run ./build.sh in $script_directory once first"
 
-# The settings come first, so a missing or wrong server address shows before the first clone and build
+# The settings come first, so a missing or wrong server address shows before the first build
 node "$(native_path "$serve_script")" configure --config "$(native_path "$config_file")" \
     ${configure_arguments[@]+"${configure_arguments[@]}"}
 
 # The Jellyfin Web commit the add-on builds against, which the plugin pins as a submodule
-pinned_commit="$(git -C "$script_directory" rev-parse ":$jellyfin_web_submodule_path")" \
-    || fail "Cannot read the Jellyfin Web commit $jellyfin_web_submodule_path pins"
-jellyfin_web_url="$(git -C "$script_directory" config --file .gitmodules --get "submodule.$jellyfin_web_submodule_name.url")" \
-    || fail "Cannot read the Jellyfin Web URL from .gitmodules"
-readonly pinned_commit jellyfin_web_url
+pinned_commit="$(git -C "$script_directory" rev-parse ':jellyfin-webgpu-client/vendor/jellyfin-web')" \
+    || fail 'Cannot read the Jellyfin Web commit the submodule pins'
+readonly pinned_commit
 
-# A folder of that name this script did not clone is left alone
-if [ -e "$web_directory" ]; then
-    { [ -d "$web_directory/.git" ] && [ "$(clone_config --get webgpu-player.clone || true)" = true ]; } \
-        || fail "$web_directory is not a clone this script made; move it away, or run from another folder"
-else
-    git init --quiet "$web_directory"
-    git -C "$web_directory" remote add origin "$jellyfin_web_url"
-    clone_config webgpu-player.clone true
-fi
-if [ "$(git -C "$web_directory" rev-parse --quiet --verify 'HEAD^{commit}' || true)" != "$pinned_commit" ]; then
-    printf 'Fetching Jellyfin Web %s from %s\n' "$pinned_commit" "$jellyfin_web_url"
-    git -C "$web_directory" fetch --quiet --depth 1 origin "$pinned_commit" \
-        || fail "Cannot fetch Jellyfin Web $pinned_commit"
-    git -C "$web_directory" checkout --quiet --detach "$pinned_commit" \
-        || fail "Cannot check out Jellyfin Web $pinned_commit in $web_directory"
+# The submodule must be checked out at that commit; a checkout of another commit is left alone
+if [ "$(git -C "$web_directory" rev-parse --quiet --verify 'HEAD^{commit}' 2>/dev/null || true)" != "$pinned_commit" ]; then
+    fail "$web_directory is not checked out at the pinned Jellyfin Web $pinned_commit; run git submodule update --init in $script_directory"
 fi
 
 # Built once per commit; the built commit is recorded only after its build succeeds, so a failed build runs again
-if [ "$(clone_config --get webgpu-player.built-commit || true)" != "$pinned_commit" ] \
+if [ "$(web_config --get webgpu-player.built-commit || true)" != "$pinned_commit" ] \
     || [ ! -f "$web_directory/dist/index.html" ]; then
     printf 'Building Jellyfin Web %s in %s\n' "$pinned_commit" "$web_directory"
     (cd "$web_directory" && npm ci --ignore-scripts --no-audit --no-fund && npm run build:development) \
         || fail 'The Jellyfin Web build failed'
-    clone_config webgpu-player.built-commit "$pinned_commit"
+    web_config webgpu-player.built-commit "$pinned_commit"
 fi
 
 exec node "$(native_path "$serve_script")" serve \

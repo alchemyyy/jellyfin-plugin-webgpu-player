@@ -128,7 +128,7 @@ Add `http://localhost:8000/manifest.json` as a plugin repository, then install t
 
 Open `http://127.0.0.1:5173/web/` and sign in to your server. Jellyfin Web runs this checkout's add-on and plugin against your server's library, and both build again on every change.
 
-- Run it from the folder to work in, after one `./build.sh`. The first run there clones the Jellyfin Web commit the add-on builds against into `jellyfin-web/` and builds it, once per commit, and stores the options in `serve_jellyfin_web_client.json`, so later runs need none.
+- Run it from the folder to work in, after one `./build.sh`. The first run builds Jellyfin Web in the submodule `jellyfin-webgpu-client/vendor/jellyfin-web/`, once per pinned commit, into its gitignored `node_modules/` and `dist/`, and stores the options in `serve_jellyfin_web_client.json`, so later runs need none.
 - Jellyfin Web, the add-on, and the plugin are served locally, and every other request goes to the server, so the browser sees one origin. A read the server redirects to another origin, such as a split tunnel's media host, is followed by the script, so the browser stays on that origin.
 - The plugin runs in a host of its own, `Jellyfin.Plugin.WebGPUPlayer.DevHost`, which signs requests in through your server and keeps its data in `webgpu-player-plugin/data/`. The server needs no plugin; an installed one, and its data, stay as they are.
 - Open pages reload after each successful add-on or plugin build and each edit of the plugin's settings page, and a failed add-on build shows its errors in place of Jellyfin Web. `"liveReload": false` in `serve_jellyfin_web_client.json` turns the reload off.

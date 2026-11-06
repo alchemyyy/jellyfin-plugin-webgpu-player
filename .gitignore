@@ -11,6 +11,5 @@ docs/book/
 /scratch/
 # serve_jellyfin_web_client.sh run from the plugin root
 /serve_jellyfin_web_client.json
-/jellyfin-web/
 /webgpu-player-addon/
 /webgpu-player-plugin/
