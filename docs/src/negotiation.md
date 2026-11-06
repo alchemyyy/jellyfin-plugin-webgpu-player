@@ -18,6 +18,7 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    With custom decode enabled, `WebGPUPlayer.canPlayItem` also requires the engine's metadata-only prefilter, `hasPotentialCustomPlaybackVideoRoute`.
    When it declines, PlaybackManager picks the plain HTML player, which negotiates with the stock profile.
 2. Build the device profile, in `WebGPUPlayer.getDeviceProfile(item, options)`:
+   - First, when the call is the first one for playback of a request PlaybackManager began, `HostCompatibleWebGPUPlayer` may start reading the stream's head; see [The stream's head, read ahead](#the-streams-head-read-ahead).
    - A retry (`options.isRetry === true`) returns the stock profile unchanged.
    - Otherwise it adopts the stored playback preferences, keeps the stock profile as a per-item proof (`rememberNativeDeviceProfile`), and strips every bitrate field and condition (`createBitrateIndependentDeviceProfile`).
    - It stops there when custom decode is off or the engine's `getCustomPlaybackRuntimeAvailability` fails (secure context, Worker, `navigator.gpu`, `VideoFrame`).
@@ -51,6 +52,29 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    With it, the player asks for a renegotiation.
    On stock Jellyfin Web that is the error retry ladder, whose `changeStream` passes `isRetry`, so the retry negotiates with the stock profile and is never widened.
    An ineligible start logs its eligibility reason with `console.warn` first, since it raises no error of its own.
+
+## The stream's head, read ahead
+
+A direct play's first range read, the file's header and first cluster, went out only once the engine's decode run opened the stream, after PlaybackInfo, the eligibility, and the decode worker's startup.
+`HostCompatibleWebGPUPlayer` starts that read while PlaybackManager negotiates, through the engine's `prefetchCustomDecodeSource`, in the decode worker the playback then takes; see the engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html#transitions) chapter.
+Nothing about the PlaybackInfo request or its decision changes.
+
+1. Note the request.
+   The PlaybackManager hooks (`compat/PlaybackManagerHooks.ts`) note every `play`, `nextTrack`, `previousTrack`, and `setCurrentPlaylistItem` request, with the media source a `play` request names, until its promise settles; a `stop` or a new request ends it.
+2. Predict the stream, at the request's first `getDeviceProfile(item)` without options, once the client defaults settled.
+   The player must be one that plays the item with custom decode: `canPlayItem` holds (no HTML player preference, no native shell, the route prefilter), custom decode is on, and its runtime is present.
+   `DirectPlayHeadPrefetch.predictDirectPlayStream` takes the media source the request names, else the item's only one, and requires a video item that is not live TV or a placeholder, and a source that is a local file Jellyfin may direct play: protocol `File`, not remote, no live stream, no opening, not infinite, no folder rip.
+   It builds the URL that PlaybackManager's `createStreamInfo` builds for a direct play, with the same ApiClient and the same parameters in the same order: `Videos/{item}/stream.{container}` with `Static`, `mediaSourceId`, `deviceId`, `ApiKey`, and `Tag` from the source's `ETag`.
+   An item without its media sources, as a card or a queue may pass, is not predicted.
+3. Read the head.
+   The add-on resolves the URL as the engine's eligibility does (`resolvePlaybackMediaSource`), with the stream path pattern the playback uses (`createStreamURLSource`), and loads the engine's prefetch with the `webgpu-custom-playback` chunk.
+4. Claim it.
+   `play(options)` keeps the read only when the stream is the predicted one: the same URL, `DirectPlay`, and the same item, media source, and `ETag`, without a live stream.
+   Any other start cancels it at once: a transcode, a DirectStream, another source, another URL or tag.
+   The engine's run takes the source over by the same URL and pattern, and continues on the response the read opened.
+5. Release it.
+   Once the start settles, the player cancels the read it claimed, which the engine ignores once its run took the source over; a start that ended without a run, such as an HTML fallback, releases it there.
+   A new request, a stop, and a destroyed player cancel every read, and the engine releases one no run takes within 5 s.
 
 ## How the profile is augmented
 

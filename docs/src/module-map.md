@@ -10,7 +10,8 @@ The plugin's `README.md` maps the server plugin, and the engine's [Module map](h
 - `TimingTraceControl.ts`: `window.WebGPUPlayerTimingTrace`, which starts, stops, exports, and downloads the engine's timing trace with the build, GPU adapter, screen, and playback metadata, and starts it at load when local storage asks.
 - `WebGPUPlayer.ts`: the Jellyfin-facing player: profile augmentation, the stream-copy veto, eligibility, fallback, renegotiation, and generations.
   It runs the engine's presentation setup and frame loop, `PresentationSetup` and `CustomPlaybackFrameLoop`, which every host shares.
-- `HostCompatibleWebGPUPlayer.ts`: adapts `WebGPUPlayer` to the stock PlaybackManager: purpose-less bitrate requests, the player preference, marked profiles, and superseded starts that never settle.
+- `HostCompatibleWebGPUPlayer.ts`: adapts `WebGPUPlayer` to the stock PlaybackManager: purpose-less bitrate requests, the player preference, marked profiles, superseded starts that never settle, and the stream head a request's negotiation reads ahead.
+- `DirectPlayHeadPrefetch.ts`: the direct-play stream URL a negotiation is predicted to play, the engine's media source for a stream URL, and a player's head reads ahead of their starts, which a start of the same stream claims.
 - `HTMLPlayerDelegate.ts`: owns one HTML player and forwards its events for the current generation only.
 - `backend/`: the add-on's own copy of the HTML video player and its media helper, usable as an owned backend.
 - `custom/CustomDeviceProfile.ts`: `augmentDeviceProfileForCustomDecode` and `createBitrateIndependentDeviceProfile`.

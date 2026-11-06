@@ -7,11 +7,22 @@ import { installSettingsEntryPoints } from './SettingsEntryPoints';
 
 /** Player members the host-compatible hooks use */
 export type HostCompatiblePlayer = PlayerSettingsMenuPlayer & {
+    beginPlaybackRequest: (mediaSourceId: string | null) => () => void
     cancelPendingPlayForNewRequest: () => boolean
     isRequestStartPending: () => boolean
 };
 
 const hostCompatiblePlayers = new Set<HostCompatiblePlayer>();
+
+/** Notes a playback request on every add-on player; returns the function that ends it on each. */
+function beginPlaybackRequest(mediaSourceId: string | null): () => void {
+    const endRequests = Array.from(hostCompatiblePlayers, (player: HostCompatiblePlayer): (() => void) => player.beginPlaybackRequest(mediaSourceId));
+    return (): void => {
+        for (const endRequest of endRequests) {
+            endRequest();
+        }
+    };
+}
 
 /** Cancels pending starts on every add-on player; returns whether any start was pending. */
 function cancelPendingPlays(): boolean {
@@ -39,7 +50,7 @@ function hideLoading(): void {
 /** Installs the PlaybackManager hooks, settings entry points, and player settings menu items once; call after the host bridge is bound. */
 export function installHostCompatibleMode(player: HostCompatiblePlayer): void {
     hostCompatiblePlayers.add(player);
-    installPlaybackManagerHooks(playbackManager, { cancelPendingPlays, hideLoading, isRequestStartPending });
+    installPlaybackManagerHooks(playbackManager, { beginPlaybackRequest, cancelPendingPlays, hideLoading, isRequestStartPending });
     installSettingsEntryPoints(player);
     installPlayerSettingsMenu(player);
 }

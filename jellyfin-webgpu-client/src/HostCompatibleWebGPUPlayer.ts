@@ -1,13 +1,23 @@
 import { ServerConnections } from 'lib/jellyfin-apiclient';
+import { getCustomPlaybackRuntimeAvailability } from 'webgpu-player/capability/CustomPlaybackRuntime';
 
 import {
     ensurePlaybackInfoInterceptors,
     markPlaybackInfoNegotiation,
     type NegotiationItem
 } from './compat/PlaybackInfoInterceptor';
+import { getPlaybackInfoNegotiationPurpose, PlaybackInfoNegotiationPurpose } from './compat/PlaybackInfoPolicy';
 import { isPlaybackSuperseded } from './constants/playbackResult';
+import {
+    DirectPlayHeadPrefetches,
+    predictDirectPlayStream,
+    type DirectPlayStreamPrediction,
+    type StreamURLBuilder
+} from './DirectPlayHeadPrefetch';
 import { VideoPlayerPreference } from './PreferredVideoPlayer';
+import { whenClientDefaultsSettled } from './ServerClientDefaults';
 import { preferredVideoPlayer } from './shims/userSettings';
+import { isStoredWebGPUCustomDecodeEnabled } from './WebGPUPlaybackPreferences';
 import WebGPUPlayer from './WebGPUPlayer';
 
 type StreamingBitrateRequest = Parameters<WebGPUPlayer['getMaxStreamingBitrate']>[0];
@@ -19,6 +29,11 @@ type HostStreamInfo = {
     playMethod?: string | null
     playSessionId?: string | null
 };
+
+/** A playback request PlaybackManager began, and the media source it names */
+type PlaybackRequest = Readonly<{
+    mediaSourceId: string | null
+}>;
 
 /** Native app shells supply their own players and a device profile that describes those players. */
 function isNativeShellHost(): boolean {
@@ -55,6 +70,10 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
     private hostRequestRevision = 0;
     // Whether a start began since PlaybackManager's latest request
     private startedSinceHostRequest = false;
+    // The reads of the stream heads that negotiations are predicted to direct play
+    private readonly headPrefetches = new DirectPlayHeadPrefetches();
+    // The playback request whose first negotiation for playback may read its stream's head, until that negotiation, a start, or the request's end
+    private headPrefetchRequest: PlaybackRequest | null = null;
 
     /** Keeps the fork's purpose semantics; a purpose-less call returns the cap PlaybackManager stored. */
     getMaxStreamingBitrate(request?: StreamingBitrateRequest): number | null {
@@ -78,6 +97,7 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     /** Returns the fork's profile, marked so the PlaybackInfo interceptor applies the fork's request rules. */
     async getDeviceProfile(item: unknown, options?: unknown): Promise<unknown> {
+        this.startHeadPrefetch(item, options);
         const negotiationItem: NegotiationItem = item && typeof item === 'object' ? item as NegotiationItem : {};
         const interceptorsActive = ensurePlaybackInfoInterceptors(negotiationItem.ServerId);
         const profile = await super.getDeviceProfile(item, options);
@@ -86,9 +106,16 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
             profile;
     }
 
-    /** Never settles a superseded start, because the stock PlaybackManager treats any settlement as a start. */
+    /**
+     * Never settles a superseded start, because the stock PlaybackManager treats any settlement as a start.
+     * A start of the stream whose head a negotiation read ahead claims that read, and releases it once the start is over; any other start ends it.
+     */
     play(options: unknown): Promise<unknown> {
-        const playPromise = super.play(options);
+        this.headPrefetchRequest = null;
+        const headPrefetch = this.headPrefetches.claim(options);
+        const playPromise = super.play(options).finally((): void => {
+            this.headPrefetches.release(headPrefetch);
+        });
         this.hostRequestRevision += 1;
         this.startedSinceHostRequest = true;
         const requestRevision = this.hostRequestRevision;
@@ -109,6 +136,8 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     stop(destroyPlayer: boolean): Promise<unknown> {
         this.hostRequestRevision += 1;
+        // PlaybackManager stops the playing item before it negotiates the next one, whose request may still read its head
+        this.headPrefetches.cancel();
         // NOTE: PlaybackManager ignores 'stopped' while isChangingStream is set, which a stop during a stream change would otherwise leave behind
         this.isChangingStream = false;
         return super.stop(destroyPlayer);
@@ -116,6 +145,8 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
 
     destroy(): void {
         this.hostRequestRevision += 1;
+        this.headPrefetchRequest = null;
+        this.headPrefetches.cancel();
         super.destroy();
     }
 
@@ -124,8 +155,24 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
         const hadPendingPlay = this.hasPendingPlay();
         this.hostRequestRevision += 1;
         this.startedSinceHostRequest = false;
+        this.headPrefetchRequest = null;
+        this.headPrefetches.cancel();
         this.cancelPendingPlay();
         return hadPendingPlay;
+    }
+
+    /**
+     * Notes a request PlaybackManager began that starts a playback, with the media source it names, whose first negotiation may then read the
+     * stream's head; returns the function that ends the request once it settled.
+     */
+    beginPlaybackRequest(mediaSourceId: string | null): () => void {
+        const request: PlaybackRequest = { mediaSourceId };
+        this.headPrefetchRequest = request;
+        return (): void => {
+            if (this.headPrefetchRequest === request) {
+                this.headPrefetchRequest = null;
+            }
+        };
     }
 
     /**
@@ -134,6 +181,29 @@ export default class HostCompatibleWebGPUPlayer extends WebGPUPlayer {
      */
     isRequestStartPending(): boolean {
         return !this.startedSinceHostRequest || this.hasPendingPlay();
+    }
+
+    /**
+     * Starts reading the head of the stream that the first negotiation for playback of PlaybackManager's request is predicted to direct play, so
+     * the read overlaps the device profile and PlaybackInfo.
+     * Only an item this player would play with custom decode is read ahead: no HTML player preference, custom decode on, and its runtime present.
+     */
+    private startHeadPrefetch(item: unknown, deviceProfileOptions: unknown): void {
+        const request = this.headPrefetchRequest;
+        // Stream changes and retries pass options, and a request's later negotiations, such as for its next item, read their own heads
+        if (!request || getPlaybackInfoNegotiationPurpose(deviceProfileOptions) !== PlaybackInfoNegotiationPurpose.Selection) {
+            return;
+        }
+        this.headPrefetchRequest = null;
+        // The negotiation adopts the server's latest client defaults first, which may turn custom decode off
+        this.headPrefetches.start(whenClientDefaultsSettled(), (): DirectPlayStreamPrediction | null => {
+            if (!this.canPlayItem(item) || !isStoredWebGPUCustomDecodeEnabled() || !getCustomPlaybackRuntimeAvailability().available) {
+                return null;
+            }
+            const serverId = item && typeof item === 'object' ? (item as NegotiationItem).ServerId : null;
+            const apiClient: StreamURLBuilder | null = serverId ? ServerConnections.getApiClient(serverId) ?? null : null;
+            return apiClient ? predictDirectPlayStream(item, request.mediaSourceId, apiClient) : null;
+        });
     }
 
     private abandonSupersededPlay(options: unknown): Promise<never> {

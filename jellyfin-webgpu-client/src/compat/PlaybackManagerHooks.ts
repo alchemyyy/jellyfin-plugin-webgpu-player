@@ -1,6 +1,7 @@
 // The fork's PlaybackManager cancelled pending local starts at every new playback request.
 // The stock one has no request generations, so these wrappers cancel a pending WebGPU start before the request runs.
-// A play request identical to the pending one, such as a second click while a card's playback loads, joins that start instead
+// A play request identical to the pending one, such as a second click while a card's playback loads, joins that start instead.
+// A request that starts a playback is noted until it settles, so the player may read the stream's head while the request negotiates it
 
 /** PlaybackManager entry points that begin a new playback request or end the current one */
 export const SUPERSEDING_PLAYBACK_MANAGER_METHODS = [
@@ -16,6 +17,8 @@ type SupersedingMethodName = typeof SUPERSEDING_PLAYBACK_MANAGER_METHODS[number]
 type HookablePlaybackManager = Partial<Record<SupersedingMethodName, unknown>>;
 
 type PlaybackManagerHookCallbacks = Readonly<{
+    // Notes a request that starts a playback, with the media source it names; returns the function that ends the request once it settled
+    beginPlaybackRequest: (mediaSourceId: string | null) => () => void
     // Cancels pending WebGPU starts and returns whether one was pending
     cancelPendingPlays: () => boolean
     hideLoading: () => void
@@ -145,6 +148,25 @@ function isRequestStartPending(callbacks: PlaybackManagerHookCallbacks): boolean
     }
 }
 
+/** Returns the media source a play request names, which PlaybackManager negotiates for its first item. */
+function getRequestedMediaSourceId(options: unknown): string | null {
+    const mediaSourceId = options && typeof options === 'object' ? (options as PlayRequestOptions).mediaSourceId : null;
+    return typeof mediaSourceId === 'string' && mediaSourceId ? mediaSourceId : null;
+}
+
+/** Notes a forwarded request that starts a playback; a failing callback leaves the request unnoted. */
+function beginPlaybackRequest(callbacks: PlaybackManagerHookCallbacks, methodName: SupersedingMethodName, options: unknown): (() => void) | null {
+    if (methodName === 'stop') {
+        return null;
+    }
+    try {
+        return callbacks.beginPlaybackRequest(methodName === 'play' ? getRequestedMediaSourceId(options) : null);
+    } catch (error) {
+        console.warn('[WebGPUPlayer] unable to note a playback request', error);
+        return null;
+    }
+}
+
 /** Wraps the superseding PlaybackManager methods once; returns false when they were already wrapped. */
 export function installPlaybackManagerHooks(playbackManager: object, callbacks: PlaybackManagerHookCallbacks): boolean {
     if (hookedPlaybackManagers.has(playbackManager)) {
@@ -186,7 +208,12 @@ export function installPlaybackManagerHooks(playbackManager: object, callbacks: 
             } catch (error) {
                 console.warn('[WebGPUPlayer] unable to cancel a pending start', error);
             }
-            const result = forwardedMethod.apply(this, methodArguments);
+            const endPlaybackRequest = beginPlaybackRequest(callbacks, methodName, methodArguments[0]);
+            let result = forwardedMethod.apply(this, methodArguments);
+            if (endPlaybackRequest !== null && isPromiseLike(result)) {
+                // Settles like the forwarded promise, after the request ends
+                result = Promise.resolve(result).finally(endPlaybackRequest);
+            }
             if (playRequestIdentity === null || !isPromiseLike(result)) {
                 return result;
             }

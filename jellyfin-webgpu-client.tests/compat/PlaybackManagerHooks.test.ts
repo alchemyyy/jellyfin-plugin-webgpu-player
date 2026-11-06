@@ -86,6 +86,7 @@ function createAsyncPlaybackManager(): AsyncPlaybackManager {
 /** Returns callbacks for a host where no start was pending and the latest request is still starting. */
 function createCallbacks(overrides: Partial<HookCallbacks> = {}): HookCallbacks {
     return {
+        beginPlaybackRequest: vi.fn((): (() => void) => vi.fn()),
         cancelPendingPlays: vi.fn((): boolean => false),
         hideLoading: vi.fn(),
         isRequestStartPending: vi.fn((): boolean => true),
@@ -319,6 +320,99 @@ describe('installPlaybackManagerHooks', () => {
             expect(thirdRequest).not.toBe(firstRequest);
             expect(playbackManager.playStarts).toHaveLength(expectedStartCount);
             expect(callbacks.cancelPendingPlays).toHaveBeenCalledTimes(3);
+        });
+    });
+
+    describe('playback requests', () => {
+        it('note every request but a stop after cancelling pending starts, with the media source a play request names', () => {
+            const playbackManager = new FakePlaybackManager();
+            const endPlaybackRequest = vi.fn();
+            const cancelPendingPlays = vi.fn((): boolean => {
+                playbackManager.order.push('cancel');
+                return false;
+            });
+            const beginPlaybackRequest = vi.fn((mediaSourceId: string | null): (() => void) => {
+                playbackManager.order.push(`begin:${String(mediaSourceId)}`);
+                return endPlaybackRequest;
+            });
+            installPlaybackManagerHooks(playbackManager, createCallbacks({ beginPlaybackRequest, cancelPendingPlays }));
+
+            playbackManager.play({ ids: [ 'item' ], mediaSourceId: 'version' });
+            playbackManager.play({ ids: [ 'item' ], mediaSourceId: '' });
+            playbackManager.play();
+            playbackManager.nextTrack({ mediaSourceId: 'version' });
+            playbackManager.previousTrack();
+            playbackManager.setCurrentPlaylistItem('playlist-item');
+            playbackManager.stop();
+
+            expect(playbackManager.order).toEqual([
+                'cancel', 'begin:version', 'play',
+                'cancel', 'begin:null', 'play',
+                'cancel', 'begin:null', 'play',
+                'cancel', 'begin:null', 'nextTrack',
+                'cancel', 'begin:null', 'previousTrack',
+                'cancel', 'begin:null', 'setCurrentPlaylistItem',
+                'cancel', 'stop'
+            ]);
+            // The forwarded methods return no promise, so the requests end with the next request instead
+            expect(endPlaybackRequest).not.toHaveBeenCalled();
+        });
+
+        it('end a request once its forwarded promise resolves, and settle like it afterwards', async () => {
+            const playbackManager = createAsyncPlaybackManager();
+            const endPlaybackRequest = vi.fn();
+            installPlaybackManagerHooks(playbackManager, createCallbacks({ beginPlaybackRequest: vi.fn(() => endPlaybackRequest) }));
+
+            const request = playbackManager.play({ ids: [ 'item' ], serverId: 'server' });
+            await Promise.resolve();
+            expect(endPlaybackRequest).not.toHaveBeenCalled();
+
+            playbackManager.playStarts[0].resolve('started');
+            await expect(request).resolves.toBe('started');
+            expect(endPlaybackRequest).toHaveBeenCalledTimes(1);
+        });
+
+        it('end a request once its forwarded promise rejects, and reject like it afterwards', async () => {
+            const playbackManager = createAsyncPlaybackManager();
+            const endPlaybackRequest = vi.fn();
+            installPlaybackManagerHooks(playbackManager, createCallbacks({ beginPlaybackRequest: vi.fn(() => endPlaybackRequest) }));
+
+            // A request without an identity is returned as the forwarded promise the request's end wraps
+            const request = playbackManager.play();
+            playbackManager.playStarts[0].reject(new Error('failed'));
+
+            await expect(request).rejects.toThrow('failed');
+            expect(endPlaybackRequest).toHaveBeenCalledTimes(1);
+        });
+
+        it('still run a request when noting it throws', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const playbackManager = createAsyncPlaybackManager();
+            installPlaybackManagerHooks(playbackManager, createCallbacks({
+                beginPlaybackRequest: () => {
+                    throw new Error('note failed');
+                }
+            }));
+
+            const request = playbackManager.play({ ids: [ 'item' ], serverId: 'server' });
+            expect(playbackManager.playStarts).toHaveLength(1);
+            expect(warn).toHaveBeenCalledTimes(1);
+
+            playbackManager.playStarts[0].resolve('started');
+            await expect(request).resolves.toBe('started');
+        });
+
+        it('are not noted again for an identical request that joins the pending start', () => {
+            vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+            const playbackManager = createAsyncPlaybackManager();
+            const callbacks = createCallbacks();
+            installPlaybackManagerHooks(playbackManager, callbacks);
+
+            const firstRequest = playbackManager.play(createResumeRequest());
+            expect(playbackManager.play(createResumeRequest())).toBe(firstRequest);
+
+            expect(callbacks.beginPlaybackRequest).toHaveBeenCalledTimes(1);
+            expect(callbacks.beginPlaybackRequest).toHaveBeenCalledWith(null);
         });
     });
 

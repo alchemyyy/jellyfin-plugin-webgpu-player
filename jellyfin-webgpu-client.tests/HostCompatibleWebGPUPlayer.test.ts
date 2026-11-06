@@ -8,16 +8,37 @@ type Deferred = {
     resolve: (value?: unknown) => void
 };
 
-const testState = vi.hoisted(() => ({
-    ensureInterceptors: vi.fn((): boolean => true),
-    markNegotiation: vi.fn((profile: unknown): unknown => ({ ...(profile as object), marked: true })),
-    preferredVideoPlayer: vi.fn((): string => 'auto'),
-    stopActiveEncodings: vi.fn((): Promise<void> => Promise.resolve())
-}));
+/** The head reads of one player, as the stand-in for DirectPlayHeadPrefetches records them */
+type FakeHeadPrefetches = {
+    cancelCount: number
+    claims: unknown[]
+    releases: unknown[]
+    starts: { predict: () => unknown, ready: Promise<void> }[]
+};
+
+const testState = vi.hoisted(() => {
+    const stopActiveEncodings = vi.fn((): Promise<void> => Promise.resolve());
+    const apiClient = { stopActiveEncodings };
+    return {
+        apiClient,
+        claimedRead: { name: 'claimed read' },
+        clientDefaultsSettled: Promise.resolve(),
+        customDecodeEnabled: vi.fn((): boolean => true),
+        ensureInterceptors: vi.fn((): boolean => true),
+        getApiClient: vi.fn((): unknown => apiClient),
+        headPrefetches: [] as FakeHeadPrefetches[],
+        markNegotiation: vi.fn((profile: unknown): unknown => ({ ...(profile as object), marked: true })),
+        prediction: { eTag: null, itemId: 'item', mediaSourceId: 'source', url: 'https://jellyfin.example/Videos/item/stream.mkv' },
+        predictDirectPlayStream: vi.fn((..._predictArguments: unknown[]): unknown => null),
+        preferredVideoPlayer: vi.fn((): string => 'auto'),
+        runtimeAvailability: vi.fn((): { available: boolean } => ({ available: true })),
+        stopActiveEncodings
+    };
+});
 
 vi.mock('lib/jellyfin-apiclient', () => ({
     ServerConnections: {
-        getApiClient: vi.fn(() => ({ stopActiveEncodings: testState.stopActiveEncodings }))
+        getApiClient: testState.getApiClient
     }
 }));
 vi.mock('addons/webGPUPlayer/shims/userSettings', () => ({
@@ -27,6 +48,49 @@ vi.mock('addons/webGPUPlayer/compat/PlaybackInfoInterceptor', () => ({
     ensurePlaybackInfoInterceptors: testState.ensureInterceptors,
     markPlaybackInfoNegotiation: testState.markNegotiation
 }));
+vi.mock('addons/webGPUPlayer/ServerClientDefaults', () => ({
+    whenClientDefaultsSettled: (): Promise<void> => testState.clientDefaultsSettled
+}));
+vi.mock('addons/webGPUPlayer/WebGPUPlaybackPreferences', () => ({
+    isStoredWebGPUCustomDecodeEnabled: testState.customDecodeEnabled
+}));
+vi.mock('webgpu-player/capability/CustomPlaybackRuntime', () => ({
+    getCustomPlaybackRuntimeAvailability: testState.runtimeAvailability
+}));
+// The head reads are covered by their own suite; this stand-in records what the player asks of them
+vi.mock('addons/webGPUPlayer/DirectPlayHeadPrefetch', () => {
+    class FakeDirectPlayHeadPrefetches implements FakeHeadPrefetches {
+        cancelCount = 0;
+        claims: unknown[] = [];
+        releases: unknown[] = [];
+        starts: { predict: () => unknown, ready: Promise<void> }[] = [];
+
+        constructor() {
+            testState.headPrefetches.push(this);
+        }
+
+        start(ready: Promise<void>, predict: () => unknown): void {
+            this.starts.push({ predict, ready });
+        }
+
+        claim(options: unknown): unknown {
+            this.claims.push(options);
+            return testState.claimedRead;
+        }
+
+        release(prefetch: unknown): void {
+            this.releases.push(prefetch);
+        }
+
+        cancel(): void {
+            this.cancelCount += 1;
+        }
+    }
+    return {
+        DirectPlayHeadPrefetches: FakeDirectPlayHeadPrefetches,
+        predictDirectPlayStream: testState.predictDirectPlayStream
+    };
+});
 // The fork player is covered by its own suite; this stand-in exposes the members the subclass builds on
 vi.mock('addons/webGPUPlayer/WebGPUPlayer', () => {
     class FakeWebGPUPlayer {
@@ -118,10 +182,23 @@ function createPlayer(): HostCompatibleWebGPUPlayer & FakeBase {
     return new HostCompatibleWebGPUPlayer() as HostCompatibleWebGPUPlayer & FakeBase;
 }
 
+/** Returns the head reads of the player created last. */
+function getHeadPrefetches(): FakeHeadPrefetches {
+    const headPrefetches = testState.headPrefetches.at(-1);
+    if (!headPrefetches) {
+        throw new Error('no player created');
+    }
+    return headPrefetches;
+}
+
+const ITEM = { Id: 'item', MediaType: 'Video', ServerId: 'server' };
+
 describe('HostCompatibleWebGPUPlayer', () => {
     beforeEach(() => {
         testState.ensureInterceptors.mockReturnValue(true);
         testState.preferredVideoPlayer.mockReturnValue('auto');
+        testState.predictDirectPlayStream.mockReturnValue(testState.prediction);
+        testState.headPrefetches.length = 0;
     });
 
     afterEach(() => {
@@ -302,6 +379,183 @@ describe('HostCompatibleWebGPUPlayer', () => {
 
             player.cancelPendingPlayForNewRequest();
             expect(player.isRequestStartPending()).toBe(true);
+        });
+    });
+
+    describe('head reads', () => {
+        it('begin at the request\'s first negotiation for playback, before PlaybackInfo reaches the player', async () => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            player.beginPlaybackRequest('source');
+
+            await player.getDeviceProfile(ITEM);
+
+            // PlaybackManager hands the player the PlaybackInfo response only through play(), which has not run
+            expect(headPrefetches.claims).toHaveLength(0);
+            expect(headPrefetches.starts).toHaveLength(1);
+            expect(headPrefetches.starts[0].ready).toBe(testState.clientDefaultsSettled);
+            expect(testState.predictDirectPlayStream).not.toHaveBeenCalled();
+
+            expect(headPrefetches.starts[0].predict()).toBe(testState.prediction);
+            expect(testState.getApiClient).toHaveBeenCalledWith('server');
+            expect(testState.predictDirectPlayStream).toHaveBeenCalledWith(ITEM, 'source', testState.apiClient);
+        });
+
+        it('are claimed by the start and released once it settles', async () => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            const startup = createDeferred();
+            player.playResult = startup.promise;
+            player.beginPlaybackRequest(null);
+            await player.getDeviceProfile(ITEM);
+
+            const playPromise = player.play(STREAM_INFO);
+            expect(headPrefetches.claims).toEqual([ STREAM_INFO ]);
+            await expect(hasSettled(playPromise)).resolves.toBe(false);
+            expect(headPrefetches.releases).toHaveLength(0);
+
+            startup.resolve('started');
+            await expect(playPromise).resolves.toBe('started');
+            expect(headPrefetches.releases).toEqual([ testState.claimedRead ]);
+        });
+
+        it('are released once a start fails', async () => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            player.playResult = Promise.reject(new Error('failed'));
+
+            await expect(player.play(STREAM_INFO)).rejects.toThrow('failed');
+            expect(headPrefetches.releases).toEqual([ testState.claimedRead ]);
+        });
+
+        it('do not begin without a playback request', async () => {
+            const player = createPlayer();
+
+            await player.getDeviceProfile(ITEM);
+
+            expect(getHeadPrefetches().starts).toHaveLength(0);
+        });
+
+        it('do not begin for a stream change or retry', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+
+            await player.getDeviceProfile(ITEM, { isRetry: false });
+            await player.getDeviceProfile(ITEM, { isRetry: true });
+
+            expect(getHeadPrefetches().starts).toHaveLength(0);
+        });
+
+        it('begin only at a request\'s first negotiation', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+
+            await player.getDeviceProfile(ITEM);
+            await player.getDeviceProfile({ ...ITEM, Id: 'next' });
+
+            expect(getHeadPrefetches().starts).toHaveLength(1);
+        });
+
+        it('do not begin once the request started', async () => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+
+            void player.play(STREAM_INFO);
+            await player.getDeviceProfile(ITEM);
+
+            expect(getHeadPrefetches().starts).toHaveLength(0);
+        });
+
+        it.each([
+            [ 'the user prefers the HTML player', (): void => {
+                testState.preferredVideoPlayer.mockReturnValue('html');
+            } ],
+            [ 'a native app shell hosts the page', (): void => {
+                (window as { NativeShell?: unknown }).NativeShell = {};
+            } ],
+            [ 'custom decode is off', (): void => {
+                testState.customDecodeEnabled.mockReturnValue(false);
+            } ],
+            [ 'the custom playback runtime is unavailable', (): void => {
+                testState.runtimeAvailability.mockReturnValue({ available: false });
+            } ],
+            [ 'the server has no API client', (): void => {
+                testState.getApiClient.mockReturnValue(undefined);
+            } ]
+        ])('predict nothing when %s', async (_description, arrange) => {
+            const player = createPlayer();
+            player.beginPlaybackRequest(null);
+            await player.getDeviceProfile(ITEM);
+
+            arrange();
+
+            expect(getHeadPrefetches().starts[0].predict()).toBeNull();
+            expect(testState.predictDirectPlayStream).not.toHaveBeenCalled();
+        });
+
+        it('predict nothing for an item the fork player declines or one without a server', async () => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            player.beginPlaybackRequest(null);
+            await player.getDeviceProfile({ Id: 'item', MediaType: 'Video' });
+            player.beginPlaybackRequest(null);
+            await player.getDeviceProfile(ITEM);
+
+            expect(headPrefetches.starts[0].predict()).toBeNull();
+            player.canPlayItemResult = false;
+            expect(headPrefetches.starts[1].predict()).toBeNull();
+            expect(testState.predictDirectPlayStream).not.toHaveBeenCalled();
+        });
+
+        it('are canceled by a stop, which keeps the request for its negotiation', async () => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            player.beginPlaybackRequest(null);
+
+            await player.stop(false);
+            expect(headPrefetches.cancelCount).toBe(1);
+
+            await player.getDeviceProfile(ITEM);
+            expect(headPrefetches.starts).toHaveLength(1);
+        });
+
+        it.each([
+            [ 'a new request', (player: HostCompatibleWebGPUPlayer): void => {
+                player.cancelPendingPlayForNewRequest();
+            } ],
+            [ 'a destroyed player', (player: HostCompatibleWebGPUPlayer): void => {
+                player.destroy();
+            } ]
+        ])('are canceled by %s, which ends the request', async (_description, end) => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            player.beginPlaybackRequest(null);
+
+            end(player);
+            expect(headPrefetches.cancelCount).toBe(1);
+
+            await player.getDeviceProfile(ITEM);
+            expect(headPrefetches.starts).toHaveLength(0);
+        });
+
+        it('end only with the request that began them', async () => {
+            const player = createPlayer();
+            const headPrefetches = getHeadPrefetches();
+            const endFirstRequest = player.beginPlaybackRequest('first');
+            const endSecondRequest = player.beginPlaybackRequest('second');
+
+            endFirstRequest();
+            await player.getDeviceProfile(ITEM);
+            expect(headPrefetches.starts).toHaveLength(1);
+            headPrefetches.starts[0].predict();
+            expect(testState.predictDirectPlayStream).toHaveBeenCalledWith(ITEM, 'second', testState.apiClient);
+
+            player.beginPlaybackRequest(null);
+            const endThirdRequest = player.beginPlaybackRequest('third');
+            endSecondRequest();
+            endThirdRequest();
+            await player.getDeviceProfile(ITEM);
+            expect(headPrefetches.starts).toHaveLength(1);
         });
     });
 });

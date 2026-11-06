@@ -9,6 +9,7 @@ import { MediaError } from 'types/mediaError';
 
 import { getClientDefaults, subscribeClientDefaults } from './ClientDefaults';
 import { ensureDefaultPresentationFiles } from './DefaultPresentationFiles';
+import { createStreamURLSource } from './DirectPlayHeadPrefetch';
 import { PLAYBACK_SUPERSEDED } from './constants/playbackResult';
 import { WebGPUPlayerEvent } from './constants/playerEvent';
 import { loadAddonStrings } from './host/globalize';
@@ -153,7 +154,6 @@ import {
     getCustomPlaybackRuntimeAvailability,
     type CustomPlaybackRuntimeAvailability
 } from 'webgpu-player/capability/CustomPlaybackRuntime';
-import type { CustomDecodeMediaSource } from 'webgpu-player/demux/CustomDecodeMediaSource';
 import CustomPlaybackFrameLoop from 'webgpu-player/pipeline/CustomPlaybackFrameLoop';
 import {
     alignPresentationInputBitDepth,
@@ -210,9 +210,6 @@ import type {
     RawHDRAuthorizationTelemetry
 } from 'webgpu-player/validation/RawHDRPresentationAuthorization';
 
-// Jellyfin's stream endpoint, whose cross-origin 206 responses hide Content-Range; the engine accepts them on a bounded Content-Length
-const JELLYFIN_MEDIA_STREAM_PATH_PATTERN = /\/Videos\/[^/]+\/stream(?:\.[^/]+)?$/i;
-
 /** Returns play options with the stream URL Jellyfin chose as the engine's media source, which the eligibility reads. */
 function withStreamURLSource(options: unknown): unknown {
     if (!options || typeof options !== 'object') {
@@ -222,8 +219,7 @@ function withStreamURLSource(options: unknown): unknown {
     if (typeof url !== 'string') {
         return options;
     }
-    const source: CustomDecodeMediaSource = { hiddenContentRangePathPattern: JELLYFIN_MEDIA_STREAM_PATH_PATTERN, kind: 'url', url };
-    return { ...options, source };
+    return { ...options, source: createStreamURLSource(url) };
 }
 
 /** Returns the media source a play request carries when it lists its streams, or null. */

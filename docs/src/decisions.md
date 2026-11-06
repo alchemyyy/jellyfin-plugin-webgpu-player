@@ -89,6 +89,13 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   Every PlaybackInfo POST carries the whole device profile, about 167 KB of JSON with 279 codec profiles, and behind a slow upstream its upload cost about 110 ms of each play while Jellyfin answered in about 20 ms.
   Compacting the profile would change Jellyfin's decisions: StreamBuilder applies the conditions of every applicable codec profile to a transcode target in reverse order, and does not seed `rangetype` from the source, so merging or dropping the repeated VideoRangeType and VideoProfile conditions changes the `rangetype` and `profile` options of HEVC copy and encode targets.
   The add-on therefore sends the same JSON gzipped with `Content-Encoding: gzip`, and the plugin's `PlaybackInfoDecompressionMiddleware` restores it before Jellyfin reads it, so every negotiation decision stays as it was.
+- A direct play's stream head is read during the negotiation, and kept only for the exact URL PlaybackManager then plays (11-05).
+  The head read went out only after PlaybackInfo, the custom setup, and the decode worker's startup, about 70 to 140 ms of each start behind a redirecting front end, all on the critical path.
+  The read starts at the request's first `getDeviceProfile`, the earliest point that knows the item, before the device profile's probes and catalog wait and PlaybackInfo; the PlaybackInfo interceptor would be later by the whole device profile.
+  A request is noted through the PlaybackManager hooks, because `getDeviceProfile` without options also serves the item page's version lists, which play nothing.
+  The add-on predicts the URL with PlaybackManager's own ApiClient and parameters and keeps the read only when the start's URL, play method, item, source, and `ETag` all match, rather than matching on the item alone, so a transcode, a DirectStream, another version, or a changed file never reads its bytes; the engine matches the URL and pattern again before its run reads the source.
+  An item with several versions and none requested is not predicted, since PlaybackInfo's order and PlaybackManager's selection pick among them.
+  The URL's parameters follow the Jellyfin Web the add-on is built against; a host that builds them otherwise only loses the read, which the first start cancels.
 
 ## Playback robustness
 

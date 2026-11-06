@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 
 type HookCallbacks = {
+    beginPlaybackRequest: (mediaSourceId: string | null) => () => void
     cancelPendingPlays: () => boolean
     hideLoading: () => void
     isRequestStartPending: () => boolean
@@ -28,10 +29,13 @@ vi.mock('addons/webGPUPlayer/compat/PlayerSettingsMenu', () => ({
 
 import { installHostCompatibleMode, type HostCompatiblePlayer } from 'addons/webGPUPlayer/compat/HostCompatibleMode';
 
-function createPlayer(pending: boolean, requestStartPending = true): HostCompatiblePlayer {
+function createPlayer(pending: boolean, requestStartPending = true): HostCompatiblePlayer & { endPlaybackRequest: Mock } {
+    const endPlaybackRequest = vi.fn();
     return {
+        beginPlaybackRequest: vi.fn(() => endPlaybackRequest),
         canPlayItem: () => true,
         cancelPendingPlayForNewRequest: vi.fn(() => pending),
+        endPlaybackRequest,
         getSettingsMenuItems: () => [],
         isRequestStartPending: vi.fn(() => requestStartPending)
     };
@@ -69,5 +73,24 @@ describe('installHostCompatibleMode', () => {
         installHostCompatibleMode(startedPlayer);
         expect(callbacks.isRequestStartPending()).toBe(false);
         expect(startedPlayer.isRequestStartPending).toHaveBeenCalledTimes(1);
+    });
+
+    it('notes a playback request on every add-on player and ends it on each', () => {
+        const firstPlayer = createPlayer(false);
+        const secondPlayer = createPlayer(false);
+
+        installHostCompatibleMode(firstPlayer);
+        installHostCompatibleMode(secondPlayer);
+        const callbacks = testState.installHooks.mock.calls[0][1] as HookCallbacks;
+        const endRequest = callbacks.beginPlaybackRequest('version');
+
+        expect(firstPlayer.beginPlaybackRequest).toHaveBeenCalledWith('version');
+        expect(secondPlayer.beginPlaybackRequest).toHaveBeenCalledWith('version');
+        expect(firstPlayer.endPlaybackRequest).not.toHaveBeenCalled();
+        expect(secondPlayer.endPlaybackRequest).not.toHaveBeenCalled();
+
+        endRequest();
+        expect(firstPlayer.endPlaybackRequest).toHaveBeenCalledTimes(1);
+        expect(secondPlayer.endPlaybackRequest).toHaveBeenCalledTimes(1);
     });
 });
