@@ -26,6 +26,11 @@ import {
 
 import { getClientDefaults, type ClientDefaultKey } from './ClientDefaults';
 import {
+    DEFAULT_DECODER_TEST_TIMING,
+    normalizeDecoderTestTiming,
+    type DecoderTestTiming
+} from './DecoderTestTiming';
+import {
     DEFAULT_SETTINGS_BUTTON_PLACEMENT,
     isSettingsButtonPlacement,
     type SettingsButtonPlacement
@@ -80,6 +85,8 @@ export type WebGPUUserSettings = Readonly<{
     // Each applies from the next playback: custom decode and HDR tone mapping shape what the player negotiates with the server,
     // and GPU decode slicing how a decoder package's GPU decoder submits its work
     playback: Readonly<{
+        /** When the engine's capability probes run on this client; applies from the next page load */
+        decoderTestTiming: DecoderTestTiming
         enableCustomDecode: boolean
         enableGPUDecodeSlicing: boolean
         enableHDRToneMapping: boolean
@@ -240,6 +247,7 @@ export function createBuiltInWebGPUUserSettings(): WebGPUUserSettings {
             settingsButtonPlacement: DEFAULT_SETTINGS_BUTTON_PLACEMENT
         },
         playback: {
+            decoderTestTiming: DEFAULT_DECODER_TEST_TIMING,
             enableCustomDecode: true,
             enableGPUDecodeSlicing: false,
             enableHDRToneMapping: true
@@ -279,6 +287,7 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
             settingsButtonPlacement: serverDefaults.settingsButtonPlacement
         },
         playback: {
+            decoderTestTiming: serverDefaults.decoderTestTiming,
             enableCustomDecode: serverDefaults.enableCustomDecode,
             enableGPUDecodeSlicing: serverDefaults.enableGPUDecodeSlicing,
             enableHDRToneMapping: serverDefaults.enableHDRToneMapping
@@ -434,6 +443,7 @@ function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUU
                 defaults.osd.settingsButtonPlacement
         },
         playback: {
+            decoderTestTiming: normalizeDecoderTestTiming(playback.decoderTestTiming) ?? defaults.playback.decoderTestTiming,
             enableCustomDecode: normalizeBoolean(
                 playback.enableCustomDecode,
                 defaults.playback.enableCustomDecode
@@ -539,7 +549,8 @@ export function saveWebGPUUserSettings(
     return normalizedSettings;
 }
 
-// Where each default's setting lives in the stored settings; the player preference and the downmix algorithm are stored apart
+// Where each default's setting lives in the stored settings; the player preference and the downmix algorithm are stored apart,
+// and the decoder test device types and rules are the administrator's alone, with no setting of the user's
 const SETTING_PATHS: Readonly<Partial<Record<ClientDefaultKey, readonly string[]>>> = Object.freeze({
     automaticInputPeakNits: [ 'render', 'automaticInputPeakNits' ],
     binauralHeadphones: [ 'audio', 'binauralHeadphones' ],
@@ -547,6 +558,7 @@ const SETTING_PATHS: Readonly<Partial<Record<ClientDefaultKey, readonly string[]
     brightness: [ 'render', 'settings', 'display', 'brightness' ],
     centerLevel: [ 'audio', 'downmix', 'centerLevel' ],
     contrast: [ 'render', 'settings', 'display', 'contrast' ],
+    decoderTestTiming: [ 'playback', 'decoderTestTiming' ],
     deinterlaceMode: [ 'presentation', 'deinterlaceMode' ],
     desaturationStrength: [ 'render', 'settings', 'toneMapping', 'desaturationStrength' ],
     enableCustomDecode: [ 'playback', 'enableCustomDecode' ],

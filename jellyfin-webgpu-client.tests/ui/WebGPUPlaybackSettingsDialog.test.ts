@@ -106,6 +106,22 @@ vi.mock('addons/webGPUPlayer/ServerModules', () => ({
         Promise.reject(new Error(serverModuleMockState.catalogFailure))))
 }));
 
+// The crashed probes the stored verdicts name, which only a stopped page records; the rest of the stored state is the engine's own
+const probeStoreMockState = vi.hoisted(() => ({
+    crashedProbes: [] as CrashedCapabilityProbe[]
+}));
+
+vi.mock('webgpu-player/capability/CapabilityProbeStore', async importOriginal => {
+    const probeStore = await importOriginal<typeof import('webgpu-player/capability/CapabilityProbeStore')>();
+    return {
+        ...probeStore,
+        readStoredCapabilityProbeVerdictState: (): CapabilityProbeStoreState | null => {
+            const state = probeStore.readStoredCapabilityProbeVerdictState();
+            return state && { ...state, crashedProbes: probeStoreMockState.crashedProbes };
+        }
+    };
+});
+
 vi.mock('components/layoutManager', () => ({
     default: { tv: false }
 }));
@@ -267,7 +283,9 @@ import {
 import {
     configureCapabilityProbeStore,
     getDefaultCapabilityProbeStore,
-    readStoredCapabilityProbeVerdictState
+    readStoredCapabilityProbeVerdictState,
+    type CapabilityProbeStoreState,
+    type CrashedCapabilityProbe
 } from 'webgpu-player/capability/CapabilityProbeStore';
 
 type AnimationFrameHarness = {
@@ -392,9 +410,9 @@ function installPlacementHarness(harness: PlacementHarness): void {
     );
 }
 
-// One default button per setting the panel offers, the settings button placement, HDR output, black bar crop, deinterlacing, GPU decode slicing,
-// the speaker layout, and binaural rendering included
-const DEFAULT_SETTING_BUTTON_COUNT = 24;
+// One default button per setting the panel offers, the settings button placement, the decoder test timing, HDR output, black bar crop,
+// deinterlacing, GPU decode slicing, the speaker layout, and binaural rendering included
+const DEFAULT_SETTING_BUTTON_COUNT = 25;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -588,6 +606,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         serverModuleMockState.catalog = { decoderPackages: [], passes: [] };
         serverModuleMockState.catalogFailure = null;
         serverModuleMockState.passSources.clear();
+        probeStoreMockState.crashedProbes = [];
         // The suite unstubs its globals after each test
         indexedDBFake.install();
         indexedDBFake.clear();
@@ -815,7 +834,12 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         // HDR tone mapping and GPU decode run only on the custom decode path, so their switches follow custom decode
         customDecodeCheckbox.checked = false;
         customDecodeCheckbox.dispatchEvent(new Event('change'));
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: false, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
+        expect(readSavedPlayback()).toEqual({
+            decoderTestTiming: 'automatic',
+            enableCustomDecode: false,
+            enableGPUDecodeSlicing: false,
+            enableHDRToneMapping: true
+        });
         expect(HDRToneMappingCheckbox.disabled).toBe(true);
         expect(GPUDecodeSlicingCheckbox.disabled).toBe(true);
         expect(playbackStatus.textContent).toContain('restart-required');
@@ -828,7 +852,12 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         HDRToneMappingCheckbox.dispatchEvent(new Event('change'));
         GPUDecodeSlicingCheckbox.checked = true;
         GPUDecodeSlicingCheckbox.dispatchEvent(new Event('change'));
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: true, enableHDRToneMapping: false });
+        expect(readSavedPlayback()).toEqual({
+            decoderTestTiming: 'automatic',
+            enableCustomDecode: true,
+            enableGPUDecodeSlicing: true,
+            enableHDRToneMapping: false
+        });
         expect(HDRToneMappingCheckbox.disabled).toBe(false);
         expect(GPUDecodeSlicingCheckbox.disabled).toBe(false);
 
@@ -836,15 +865,63 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             panel,
             '[data-default-setting="enableGPUDecodeSlicing"]'
         ).click();
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: false, enableHDRToneMapping: false });
+        expect(readSavedPlayback()).toEqual({
+            decoderTestTiming: 'automatic',
+            enableCustomDecode: true,
+            enableGPUDecodeSlicing: false,
+            enableHDRToneMapping: false
+        });
         expect(GPUDecodeSlicingCheckbox.checked).toBe(false);
         GPUDecodeSlicingCheckbox.checked = true;
         GPUDecodeSlicingCheckbox.dispatchEvent(new Event('change'));
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll').click();
-        expect(readSavedPlayback()).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
+        expect(readSavedPlayback()).toEqual({
+            decoderTestTiming: 'automatic',
+            enableCustomDecode: true,
+            enableGPUDecodeSlicing: false,
+            enableHDRToneMapping: true
+        });
         expect(HDRToneMappingCheckbox.checked).toBe(true);
         expect(GPUDecodeSlicingCheckbox.checked).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('saves this browser\'s decoder test timing for the next page load, keeps it through the other playback preferences, and restores the server\'s default', async () => {
+        storageMockState.value = JSON.stringify({ playback: { decoderTestTiming: 'playback' }, version: WEBGPU_USER_SETTINGS_VERSION });
+        setClientDefaults({ decoderTestTiming: 'background' });
+        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const timingSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="decoderTestTiming"]');
+        const playbackStatus = requirePanelElement<HTMLElement>(panel, '[data-playback-status]');
+        expect(Array.from(timingSelect.options, (option: HTMLOptionElement): string => option.value))
+            .toEqual([ 'automatic', 'background', 'playback' ]);
+        expect(Array.from(timingSelect.options, (option: HTMLOptionElement): string => option.textContent)).toEqual([
+            translateSourceString('WebGPUDecoderTestTimingAutomatic'),
+            translateSourceString('WebGPUDecoderTestTimingBackground'),
+            translateSourceString('WebGPUDecoderTestTimingPlayback')
+        ]);
+        expect(timingSelect.value).toBe('playback');
+
+        timingSelect.value = 'automatic';
+        timingSelect.dispatchEvent(new Event('change'));
+        expect(readSavedSettings().playback.decoderTestTiming).toBe('automatic');
+        expect(playbackStatus.textContent).toBe(translateSourceString('WebGPUDecoderTestTimingSavedStatus'));
+
+        // Another playback preference keeps the timing chosen
+        const customDecodeCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
+        customDecodeCheckbox.checked = false;
+        customDecodeCheckbox.dispatchEvent(new Event('change'));
+        expect(readSavedSettings().playback.decoderTestTiming).toBe('automatic');
+        expect(readSavedSettings().playback.enableCustomDecode).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="decoderTestTiming"]').click();
+        expect(timingSelect.value).toBe('background');
+        // The restored timing is not stored, so it follows the server's default from now on
+        expect(JSON.parse(storageMockState.value ?? '')).not.toHaveProperty('playback.decoderTestTiming');
+        setClientDefaults({ decoderTestTiming: 'playback' });
+        expect(readSavedSettings().playback.decoderTestTiming).toBe('playback');
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
@@ -870,10 +947,54 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
         const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        // No probe stopped a page, so the panel names none
+        expect(requirePanelElement<HTMLElement>(panel, '[data-crashed-probes]').classList.contains('hide')).toBe(true);
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache').click();
 
         expect(readStoredCapabilityProbeVerdictState()).toBeNull();
         expect(requirePanelElement<HTMLElement>(panel, '[data-playback-status]').textContent).toContain('tests this browser');
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+        configureCapabilityProbeStore({ buildKey: '' });
+    });
+
+    it('names the probes that stopped a page with their browser calls until the results are cleared', async () => {
+        const player = {
+            applyAudioOutputSettings: vi.fn((): Promise<boolean> => Promise.resolve(false)),
+            getDetectedInputPeakNits: vi.fn(() => null),
+            getRenderSettings: vi.fn(() => createHDRToSDRRenderSettings()),
+            updateAudioDownmixSettings: vi.fn(() => true),
+            updateRenderSettings: vi.fn(() => true),
+            ...createPresentationPlayerMethods()
+        } as unknown as WebGPUPlayer;
+        configureCapabilityProbeStore({ buildKey: 'asset-key-webpack-hash' });
+        await getDefaultCapabilityProbeStore().write('native-sdr:hevc', {
+            codec: 'hevc',
+            codecString: 'hvc1.1.6.L120.90',
+            reason: 'decode-output-verified',
+            status: 'supported'
+        });
+        probeStoreMockState.crashedProbes = [
+            { probe: 'native-audio', steps: [ 'check mp4a.40.2', 'decode aac' ] },
+            { probe: 'native-hdr:av1', steps: [] }
+        ];
+
+        const panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const crashedProbes = requirePanelElement<HTMLElement>(panel, '[data-crashed-probes]');
+
+        expect(crashedProbes.classList.contains('hide')).toBe(false);
+        expect(crashedProbes.textContent).toBe(translateSourceString(
+            'WebGPUCrashedProbes',
+            `${translateSourceString('WebGPUCrashedProbeSteps', 'native-audio', 'check mp4a.40.2, decode aac')}, native-hdr:av1`
+        ));
+        expect(crashedProbes.textContent).toContain('native-audio (check mp4a.40.2, decode aac), native-hdr:av1');
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache').click();
+
+        expect(readStoredCapabilityProbeVerdictState()).toBeNull();
+        expect(crashedProbes.classList.contains('hide')).toBe(true);
+        expect(crashedProbes.textContent).toBe('');
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
         configureCapabilityProbeStore({ buildKey: '' });

@@ -18,8 +18,12 @@ const testState = vi.hoisted(() => ({
     installOutdatedPageReload: vi.fn((): void => {
         testState.events.push('reload');
     }),
-    startCapabilityProbeWarmUp: vi.fn((): void => {
+    startCapabilityProbeWarmUp: vi.fn((): Promise<boolean> => {
         testState.events.push('warm');
+        return Promise.resolve(true);
+    }),
+    startProbeCrashReports: vi.fn((): void => {
+        testState.events.push('crashes');
     }),
     startClientDefaultsSync: vi.fn((): void => {
         testState.events.push('defaults');
@@ -52,6 +56,9 @@ vi.mock('webgpu-player/capability/CapabilityProbeStore', () => ({
 }));
 vi.mock('addons/webGPUPlayer/CapabilityProbeWarmUp', () => ({
     startCapabilityProbeWarmUp: testState.startCapabilityProbeWarmUp
+}));
+vi.mock('addons/webGPUPlayer/ProbeCrashReports', () => ({
+    startProbeCrashReports: testState.startProbeCrashReports
 }));
 vi.mock('addons/webGPUPlayer/OutdatedPageReload', () => ({
     installOutdatedPageReload: testState.installOutdatedPageReload
@@ -144,8 +151,8 @@ describe('WebGPU player add-on entry', () => {
         expect(testState.bindHostBridge).toHaveBeenCalledWith(bag);
         expect(testState.installHostCompatibleMode).toHaveBeenCalledWith(player);
         // The warm-up starts once the bag binds the PlaybackManager it waits on, and the server's defaults sync once it binds ServerConnections,
-        // so the settings the player reads at construction start from the cached defaults
-        expect(testState.events).toEqual([ 'bind', 'defaults', 'warm', 'reload', 'construct', 'install' ]);
+        // so the settings the player reads at construction start from the cached defaults; crash reports start before the warm-up finds a crash
+        expect(testState.events).toEqual([ 'bind', 'defaults', 'crashes', 'warm', 'reload', 'construct', 'install' ]);
         // The plugin manager reads these synchronously after construction
         expect([ player.id, player.type, player.name, player.priority ])
             .toEqual([ 'webgpuplayer', 'mediaplayer', 'WebGPU Player', 0 ]);

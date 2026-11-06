@@ -10,12 +10,14 @@ vi.mock('scripts/settings/userSettings', () => ({
 import { DEINTERLACE_MODES } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { MAXIMUM_PARAMETER_COUNT } from 'webgpu-player/presentation/passes/PassLanguage';
 import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
+import { DECODER_TEST_TIMINGS } from 'addons/webGPUPlayer/DecoderTestTiming';
 import {
     MAXIMUM_PRESENTATION_PARAMETER_NAME_LENGTH,
     MAXIMUM_PRESENTATION_FILE_COUNT,
     MAXIMUM_SERVER_PASS_FILE_NAME_LENGTH,
     WEBGPU_USER_SETTINGS_STORAGE_KEY,
     WEBGPU_USER_SETTINGS_VERSION,
+    clearWebGPUUserSettingChoices,
     createBuiltInWebGPUUserSettings,
     createConfiguredHDRRenderSettings,
     createDefaultWebGPUUserSettings,
@@ -484,16 +486,57 @@ describe('WebGPUUserSettings', () => {
             version: defaults.version
         };
 
-        expect(defaults.playback).toEqual({ enableCustomDecode: true, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
+        expect(defaults.playback).toEqual({
+            decoderTestTiming: 'automatic',
+            enableCustomDecode: true,
+            enableGPUDecodeSlicing: false,
+            enableHDRToneMapping: true
+        });
         expect(normalizeWebGPUUserSettings(settingsWithoutPlayback).playback).toEqual(defaults.playback);
         expect(normalizeWebGPUUserSettings({
             ...defaults,
             playback: { enableCustomDecode: false, enableGPUDecodeSlicing: 'true', enableHDRToneMapping: 'false' }
-        }).playback).toEqual({ enableCustomDecode: false, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
+        }).playback).toEqual({ decoderTestTiming: 'automatic', enableCustomDecode: false, enableGPUDecodeSlicing: false, enableHDRToneMapping: true });
         expect(normalizeWebGPUUserSettings({
             ...defaults,
             playback: { ...defaults.playback, enableGPUDecodeSlicing: true }
         }).playback.enableGPUDecodeSlicing).toBe(true);
+    });
+
+    it('leaves the decoder test timing automatic unless this browser stored one of the timings, and follows the server\'s default meanwhile', () => {
+        const defaults = createDefaultWebGPUUserSettings();
+        const normalizeTiming = (decoderTestTiming: unknown): unknown => normalizeWebGPUUserSettings({
+            ...defaults,
+            playback: { ...defaults.playback, decoderTestTiming }
+        }).playback.decoderTestTiming;
+
+        expect(DECODER_TEST_TIMINGS.map(normalizeTiming)).toEqual(DECODER_TEST_TIMINGS);
+        for (const invalidTiming of [ 'Background', 'never', '', null, 1, true ]) {
+            expect(normalizeTiming(invalidTiming)).toBe('automatic');
+        }
+        setClientDefaults({ decoderTestTiming: 'playback' });
+        expect(createDefaultWebGPUUserSettings().playback.decoderTestTiming).toBe('playback');
+        expect(loadWebGPUUserSettings(createStorage(JSON.stringify({
+            playback: { decoderTestTiming: 'background' },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        }))).playback.decoderTestTiming).toBe('background');
+        // A server default clients refuse leaves the built-in default
+        setClientDefaults({ decoderTestTiming: 'sometimes' });
+        expect(createDefaultWebGPUUserSettings().playback.decoderTestTiming).toBe('automatic');
+    });
+
+    it('drops the user\'s own decoder test timing when the administrator applies its default, keeping their other choices', () => {
+        const storage = createStorage(JSON.stringify({
+            playback: { decoderTestTiming: 'background', enableCustomDecode: false },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        }));
+
+        clearWebGPUUserSettingChoices([ 'decoderTestTiming', 'decoderTestRules', 'decoderTestBackgroundDevices' ], storage);
+
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? 'null')).toEqual({
+            playback: { enableCustomDecode: false },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
     });
 
     it('keeps playback and presentation preferences across render and audio resets', () => {

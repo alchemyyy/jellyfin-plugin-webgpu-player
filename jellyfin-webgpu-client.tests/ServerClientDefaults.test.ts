@@ -143,6 +143,21 @@ describe('ServerClientDefaults', () => {
         expect(readCache()).toEqual({ applied: {}, settings: { brightness: 0.75, hdrOutput: true } });
     });
 
+    it('keeps the decoder test defaults as the server stores them, for their owner to normalize', async () => {
+        const settings = {
+            decoderTestBackgroundDevices: [ 'tv', 'desktop' ],
+            decoderTestRules: 'playback client: Jellyfin Android*',
+            decoderTestTiming: 'automatic'
+        };
+        responses.push(respondJSON({ settings }));
+        const { clientDefaults, sync } = await importModules();
+
+        await sync.refreshClientDefaults();
+
+        expect(clientDefaults.getClientDefaults()).toEqual(settings);
+        expect(console.warn).not.toHaveBeenCalled();
+    });
+
     it('keeps the current defaults when a read fails, without rejecting', async () => {
         localStorage.setItem(CACHE_KEY, JSON.stringify({ hdrOutput: true }));
         responses.push(respondStatus(INTERNAL_SERVER_ERROR_STATUS), (): Promise<Response> => Promise.reject(new TypeError('Failed to fetch')));

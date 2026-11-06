@@ -53,17 +53,27 @@ The audio output device and a user's own decoders stay per browser, since a devi
 - Save and every "Retroactively apply to clients" button stay disabled when the defaults could not be read: a save replaces every default, so a form that never showed them would drop them.
 - The editor takes half the page's width, but no less than 30em or the page's width.
 - It has one row per flat key, grouped and labelled like the playback settings panel, with the panel's ranges, units, and options from `ui/SettingDefinitions.ts`.
+- The "Decoder tests" section leads the editor, so it sits at the top of the plugin's settings (11-05).
+  It says what decoder tests are, and that a device which only controls others needs none; [The client add-on](add-on.md#decoder-test-timing) has the values and the rules syntax.
+  - `decoderTestTiming` is a select of the three timings, like any user setting.
+  - `decoderTestBackgroundDevices` is a checkbox per device type, desktop browsers, phones and tablets, and TVs and consoles; its value is the checked types, in that order, and none checked is a value of its own.
+  - `decoderTestRules` is a text box that wraps no line, with the syntax beneath it, the problems of its rules, live, as it is edited, each naming its line, and this browser's device type and its `client`, `device`, `version`, and `ua` values from `describeDecoderTestClient()`, for copying into a rule.
 - Each row shows the server's value read through the client's own normalization, or the add-on's built-in value where the server sets none.
 - A server value that reads otherwise, such as a refused type or an out-of-range number, shows what clients take instead, and the status line names it.
-- Each row, and the default shader preset beside its Add button, has two buttons at the end of the row, which wrap below a control too narrow to share it:
+  Device types in another order read as the same value.
+- Each row, and the default shader preset beside its Add button, has buttons at the end of the row, which wrap below a control too narrow to share it:
   - "Reset to default" shows the add-on's built-in value, or empties the preset, in the form; Save stores it.
   - "Retroactively apply to clients" saves the form, as Save does, with the row's key in `apply`; the status line then names the setting.
+    The decoder test device types and rules have none, since no user chooses them.
 - The default shader preset lists the server's pass files in order, at most 16.
   Each file shows the parameters and constants its passes declare, from the source the editor downloads and parses with the engine's `parsePassFile`, with each one's default and range.
   A file the catalog no longer offers stays listed, marked, and removable.
   A file whose source cannot be read keeps the parameter values the server holds for it.
 - Save stores each row's value that differs from the built-in one, so a row equal to it follows the built-in default, and, when the list holds a file, `presentationFiles` with only the parameter values that differ from the pass defaults.
+  The device types differ when they hold other types, whatever their order.
   The form then shows what the server stored; a refusal shows its `<code>: <detail>` in the status line.
+- Save, and every "Retroactively apply to clients" button, store nothing while the rules have a problem: a line `parseDecoderTestRules` refuses, or a text past 4096 characters.
+  The status line then names each problem, by its line, as the text box does; clients would ignore the invalid lines, so the editor keeps an administrator from storing rules that do less than they read.
 
 ## Applied settings on clients
 

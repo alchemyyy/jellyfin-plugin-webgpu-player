@@ -33,4 +33,25 @@
             margin: 0;
         }
     }
+
+    // The rules are code, a rule per line, so they keep the text box's width and scroll rather than wrap
+    .webgpuClientDefaultsRules textarea {
+        box-sizing: border-box;
+        width: 100%;
+        font-family: monospace;
+        resize: vertical;
+    }
+
+    // This browser's values, each whole for copying into a rule; a long user agent wraps anywhere
+    .webgpuClientDefaultsClientValues {
+        ul {
+            margin: 0.25em 0 0;
+            padding-inline-start: 1.5em;
+        }
+
+        code {
+            overflow-wrap: anywhere;
+            user-select: all;
+        }
+    }
 }

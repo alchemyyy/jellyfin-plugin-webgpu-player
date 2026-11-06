@@ -19,6 +19,7 @@ import {
     AUDIO_DOWNMIX_ALGORITHM_OPTIONS,
     AUDIO_SPEAKER_LAYOUT_OPTIONS,
     createSettingOptionsHTML,
+    DECODER_TEST_TIMING_OPTIONS,
     NUMERIC_CONTROL_CONFIGURATIONS,
     SETTINGS_BUTTON_PLACEMENT_OPTIONS,
     TONE_MAP_OPERATOR_OPTIONS,
@@ -43,7 +44,11 @@ import 'elements/emby-select/emby-select';
 import 'elements/emby-slider/emby-slider';
 import 'material-design-icons-iconfont';
 
-import { clearStoredCapabilityProbeVerdicts } from 'webgpu-player/capability/CapabilityProbeStore';
+import {
+    clearStoredCapabilityProbeVerdicts,
+    readStoredCapabilityProbeVerdictState,
+    type CrashedCapabilityProbe
+} from 'webgpu-player/capability/CapabilityProbeStore';
 import type { RenderSettings } from 'webgpu-player/presentation/RenderSettings';
 import type WebGPUPlayer from '../WebGPUPlayer';
 import {
@@ -73,6 +78,7 @@ type DefaultSettingKey =
     | 'audioDownmixAlgorithm'
     | 'automaticInputPeakNits'
     | 'binauralHeadphones'
+    | 'decoderTestTiming'
     | 'enableCustomDecode'
     | 'enableGPUDecodeSlicing'
     | 'enableHDRToneMapping'
@@ -110,6 +116,7 @@ const OSD_CONTROLS_SELECTOR = '.videoOsdBottom-maincontrols .osdControls';
 const OSD_CONTROLS_GAP_PX = 8;
 const PANEL_TOP_PROPERTY = '--webgpu-settings-top';
 const PANEL_MAXIMUM_HEIGHT_PROPERTY = '--webgpu-settings-max-height';
+const LIST_SEPARATOR = ', ';
 
 let activePanel: ActivePanel | null = null;
 
@@ -345,6 +352,22 @@ function createPanelHTML(): string {
                         class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
                         id="${getSettingDescriptionId('enableGPUDecodeSlicing')}"
                     >${translateToHTML('WebGPUEnableGPUDecodeSlicingHelp')}</div>
+                    <div class="webgpuSettingsSelectRow">
+                        <div class="selectContainer webgpuSettingsSelectContainer">
+                            <select
+                                aria-describedby="${getSettingDescriptionId('decoderTestTiming')}"
+                                data-setting-select="decoderTestTiming"
+                                id="webgpu-decoder-test-timing"
+                                is="emby-select"
+                                label="${translateToHTML('WebGPUDecoderTestTiming')}"
+                            >${createSettingOptionsHTML(DECODER_TEST_TIMING_OPTIONS)}</select>
+                        </div>
+                        ${createDescribedSettingButtonsHTML('decoderTestTiming', globalize.translate('WebGPUSettingNameDecoderTestTiming'))}
+                    </div>
+                    <div
+                        class="fieldDescription ${HIDDEN_CLASS}"
+                        id="${getSettingDescriptionId('decoderTestTiming')}"
+                    >${translateToHTML('WebGPUDecoderTestTimingDialogHelp')}</div>
                     <div class="webgpuSettingsStatus" data-playback-status role="status">
                         ${translateToHTML('WebGPUPlaybackChangesRestartRequired')}
                     </div>
@@ -357,6 +380,7 @@ function createPanelHTML(): string {
                         >${translateToHTML('WebGPUClearProbeCache')}</button>
                         ${createInfoButtonHTML('probeCache', globalize.translate('WebGPUSettingNameDecoderTestResults'))}
                     </div>
+                    <div class="fieldDescription webgpuSettingsCrashedProbes ${HIDDEN_CLASS}" data-crashed-probes></div>
                     <div
                         class="fieldDescription ${HIDDEN_CLASS}"
                         id="${getSettingDescriptionId('probeCache')}"
@@ -722,6 +746,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
     const speakerLayoutSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="speakerLayout"]');
     const settingsButtonPlacementSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="settingsButtonPlacement"]');
+    const decoderTestTimingSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="decoderTestTiming"]');
     let settings = loadWebGPUUserSettings();
     const audioOutputManager = getWebGPUAudioOutputManager();
     let audioDownmixAlgorithm: CustomAudioDownmixAlgorithm = webGPUAudioDownmixAlgorithm();
@@ -797,6 +822,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         // HDR tone mapping and GPU decode run only on the custom decode path
         HDRToneMappingCheckbox.disabled = !settings.playback.enableCustomDecode;
         GPUDecodeSlicingCheckbox.disabled = !settings.playback.enableCustomDecode;
+        decoderTestTimingSelect.value = settings.playback.decoderTestTiming;
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
         speakerLayoutSelect.value = settings.audio.speakerLayout;
         operatorSelect.value = settings.render.settings.toneMapping.operator;
@@ -1031,6 +1057,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         settings = normalizeWebGPUUserSettings({
             ...settings,
             playback: {
+                ...settings.playback,
                 enableCustomDecode: customDecodeCheckbox.checked,
                 enableGPUDecodeSlicing: GPUDecodeSlicingCheckbox.checked,
                 enableHDRToneMapping: HDRToneMappingCheckbox.checked
@@ -1058,6 +1085,27 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     bindDefaultButton('enableGPUDecodeSlicing', (): void => {
         GPUDecodeSlicingCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableGPUDecodeSlicing;
         onPlaybackPreferenceChange();
+    });
+
+    // The choice applies from the next page load, which runs the tests in the background or leaves them to a playback
+    const onDecoderTestTimingChange = (): void => {
+        settings = normalizeWebGPUUserSettings({
+            ...settings,
+            playback: {
+                ...settings.playback,
+                decoderTestTiming: decoderTestTimingSelect.value
+            }
+        });
+        persistSettings();
+        setStatus(playbackStatus, globalize.translate('WebGPUDecoderTestTimingSavedStatus'));
+    };
+    decoderTestTimingSelect.addEventListener('change', onDecoderTestTimingChange);
+    cleanupCallbacks.push((): void => {
+        decoderTestTimingSelect.removeEventListener('change', onDecoderTestTimingChange);
+    });
+    bindDefaultButton('decoderTestTiming', (): void => {
+        decoderTestTimingSelect.value = createDefaultWebGPUUserSettings().playback.decoderTestTiming;
+        onDecoderTestTimingChange();
     });
 
     const onAutomaticInputPeakChange = (): void => {
@@ -1209,9 +1257,23 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         resetRenderButton.removeEventListener('click', onResetRender);
     });
 
+    const crashedProbesElement = requireElement<HTMLElement>(panel, '[data-crashed-probes]');
+    // Probe names and step labels are the engine's, shown as they are
+    const showCrashedProbes = (): void => {
+        const crashedProbes = readStoredCapabilityProbeVerdictState()?.crashedProbes ?? [];
+        const probeTexts = crashedProbes.map((crash: CrashedCapabilityProbe): string => (
+            crash.steps.length === 0 ?
+                crash.probe :
+                globalize.translate('WebGPUCrashedProbeSteps', crash.probe, crash.steps.join(LIST_SEPARATOR))
+        ));
+        setStatus(crashedProbesElement, probeTexts.length === 0 ? '' : globalize.translate('WebGPUCrashedProbes', probeTexts.join(LIST_SEPARATOR)));
+        crashedProbesElement.classList.toggle(HIDDEN_CLASS, probeTexts.length === 0);
+    };
+    showCrashedProbes();
     const clearProbeCacheButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache');
     const onClearProbeCache = (): void => {
         clearStoredCapabilityProbeVerdicts();
+        showCrashedProbes();
         setStatus(playbackStatus, globalize.translate('WebGPUProbeCacheClearedStatus'));
     };
     clearProbeCacheButton.addEventListener('click', onClearProbeCache);

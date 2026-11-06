@@ -27,9 +27,10 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 2. Jellyfin Web's plugin manager loads `WebGPUPlayer` through its window plugin path and constructs it with its dependency bag.
 3. `jellyfin-webgpu-client/src/index.ts` configures the engine: the asset base is the add-on route plus `libraries/`, the cache key is the engine build's asset key, and `isHDRToneMappingEnabled` reads the user's preference.
    It names the build whose capability probe verdicts the engine stores, the engine's asset key joined with webpack's `__webpack_hash__`, which also changes with the add-on's own probe code and profile rules.
-   It then binds the host bridge, starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
-   The warm-up runs only with custom decode on and the runtime available, and the engine skips it on a client that asks to save data or has fewer than four threads, and on a browser where a probe once stopped the page, for that build.
-   It tells the engine that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
+   It then binds the host bridge, starts the probe crash reports (`ProbeCrashReports.ts`, below), starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
+   The warm-up runs only with custom decode on and the runtime available, and only on a client whose [decoder test timing](#decoder-test-timing) is `background`; the engine skips it on a client that asks to save data or has fewer than four threads, and on a browser where a probe once stopped the page, for that build.
+   It tells the engine at once that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
+   `index.ts` does not wait for the warm-up, which decides whether it runs once the server's client defaults settle and logs that decision once to the console.
 4. The plugin serves the add-on build at `<BaseUrl>/WebGPUPlayer/assets/<path>`, the engine's served folder included.
 
 ## Outdated pages
@@ -67,6 +68,61 @@ To try it on a live server without a second deploy, make the catalog name anothe
 
 Check: about 10 seconds after the stop, with the details page showing, the tab reloads on the same page, and `sessionStorage.getItem('webGPUPlayerReloadedForEntry')` is `plugin.test.js`.
 With the override still active, later plays never reload again in that tab; a play started within the 10 seconds, or an open dialog, defers the reload.
+
+## Probe crash reports
+
+A capability probe's browser call can crash the browser's page process, as WebKit's does on some iOS devices, and the page reloads.
+The engine records which probe was in a browser call, and which calls it had in flight, so the next page of that browser finds the crash, skips the probe, and keeps it with the stored verdicts.
+`ProbeCrashReports.ts` sends each crash to the server, so an administrator can read it without the browser's developer tools.
+
+- `index.ts` starts it once the host's ServerConnections is bound and before the warm-up, whose first read of the probe store finds a crash of an earlier page.
+- It listens with the engine's `onCapabilityProbeCrash`, which calls it once per finding with the crashes just recorded, each a probe name and its step labels, such as `native-audio` with `decode aac`.
+- It posts each finding to `POST WebGPUPlayer/Diagnostics/ProbeCrashes` on the current server, signed in as the page's user.
+  It sends the authorization header Jellyfin Web itself sends, which the host's API client writes with `setRequestHeaders` (`MediaBrowser Client="...", Device="...", DeviceId="...", Version="...", Token="..."`), so the server's log can tell the iOS app from Safari; an API client without that method sends the token alone, as the other plugin routes are called.
+  The body is `{ "crashes": [ { "probe": "native-audio", "steps": [ "decode aac" ] } ] }`, with no other property, since the route refuses one with 400.
+- The route accepts 1 to 16 crashes, a probe name of 1 to 64 characters, and 0 to 16 steps of 1 to 96 characters each, every string printable ASCII, and refuses anything else whole with 400.
+  The add-on keeps what fits: it leaves out a crash whose name the route refuses and the steps it refuses, and sends at most the first 16 crashes and 16 steps of each.
+- A finding while no user is signed in waits for the next `localusersignedin` and is sent then, with any other waiting crashes, up to the same 16.
+- A failed post logs one console warning and is not tried again; the crash stays in the browser's stored verdicts and in the settings panel.
+  Nothing it does throws into the engine or holds a probe or a playback.
+- The server answers 204 and writes one warning per crash to its log, naming the probe, its steps, the browser's User-Agent, and the Jellyfin client, device, and client version from the authorization header, `unknown` where it names none.
+  An administrator reads them under Dashboard > Logs.
+
+## Decoder test timing
+
+The decoder tests are the engine's capability probes, which find what this browser decodes and presents.
+`CapabilityProbeWarmUp.ts` runs them in the background after the page loads, the warm-up, only on a client whose decoder test timing is `background`; elsewhere a playback runs the tests it needs, as version 1.1.0.1 did.
+A phone used only as a remote control never plays, so it gains nothing from them, and on iOS WebKit one of them can stop the page (see [Probe crash reports](#probe-crash-reports)).
+
+- The setting "Decoder tests" (`playback.decoderTestTiming` in `WebGPUUserSettings.ts`, client default key `decoderTestTiming`) is `automatic`, the built-in default, `background`, or `playback`.
+  An administrator sets its default on the plugin's settings page, and each browser can choose its own in the WebGPU settings dialog.
+- `background` runs the warm-up at load and has the engine measure a stored verdict again in the background after a negotiation it served.
+- `playback` runs no warm-up and passes `refreshAfterUse: false` to the engine's `configureCustomDecodeCapabilityBackground`, so a stored verdict that served a negotiation is not measured again behind it; a negotiation still runs every test it selects that has no stored verdict.
+- `automatic` leaves it to the administrator: the first of the rules (`decoderTestRules`) that matches decides, and with none matching, the client runs the tests in the background when its device type is among the background device types (`decoderTestBackgroundDevices`, built-in `desktop` alone), else only at playback.
+  An empty list of device types runs them in the background on no device type.
+- The device type comes from Jellyfin Web's own browser detection (`scripts/browser`), on the client: `tv` for a TV or console (`tv`, `xboxOne`, `ps4`, `tizen`, or `web0s`), else `mobile` for a phone or tablet (`mobile`, `iOS`, `ipad`, or `android`), else `desktop`.
+  A Jellyfin app falls in the type of its form factor; an Android TV is a TV, and an iPad that asks for the desktop site is a tablet, since the detection marks a Mac with touch as an iPad.
+- `DecoderTestTiming.ts` decides, at page load once the client defaults settle; a change of the setting, the device types, or the rules applies from the next page load.
+  A stored choice of the user's comes before the server's default, which comes before the built-in default; a device type list or rules text the client refuses takes the built-in default.
+- The console logs the decision once per page, as `WebGPU decoder tests: <timing> (<reason>)`, the reason being `setting`, `rule on line <n>`, or `device type <type>`.
+
+Rules text holds at most 4096 characters and 64 rules, one per line:
+
+```text
+# Phones that only control playback
+playback device: *iPhone*
+playback client: Jellyfin Android
+background ua: *Windows NT*
+```
+
+- A blank line, and a line whose first nonblank character is `#`, is skipped.
+- A rule is `<timing> <field>: <pattern>`: the timing is `background` or `playback`, and the field one of the values Jellyfin shows under Dashboard > Devices and sends in its authorization header.
+  `client` is `appHost.appName()`, such as `Jellyfin Web`; `device` is `appHost.deviceName()`, such as `Firefox`; `version` is `appHost.appVersion()`; and `ua` is the browser's `navigator.userAgent`.
+  Keywords take any case, and the colon any spacing; the pattern is the rest of the line, trimmed, and must not be blank.
+- A pattern matches the whole value, ignoring case: `*` matches any run of characters, none included, `?` exactly one, and every other character itself, `.`, `(`, and `+` included.
+- Rules apply in order, under `automatic` only, and the first whose pattern matches its field decides.
+- A line that is no rule is a problem, named by its line number and its reason: `syntax`, `timing`, `field`, `pattern`, or `too-many` for a rule past the 64th.
+  The plugin's settings page refuses to save rules with problems; a client skips such lines with one console warning per page load, `WebGPU decoder tests: rules-invalid: lines <n> (<reason>), ... ignored`.
 
 ## The player
 
@@ -129,6 +185,7 @@ Every setting is the user's own in the browser profile, else the default an admi
 - The speaker layout and binaural rendering also take part in choosing a track's decoder, so a change that needs another decoder, such as one that renders objects, applies from the next playback or audio track switch.
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
+- The decoder test timing defaults to `automatic` and applies from the next page load; see [Decoder test timing](#decoder-test-timing).
 - GPU decode slicing defaults to off, and a playback keeps the value it started with.
   `WebGPUPlayer` hands it to the engine's `createGPUVideoDecodeSessionFactory` with each playback's controller, and with it on, a picture a decoder package decodes on the GPU submits its work in slices, so a presented frame waits behind less decode; the engine book's decisions weigh what it costs.
 - The presentation settings are HDR output, off by default, black bar crop, off by default, deinterlacing, double rate by default, and the user's WGSL shader files in order, each with its parameter values and its source's key.
@@ -152,6 +209,8 @@ Every setting is the user's own in the browser profile, else the default an admi
   The controls render from `ui/SettingDefinitions.ts`, which holds each numeric setting's label, description, range, and unit, and each select's options.
 - The playback section's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again, a probe that once stopped the page included.
   The engine keeps those verdicts in localStorage under its own key, apart from these settings.
+- Below that button, the panel names the probes that stopped a page of this browser, from the engine's `readStoredCapabilityProbeVerdictState()`, each with its steps in parentheses, such as `native-audio (decode aac)`.
+  Probe names and step labels show as the engine records them, untranslated; the line is hidden when there are none, and the panel reads it when it opens and again after the button clears the results.
 - The shader pass section adds files from this device, or from the passes the server offers, which download when added.
   It shows the default shader files while the user follows them; any change stores the list as the user's own, and "Restore default shader passes" follows the default again.
   The panel opens once `ensureDefaultPresentationFiles()` settles, and only the user's own preset takes the server's newer file versions in place.

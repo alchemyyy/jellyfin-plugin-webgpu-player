@@ -10,6 +10,18 @@ import { parsePassFile } from 'webgpu-player/presentation/passes/PassManifest';
 import type { PassParameter } from 'webgpu-player/presentation/passes/PassTypes';
 
 import { CLIENT_DEFAULT_KEYS, type ClientDefaultKey } from '../ClientDefaults';
+import {
+    DECODER_TEST_DEVICE_TYPES,
+    DEFAULT_DECODER_TEST_BACKGROUND_DEVICES,
+    describeDecoderTestClient,
+    MAXIMUM_DECODER_TEST_RULE_COUNT,
+    MAXIMUM_DECODER_TEST_RULES_LENGTH,
+    normalizeDecoderTestBackgroundDevices,
+    normalizeDecoderTestRules,
+    parseDecoderTestRules,
+    type DecoderTestDeviceType,
+    type DecoderTestRuleProblem
+} from '../DecoderTestTiming';
 import { normalizeVideoPlayerPreference, VideoPlayerPreference } from '../PreferredVideoPlayer';
 import {
     applyClientDefaults,
@@ -30,6 +42,8 @@ import {
     AUDIO_DOWNMIX_ALGORITHM_OPTIONS,
     AUDIO_SPEAKER_LAYOUT_OPTIONS,
     createSettingOptionsHTML,
+    DECODER_TEST_DEVICE_TYPE_OPTIONS,
+    DECODER_TEST_TIMING_OPTIONS,
     DEINTERLACE_MODE_OPTIONS,
     NUMERIC_CONTROL_CONFIGURATIONS,
     SETTINGS_BUTTON_PLACEMENT_OPTIONS,
@@ -48,15 +62,33 @@ import './ClientDefaultsEditor.scss';
 
 /** A flat key the editor shows as one row; the default shader preset has a list of its own. */
 type SettingKey = Exclude<ClientDefaultKey, 'presentationFiles'>;
-type SettingValue = boolean | number | string;
+// The device types that test in the background are the one value that is a list
+type SettingValue = boolean | number | string | readonly DecoderTestDeviceType[];
 type SettingValues = Readonly<Record<SettingKey, SettingValue>>;
 
+/** The defaults stored apart from a user's settings, or set by the administrator alone, which the editor reads beside them. */
+type SeparateValues = Readonly<{
+    audioDownmixAlgorithm: CustomAudioDownmixAlgorithm
+    decoderTestBackgroundDevices: readonly DecoderTestDeviceType[]
+    decoderTestRules: string
+    preferredVideoPlayer: VideoPlayerPreference
+}>;
+
+// A devices row is a checkbox per device type, and a rules row a text box of decoder test rules; neither is a user's choice
 type SettingRow =
     | Readonly<{ descriptionKey: string, key: SettingKey, kind: 'boolean', labelKey: string }>
     | Readonly<{ descriptionKey?: string, key: SettingKey, kind: 'select', labelKey: string, options: ReadonlyArray<SettingOption<string>> }>
-    | Readonly<{ configuration: NumericControlConfiguration, key: SettingKey, kind: 'number' }>;
+    | Readonly<{ configuration: NumericControlConfiguration, key: SettingKey, kind: 'number' }>
+    | Readonly<{
+        descriptionKey: string
+        key: SettingKey
+        kind: 'devices'
+        labelKey: string
+        options: ReadonlyArray<SettingOption<DecoderTestDeviceType>>
+    }>
+    | Readonly<{ descriptionKey: string, key: SettingKey, kind: 'rules', labelKey: string }>;
 
-type SettingSection = Readonly<{ rows: readonly SettingRow[], titleKey: string }>;
+type SettingSection = Readonly<{ descriptionKey?: string, rows: readonly SettingRow[], titleKey: string }>;
 
 /** One file of the default shader preset: its server file name, and the parameter values set for it, by name. */
 type PresetFile = Readonly<{
@@ -83,6 +115,16 @@ const FLOAT_PARAMETER_STEP = 'any';
 const INTEGER_PARAMETER_STEP = '1';
 const LIST_SEPARATOR = ', ';
 const ID_PREFIX = 'webgpu-client-default-';
+// The add-on's built-in decoder test rules: none, so the device types decide
+const BUILT_IN_DECODER_TEST_RULES = '';
+// The sentence of each problem of a rules line, which names the line, and the rule limit where the line is past it
+const RULE_PROBLEM_KEYS: Readonly<Record<DecoderTestRuleProblem['reason'], string>> = Object.freeze({
+    field: 'WebGPUDecoderTestRuleField',
+    pattern: 'WebGPUDecoderTestRulePattern',
+    syntax: 'WebGPUDecoderTestRuleSyntax',
+    timing: 'WebGPUDecoderTestRuleTiming',
+    'too-many': 'WebGPUDecoderTestRuleTooMany'
+});
 
 /** Returns the rows of a section's numeric settings, in the panel's order. */
 function getNumericRows(section: NumericControlConfiguration['section']): SettingRow[] {
@@ -91,8 +133,29 @@ function getNumericRows(section: NumericControlConfiguration['section']): Settin
         .map((configuration: NumericControlConfiguration): SettingRow => ({ configuration, key: configuration.key, kind: 'number' }));
 }
 
-// The sections and rows of the playback settings panel, in its order; the shader preset follows the presentation section
+// The decoder tests lead the page; then the sections and rows of the playback settings panel, in its order, where the shader preset follows the presentation section
 const LEADING_SECTIONS: readonly SettingSection[] = Object.freeze([
+    {
+        descriptionKey: 'WebGPUDecoderTestsHelp',
+        rows: [
+            {
+                descriptionKey: 'WebGPUDecoderTestTimingHelp',
+                key: 'decoderTestTiming',
+                kind: 'select',
+                labelKey: 'WebGPUDecoderTestTiming',
+                options: DECODER_TEST_TIMING_OPTIONS
+            },
+            {
+                descriptionKey: 'WebGPUDecoderTestBackgroundDevicesHelp',
+                key: 'decoderTestBackgroundDevices',
+                kind: 'devices',
+                labelKey: 'WebGPUDecoderTestBackgroundDevices',
+                options: DECODER_TEST_DEVICE_TYPE_OPTIONS
+            },
+            { descriptionKey: 'WebGPUDecoderTestRulesHelp', key: 'decoderTestRules', kind: 'rules', labelKey: 'WebGPUDecoderTestRules' }
+        ],
+        titleKey: 'WebGPUDecoderTests'
+    },
     {
         rows: [
             {
@@ -191,23 +254,33 @@ function getRowLabel(row: SettingRow): string {
     return globalize.translate(row.kind === 'number' ? row.configuration.labelKey : row.labelKey);
 }
 
-/** Returns each flat setting's value in a client's settings. */
-function getSettingValues(
-    settings: WebGPUUserSettings,
-    preferredVideoPlayer: VideoPlayerPreference,
-    audioDownmixAlgorithm: CustomAudioDownmixAlgorithm
-): SettingValues {
+/** Whether a value equals a setting's value; a list of device types equals another that holds the same ones, in any order. */
+function isSameValue(value: unknown, settingValue: SettingValue): boolean {
+    if (typeof settingValue !== 'object') {
+        return value === settingValue;
+    }
+    const entries: readonly unknown[] = Array.isArray(value) ? value : [];
+    return Array.isArray(value)
+        && entries.length === settingValue.length
+        && settingValue.every((deviceType: DecoderTestDeviceType): boolean => entries.includes(deviceType));
+}
+
+/** Returns each flat setting's value in a client's settings, and the values stored apart from them. */
+function getSettingValues(settings: WebGPUUserSettings, separateValues: SeparateValues): SettingValues {
     const display = settings.render.settings.display;
     const toneMapping = settings.render.settings.toneMapping;
     const downmix = settings.audio.downmix;
     return {
-        audioDownmixAlgorithm,
+        audioDownmixAlgorithm: separateValues.audioDownmixAlgorithm,
         automaticInputPeakNits: settings.render.automaticInputPeakNits,
         binauralHeadphones: settings.audio.binauralHeadphones,
         blackBarCrop: settings.presentation.blackBarCrop,
         brightness: display.brightness,
         centerLevel: downmix.centerLevel,
         contrast: display.contrast,
+        decoderTestBackgroundDevices: separateValues.decoderTestBackgroundDevices,
+        decoderTestRules: separateValues.decoderTestRules,
+        decoderTestTiming: settings.playback.decoderTestTiming,
         deinterlaceMode: settings.presentation.deinterlaceMode,
         desaturationStrength: toneMapping.desaturationStrength,
         enableCustomDecode: settings.playback.enableCustomDecode,
@@ -220,7 +293,7 @@ function getSettingValues(
         outputGain: downmix.outputGain,
         outputPeakNits: toneMapping.outputPeakNits,
         paperWhiteNits: toneMapping.paperWhiteNits,
-        preferredVideoPlayer,
+        preferredVideoPlayer: separateValues.preferredVideoPlayer,
         saturation: display.saturation,
         settingsButtonPlacement: settings.osd.settingsButtonPlacement,
         speakerLayout: settings.audio.speakerLayout,
@@ -351,20 +424,98 @@ function createRowControlHTML(row: SettingRow, descriptionKey: string | undefine
                     ${description === '' ? '' : `<div class="fieldDescription">${description}</div>`}
                 </div>`;
         }
+        case 'devices':
+            return `
+                <div class="webgpuClientDefaultsDevices">
+                    <div class="checkboxListLabel">${translateToHTML(row.labelKey)}</div>
+                    <div class="checkboxList">
+                        ${row.options.map((option: SettingOption<DecoderTestDeviceType>): string => `
+                            <label>
+                                <input
+                                    data-client-default-value="${row.key}"
+                                    id="${id}-${option.value}"
+                                    is="emby-checkbox"
+                                    type="checkbox"
+                                    value="${option.value}"
+                                />
+                                <span>${translateToHTML(option.labelKey ?? option.value)}</span>
+                            </label>`).join('')}
+                    </div>
+                    <div class="fieldDescription">${description}</div>
+                </div>`;
+        case 'rules':
+            // The text box wraps no line, so each rule shows on a line of its own, and the problems name lines as written
+            return `
+                <div class="inputContainer webgpuClientDefaultsRules">
+                    <label class="textareaLabel" for="${id}">${translateToHTML(row.labelKey)}</label>
+                    <textarea
+                        autocomplete="off"
+                        class="emby-textarea"
+                        data-client-default-value="${row.key}"
+                        id="${id}"
+                        rows="6"
+                        spellcheck="false"
+                        wrap="off"
+                    ></textarea>
+                    <div aria-live="polite" class="fieldDescription" data-client-defaults-rule-problems></div>
+                    <div class="fieldDescription">${translateToHTML(
+                        row.descriptionKey,
+                        MAXIMUM_DECODER_TEST_RULE_COUNT,
+                        MAXIMUM_DECODER_TEST_RULES_LENGTH
+                    )}</div>
+                    ${createClientValuesHTML()}
+                </div>`;
     }
 }
 
-/** Returns a setting's buttons that apply its default to every client and return it to the built-in default, each named by the setting's label. */
-function createActionsHTML(key: ClientDefaultKey, label: string): string {
+/** Returns this browser's values that rules match, and its device type, for an administrator to copy into a rule, each line written as a rule's field. */
+function createClientValuesHTML(): string {
+    const client = describeDecoderTestClient();
+    const deviceTypeKey = DECODER_TEST_DEVICE_TYPE_OPTIONS
+        .find((option: SettingOption<DecoderTestDeviceType>): boolean => option.value === client.deviceType)?.labelKey;
+    const fields: ReadonlyArray<readonly [ string, string ]> = [
+        [ 'client', client.client ],
+        [ 'device', client.device ],
+        [ 'version', client.version ],
+        [ 'ua', client.userAgent ]
+    ];
     return `
-        <div class="webgpuClientDefaultActions">
+        <div class="fieldDescription webgpuClientDefaultsClientValues" data-client-defaults-client-values>
+            <div>${translateToHTML('WebGPUDecoderTestClientValues')}</div>
+            <ul>
+                <li>${translateToHTML('WebGPUDecoderTestClientDeviceType', globalize.translate(deviceTypeKey ?? client.deviceType))}</li>
+                ${fields.map(([ field, value ]: readonly [ string, string ]): string => (
+                    `<li data-client-defaults-client-value="${field}">${field}: <code>${escapeHtml(value)}</code></li>`
+                )).join('')}
+            </ul>
+        </div>`;
+}
+
+/** Returns the text of each problem of decoder test rules, as sentences: a text past the length limit, then each invalid line. */
+function describeRuleProblems(text: string): string[] {
+    const sentences: string[] = [];
+    if (text.length > MAXIMUM_DECODER_TEST_RULES_LENGTH) {
+        sentences.push(globalize.translate('WebGPUDecoderTestRulesTooLong', text.length, MAXIMUM_DECODER_TEST_RULES_LENGTH));
+    }
+    for (const problem of parseDecoderTestRules(text).problems) {
+        sentences.push(globalize.translate(RULE_PROBLEM_KEYS[problem.reason], problem.line, MAXIMUM_DECODER_TEST_RULE_COUNT));
+    }
+    return sentences;
+}
+
+/** Returns a setting's buttons that apply its default to every client, when users choose it themselves, and return it to the built-in default, each named by the setting's label. */
+function createActionsHTML(key: ClientDefaultKey, label: string, applicable: boolean): string {
+    const applyHTML = applicable ? `
             <button
                 aria-label="${translateToHTML('WebGPUClientDefaultsApplyLabel', label)}"
                 class="raised button-alt"
                 data-client-default-apply="${key}"
                 is="emby-button"
                 type="button"
-            ><span>${translateToHTML('WebGPUClientDefaultsApply')}</span></button>
+            ><span>${translateToHTML('WebGPUClientDefaultsApply')}</span></button>` : '';
+    return `
+        <div class="webgpuClientDefaultActions">
+            ${applyHTML}
             <button
                 aria-label="${translateToHTML('WebGPUClientDefaultsResetLabel', label)}"
                 class="raised"
@@ -378,10 +529,12 @@ function createActionsHTML(key: ClientDefaultKey, label: string): string {
 function createRowHTML(row: SettingRow): string {
     const descriptionKey = row.kind === 'number' ? row.configuration.descriptionKey : row.descriptionKey;
     const label = getRowLabel(row);
+    // The decoder test device types and rules are the administrator's alone, so no user's choice of them exists to drop
+    const applicable = row.kind !== 'devices' && row.kind !== 'rules';
     return `
         <div aria-label="${escapeHtml(label)}" class="verticalSection webgpuClientDefaultRow" data-client-default="${row.key}" role="group">
             ${createRowControlHTML(row, descriptionKey)}
-            ${createActionsHTML(row.key, label)}
+            ${createActionsHTML(row.key, label, applicable)}
         </div>`;
 }
 
@@ -389,6 +542,7 @@ function createSectionHTML(section: SettingSection): string {
     return `
         <div class="verticalSection">
             <h3 class="sectionTitle">${translateToHTML(section.titleKey)}</h3>
+            ${section.descriptionKey === undefined ? '' : `<div class="fieldDescription">${translateToHTML(section.descriptionKey)}</div>`}
             ${section.rows.map(createRowHTML).join('')}
         </div>`;
 }
@@ -413,7 +567,7 @@ function createPresetSectionHTML(): string {
                         <span>${translateToHTML('Add')}</span>
                     </button>
                 </div>
-                ${createActionsHTML(PRESET_FILES_KEY, globalize.translate('WebGPUShaderPasses'))}
+                ${createActionsHTML(PRESET_FILES_KEY, globalize.translate('WebGPUShaderPasses'), true)}
             </div>
         </div>`;
 }
@@ -495,13 +649,20 @@ function requireElement<ElementType extends Element>(root: ParentNode, selector:
     return element;
 }
 
-/** Returns the control that holds a row's value. */
-function getValueControl(root: ParentNode, key: SettingKey): HTMLInputElement | HTMLSelectElement {
-    return requireElement<HTMLInputElement | HTMLSelectElement>(root, `[data-client-default-value="${key}"]`);
+/** Returns the control that holds a row's value; a devices row holds it in a checkbox per device type, of which this is the first. */
+function getValueControl(root: ParentNode, key: SettingKey): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement {
+    return requireElement<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(root, `[data-client-default-value="${key}"]`);
 }
 
 /** Shows a value in a row's control; a number input also keeps it as the value an entry that is no number returns to. */
 function showRowValue(root: ParentNode, row: SettingRow, value: SettingValue): void {
+    if (row.kind === 'devices') {
+        const deviceTypes: readonly unknown[] = typeof value === 'object' ? value : [];
+        for (const checkbox of Array.from(root.querySelectorAll<HTMLInputElement>(`[data-client-default-value="${row.key}"]`))) {
+            checkbox.checked = deviceTypes.includes(checkbox.value);
+        }
+        return;
+    }
     const control = getValueControl(root, row.key);
     if (row.kind === 'boolean') {
         (control as HTMLInputElement).checked = value === true;
@@ -513,18 +674,26 @@ function showRowValue(root: ParentNode, row: SettingRow, value: SettingValue): v
     }
 }
 
-/** Reads a row's control: its checkbox, its option, or its number kept inside the setting's range, else the number it last showed. */
+/** Reads a row's control: its checkbox, its option, its text, its number kept inside the setting's range, else the number it last showed, or its checked device types in their order. */
 function readRowValue(root: ParentNode, row: SettingRow): SettingValue {
-    const control = getValueControl(root, row.key);
-    let value: SettingValue = control.value;
-    if (row.kind === 'boolean') {
-        value = (control as HTMLInputElement).checked;
-    } else if (row.kind === 'number') {
-        const range = row.configuration.range;
-        const entered = control.value === '' ? Number.NaN : Number(control.value);
-        value = Number.isFinite(entered) ?
-            Math.min(Math.max(entered, range.minimum), range.maximum) :
-            Number((control as HTMLInputElement).defaultValue);
+    let value: SettingValue;
+    if (row.kind === 'devices') {
+        const checkedTypes = Array.from(root.querySelectorAll<HTMLInputElement>(`[data-client-default-value="${row.key}"]`))
+            .filter((checkbox: HTMLInputElement): boolean => checkbox.checked)
+            .map((checkbox: HTMLInputElement): string => checkbox.value);
+        value = DECODER_TEST_DEVICE_TYPES.filter((deviceType: DecoderTestDeviceType): boolean => checkedTypes.includes(deviceType));
+    } else {
+        const control = getValueControl(root, row.key);
+        value = control.value;
+        if (row.kind === 'boolean') {
+            value = (control as HTMLInputElement).checked;
+        } else if (row.kind === 'number') {
+            const range = row.configuration.range;
+            const entered = control.value === '' ? Number.NaN : Number(control.value);
+            value = Number.isFinite(entered) ?
+                Math.min(Math.max(entered, range.minimum), range.maximum) :
+                Number((control as HTMLInputElement).defaultValue);
+        }
     }
     return value;
 }
@@ -555,11 +724,13 @@ async function describePresetFile(file: PresetFile, sources: Map<string, Promise
 async function readEditorState(serverDefaults: ServerClientDefaults, sources: Map<string, Promise<string>>): Promise<EditorState> {
     applyClientDefaults(serverDefaults);
     const defaults = serverDefaults.settings;
-    const clientValues = getSettingValues(
-        createDefaultWebGPUUserSettings(),
-        normalizeVideoPlayerPreference(defaults.preferredVideoPlayer),
-        normalizeCustomAudioDownmixAlgorithm(defaults.audioDownmixAlgorithm)
-    );
+    const clientValues = getSettingValues(createDefaultWebGPUUserSettings(), {
+        audioDownmixAlgorithm: normalizeCustomAudioDownmixAlgorithm(defaults.audioDownmixAlgorithm),
+        decoderTestBackgroundDevices: normalizeDecoderTestBackgroundDevices(defaults.decoderTestBackgroundDevices)
+            ?? DEFAULT_DECODER_TEST_BACKGROUND_DEVICES,
+        decoderTestRules: normalizeDecoderTestRules(defaults.decoderTestRules) ?? BUILT_IN_DECODER_TEST_RULES,
+        preferredVideoPlayer: normalizeVideoPlayerPreference(defaults.preferredVideoPlayer)
+    });
     const setValues: Partial<Record<SettingKey, SettingValue>> = {};
     const refusedLabels: string[] = [];
     for (const row of SETTING_ROWS) {
@@ -568,7 +739,7 @@ async function readEditorState(serverDefaults: ServerClientDefaults, sources: Ma
             continue;
         }
         setValues[row.key] = clientValues[row.key];
-        if (serverValue !== clientValues[row.key]) {
+        if (!isSameValue(serverValue, clientValues[row.key])) {
             refusedLabels.push(getRowLabel(row));
         }
     }
@@ -592,7 +763,12 @@ function describeRefusedValues(state: EditorState): string | null {
  * A failed read of the defaults shows there too, and the form cannot save: a save replaces every default, so it would drop the ones the form never showed.
  */
 export async function renderClientDefaultsEditor(element: HTMLElement): Promise<void> {
-    const builtInValues = getSettingValues(createBuiltInWebGPUUserSettings(), VideoPlayerPreference.Auto, DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
+    const builtInValues = getSettingValues(createBuiltInWebGPUUserSettings(), {
+        audioDownmixAlgorithm: DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM,
+        decoderTestBackgroundDevices: DEFAULT_DECODER_TEST_BACKGROUND_DEVICES,
+        decoderTestRules: BUILT_IN_DECODER_TEST_RULES,
+        preferredVideoPlayer: VideoPlayerPreference.Auto
+    });
     // Each pass file's source by its server key, downloaded once for this editor
     const sources = new Map<string, Promise<string>>();
     const [ defaultsResult, catalogResult ] = await Promise.allSettled([
@@ -626,6 +802,8 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
     const presetFilesElement = requireElement<HTMLElement>(root, '[data-client-defaults-preset-files]');
     const presetChoice = requireElement<HTMLSelectElement>(root, '[data-client-defaults-preset-choice]');
     const presetAddButton = requireElement<HTMLButtonElement>(root, '[data-client-defaults-preset-add]');
+    const rulesControl = requireElement<HTMLTextAreaElement>(root, '[data-client-default-value="decoderTestRules"]');
+    const ruleProblemsElement = requireElement<HTMLElement>(root, '[data-client-defaults-rule-problems]');
     let presetFiles: PresetFileView[] = [];
     let saving = false;
     let adding = false;
@@ -652,11 +830,19 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         presetAddButton.disabled = emptyText !== null || adding;
     };
 
+    /** Shows the problems of the rules in the text box beneath it, a line each. */
+    const showRuleProblems = (): void => {
+        ruleProblemsElement.innerHTML = describeRuleProblems(rulesControl.value)
+            .map((problem: string): string => `<div>${escapeHtml(problem)}</div>`)
+            .join('');
+    };
+
     /** Shows the server's defaults: each value the server sets, else the built-in one. */
     const showState = (state: EditorState): void => {
         for (const row of SETTING_ROWS) {
             showRowValue(root, row, state.setValues[row.key] ?? builtInValues[row.key]);
         }
+        showRuleProblems();
         presetFiles = [ ...state.presetFiles ];
         renderPreset();
     };
@@ -666,7 +852,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         const settings: Record<string, unknown> = {};
         for (const row of SETTING_ROWS) {
             const value = readRowValue(root, row);
-            if (value !== builtInValues[row.key]) {
+            if (!isSameValue(value, builtInValues[row.key])) {
                 settings[row.key] = value;
             }
         }
@@ -687,8 +873,14 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         }
     };
 
-    /** Stores the form, applying the given setting to every client when one is given. */
+    /** Stores the form, applying the given setting to every client when one is given; rules with problems store nothing, and the status line names each problem. */
     const save = async (applied: ClientDefaultKey | null): Promise<void> => {
+        const ruleProblems = describeRuleProblems(rulesControl.value);
+        if (ruleProblems.length > 0) {
+            const problemsText = ruleProblems.reduce<string | null>(joinSentences, null);
+            setStatus(statusElement, joinSentences(globalize.translate('WebGPUDecoderTestRulesNotSaved'), problemsText) ?? '');
+            return;
+        }
         setSaving(true);
         try {
             const stored = await saveServerClientDefaults(readForm(), applied === null ? [] : [ applied ]);
@@ -717,6 +909,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         const row = SETTING_ROWS.find((settingRow: SettingRow): boolean => settingRow.key === key);
         if (row !== undefined) {
             showRowValue(root, row, builtInValues[row.key]);
+            showRuleProblems();
         }
     };
 
@@ -732,6 +925,12 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
         presetFiles = [ ...presetFiles, file ];
         renderPreset();
     };
+
+    root.addEventListener('input', (event: Event): void => {
+        if (event.target === rulesControl) {
+            showRuleProblems();
+        }
+    });
 
     root.addEventListener('change', (event: Event): void => {
         const target = event.target;

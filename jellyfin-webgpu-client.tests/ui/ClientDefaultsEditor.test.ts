@@ -5,6 +5,7 @@ import { createHDRToSDRRenderSettings, HDR_RENDER_SETTING_RANGES } from 'webgpu-
 import { CLIENT_DEFAULT_KEYS, getClientDefaults, setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
 import { saveServerClientDefaults } from 'addons/webGPUPlayer/ServerClientDefaults';
 import { renderClientDefaultsEditor } from 'addons/webGPUPlayer/ui/ClientDefaultsEditor';
+import { MAXIMUM_DECODER_TEST_RULE_COUNT, MAXIMUM_DECODER_TEST_RULES_LENGTH } from 'addons/webGPUPlayer/DecoderTestTiming';
 import { translateSourceString } from '../host/globalizeMock';
 import {
     INVERT_PASS_SOURCE,
@@ -70,8 +71,54 @@ vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: { get: vi.fn((): null => null), set: vi.fn() }
 }));
 
+// This browser's values the editor shows for rules, which the real module reads from the host's app and browser detection
+const decoderTestClient = vi.hoisted(() => ({
+    client: 'Jellyfin Web',
+    device: 'Firefox',
+    deviceType: 'mobile' as const,
+    userAgent: 'Mozilla/5.0 <test>',
+    version: '10.11.0'
+}));
+
+vi.mock('addons/webGPUPlayer/DecoderTestTiming', async importOriginal => ({
+    ...await importOriginal<typeof import('addons/webGPUPlayer/DecoderTestTiming')>(),
+    describeDecoderTestClient: vi.fn(() => decoderTestClient)
+}));
+
 function createPassEntry(fileName: string, passName: string): { byteLength: number, contentHash: string, fileName: string, passNames: string[] } {
     return { byteLength: 1, contentHash: 'a'.repeat(64), fileName, passNames: [ passName ] };
+}
+
+function getCheckedDeviceTypes(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll<HTMLInputElement>('[data-client-default-value="decoderTestBackgroundDevices"]'))
+        .filter((checkbox: HTMLInputElement): boolean => checkbox.checked)
+        .map((checkbox: HTMLInputElement): string => checkbox.value);
+}
+
+function setDeviceTypeChecked(container: HTMLElement, deviceType: string, checked: boolean): void {
+    const checkbox = container.querySelector<HTMLInputElement>(`[data-client-default-value="decoderTestBackgroundDevices"][value="${deviceType}"]`);
+    if (!checkbox) {
+        throw new Error(`no checkbox for ${deviceType}`);
+    }
+    checkbox.checked = checked;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** Types rules into the rules box, as an administrator would. */
+function enterRules(container: HTMLElement, text: string): void {
+    const rulesBox = getValueControl(container, 'decoderTestRules');
+    rulesBox.value = text;
+    rulesBox.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function getRuleProblems(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('[data-client-defaults-rule-problems] > div'))
+        .map((problem: Element): string => problem.textContent ?? '');
+}
+
+/** Joins sentences as the editor does, each to the ones before. */
+function joinSentences(sentences: readonly string[]): string {
+    return sentences.reduce((joined: string, sentence: string): string => translateSourceString('WebGPUJoinedSentences', joined, sentence));
 }
 
 function getValueControl(container: HTMLElement, key: string): HTMLInputElement & HTMLSelectElement {
@@ -349,5 +396,168 @@ describe('client defaults editor', () => {
         const choice = container.querySelector<HTMLSelectElement>('[data-client-defaults-preset-choice]');
         expect(choice?.disabled).toBe(true);
         expect(choice?.textContent).toBe(unavailable);
+    });
+
+    describe('decoder tests', () => {
+        it('leads the editor with its three rows, each at its built-in value, and shows this browser\'s values for rules', async () => {
+            const container = await renderEditor();
+
+            const firstSection = container.querySelector('.sectionTitle')?.closest('.verticalSection');
+            expect(firstSection?.querySelector('.sectionTitle')?.textContent).toBe(translateSourceString('WebGPUDecoderTests'));
+            expect(Array.from(firstSection?.querySelectorAll<HTMLElement>('[data-client-default]') ?? [], (row: HTMLElement): string | undefined => row.dataset.clientDefault))
+                .toEqual([ 'decoderTestTiming', 'decoderTestBackgroundDevices', 'decoderTestRules' ]);
+            expect(Array.from(getValueControl(container, 'decoderTestTiming').options, (option: HTMLOptionElement): string => option.value))
+                .toEqual([ 'automatic', 'background', 'playback' ]);
+            expect(getValueControl(container, 'decoderTestTiming').value).toBe('automatic');
+            expect(getCheckedDeviceTypes(container)).toEqual([ 'desktop' ]);
+            expect(getValueControl(container, 'decoderTestRules').value).toBe('');
+            expect(getRuleProblems(container)).toEqual([]);
+            // Only the timing is a user's choice, which applying drops; each row returns to its built-in value
+            expect(container.querySelector('[data-client-default-apply="decoderTestTiming"]')).not.toBeNull();
+            expect(container.querySelector('[data-client-default-apply="decoderTestBackgroundDevices"]')).toBeNull();
+            expect(container.querySelector('[data-client-default-apply="decoderTestRules"]')).toBeNull();
+            for (const key of [ 'decoderTestTiming', 'decoderTestBackgroundDevices', 'decoderTestRules' ]) {
+                expect(container.querySelector(`[data-client-default-reset="${key}"]`), key).not.toBeNull();
+            }
+
+            const clientValues = container.querySelector('[data-client-defaults-client-values]');
+            expect(clientValues?.textContent).toContain(translateSourceString(
+                'WebGPUDecoderTestClientDeviceType',
+                translateSourceString('WebGPUDecoderTestDeviceTypeMobile')
+            ));
+            expect(Array.from(clientValues?.querySelectorAll('[data-client-defaults-client-value]') ?? [], (value: Element): string => value.textContent ?? ''))
+                .toEqual([ 'client: Jellyfin Web', 'device: Firefox', 'version: 10.11.0', 'ua: Mozilla/5.0 <test>' ]);
+        });
+
+        it('shows the values the server sets, and the built-in ones for values clients refuse, which it names', async () => {
+            serverMockState.defaults = {
+                decoderTestBackgroundDevices: [ 'tv', 'mobile' ],
+                decoderTestRules: 'playback device: iPhone*',
+                decoderTestTiming: 'playback'
+            };
+            const container = await renderEditor();
+
+            expect(getValueControl(container, 'decoderTestTiming').value).toBe('playback');
+            expect(getCheckedDeviceTypes(container)).toEqual([ 'mobile', 'tv' ]);
+            expect(getValueControl(container, 'decoderTestRules').value).toBe('playback device: iPhone*');
+            expect(getStatus(container)).toBe('');
+
+            serverMockState.defaults = {
+                decoderTestBackgroundDevices: [ 'phone' ],
+                decoderTestRules: 'x'.repeat(MAXIMUM_DECODER_TEST_RULES_LENGTH + 1),
+                decoderTestTiming: 'sometimes'
+            };
+            const refusedContainer = await renderEditor();
+
+            expect(getValueControl(refusedContainer, 'decoderTestTiming').value).toBe('automatic');
+            expect(getCheckedDeviceTypes(refusedContainer)).toEqual([ 'desktop' ]);
+            expect(getValueControl(refusedContainer, 'decoderTestRules').value).toBe('');
+            expect(getStatus(refusedContainer)).toBe(translateSourceString(
+                'WebGPUClientDefaultsRefused',
+                [
+                    translateSourceString('WebGPUDecoderTestTiming'),
+                    translateSourceString('WebGPUDecoderTestBackgroundDevices'),
+                    translateSourceString('WebGPUDecoderTestRules')
+                ].join(', ')
+            ));
+        });
+
+        it('saves the decoder test values that differ from the built-in ones, the device types by content', async () => {
+            const container = await renderEditor();
+
+            // Unchecking and checking again leaves the built-in device types, which are not stored
+            setDeviceTypeChecked(container, 'desktop', false);
+            setDeviceTypeChecked(container, 'desktop', true);
+            click(container, '[data-client-defaults-save]');
+            await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledTimes(1));
+            expect(saveServerClientDefaults).toHaveBeenLastCalledWith({}, []);
+            await vi.waitFor(() => expect(getStatus(container)).toBe('SettingsSaved'));
+
+            changeValue(getValueControl(container, 'decoderTestTiming'), 'background');
+            setDeviceTypeChecked(container, 'tv', true);
+            enterRules(container, '# Remotes\nplayback device: iPhone*');
+            click(container, '[data-client-defaults-save]');
+            await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledTimes(2));
+            expect(saveServerClientDefaults).toHaveBeenLastCalledWith({
+                decoderTestBackgroundDevices: [ 'desktop', 'tv' ],
+                decoderTestRules: '# Remotes\nplayback device: iPhone*',
+                decoderTestTiming: 'background'
+            }, []);
+            // The status already reads saved from the first save, so the save button, enabled again, tells this one finished
+            await vi.waitFor(() => expect(container.querySelector<HTMLButtonElement>('[data-client-defaults-save]')?.disabled).toBe(false));
+            expect(getStatus(container)).toBe('SettingsSaved');
+
+            // No device type in the background is a value of its own
+            setDeviceTypeChecked(container, 'desktop', false);
+            setDeviceTypeChecked(container, 'tv', false);
+            click(container, '[data-client-default-apply="decoderTestTiming"]');
+            await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledTimes(3));
+            expect(saveServerClientDefaults).toHaveBeenLastCalledWith({
+                decoderTestBackgroundDevices: [],
+                decoderTestRules: '# Remotes\nplayback device: iPhone*',
+                decoderTestTiming: 'background'
+            }, [ 'decoderTestTiming' ]);
+            await vi.waitFor(() => expect(getStatus(container))
+                .toBe(translateSourceString('WebGPUClientDefaultsApplied', translateSourceString('WebGPUDecoderTestTiming'))));
+            expect(getCheckedDeviceTypes(container)).toEqual([]);
+        });
+
+        it('names the problems of invalid rules beneath them, and saves nothing while they remain', async () => {
+            const container = await renderEditor();
+
+            enterRules(container, 'background client: Jellyfin Web\nsometimes device: x\nplayback colour: y\n\n# note\nplayback ua:');
+
+            const problems = [
+                translateSourceString('WebGPUDecoderTestRuleTiming', 2, MAXIMUM_DECODER_TEST_RULE_COUNT),
+                translateSourceString('WebGPUDecoderTestRuleField', 3, MAXIMUM_DECODER_TEST_RULE_COUNT),
+                translateSourceString('WebGPUDecoderTestRulePattern', 6, MAXIMUM_DECODER_TEST_RULE_COUNT)
+            ];
+            expect(getRuleProblems(container)).toEqual(problems);
+            const blockedStatus = joinSentences([ translateSourceString('WebGPUDecoderTestRulesNotSaved'), joinSentences(problems) ]);
+            click(container, '[data-client-defaults-save]');
+            expect(getStatus(container)).toBe(blockedStatus);
+            // Applying the timing saves the form too, so the rules block it as well
+            const statusElement = container.querySelector('[role="status"]');
+            if (statusElement) {
+                statusElement.textContent = '';
+            }
+            click(container, '[data-client-default-apply="decoderTestTiming"]');
+            expect(getStatus(container)).toBe(blockedStatus);
+            expect(saveServerClientDefaults).not.toHaveBeenCalled();
+
+            // A text past the length limit is refused whole, even of comments alone
+            enterRules(container, '#'.repeat(MAXIMUM_DECODER_TEST_RULES_LENGTH + 1));
+            const tooLong = translateSourceString('WebGPUDecoderTestRulesTooLong', MAXIMUM_DECODER_TEST_RULES_LENGTH + 1, MAXIMUM_DECODER_TEST_RULES_LENGTH);
+            expect(getRuleProblems(container)).toEqual([ tooLong ]);
+            click(container, '[data-client-defaults-save]');
+            expect(getStatus(container)).toBe(joinSentences([ translateSourceString('WebGPUDecoderTestRulesNotSaved'), tooLong ]));
+            expect(saveServerClientDefaults).not.toHaveBeenCalled();
+
+            enterRules(container, 'PLAYBACK UA : *iPhone*');
+            expect(getRuleProblems(container)).toEqual([]);
+            click(container, '[data-client-defaults-save]');
+            await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledWith({ decoderTestRules: 'PLAYBACK UA : *iPhone*' }, []));
+        });
+
+        it('returns each decoder test row to its built-in value', async () => {
+            serverMockState.defaults = {
+                decoderTestBackgroundDevices: [ 'mobile' ],
+                decoderTestRules: 'sometimes device: x',
+                decoderTestTiming: 'playback'
+            };
+            const container = await renderEditor();
+            expect(getRuleProblems(container)).toHaveLength(1);
+
+            click(container, '[data-client-default-reset="decoderTestTiming"]');
+            click(container, '[data-client-default-reset="decoderTestBackgroundDevices"]');
+            click(container, '[data-client-default-reset="decoderTestRules"]');
+
+            expect(getValueControl(container, 'decoderTestTiming').value).toBe('automatic');
+            expect(getCheckedDeviceTypes(container)).toEqual([ 'desktop' ]);
+            expect(getValueControl(container, 'decoderTestRules').value).toBe('');
+            expect(getRuleProblems(container)).toEqual([]);
+            click(container, '[data-client-defaults-save]');
+            await vi.waitFor(() => expect(saveServerClientDefaults).toHaveBeenCalledWith({}, []));
+        });
     });
 });

@@ -9,6 +9,7 @@ import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
 import { loadAddonStrings } from './host/globalize';
 import HostCompatibleWebGPUPlayer from './HostCompatibleWebGPUPlayer';
 import { installOutdatedPageReload } from './OutdatedPageReload';
+import { startProbeCrashReports } from './ProbeCrashReports';
 import { startClientDefaultsSync } from './ServerClientDefaults';
 import { installTimingTraceControl } from './TimingTraceControl';
 import { getWebGPUHDRToneMappingEnabled } from './WebGPUPlaybackPreferences';
@@ -49,8 +50,10 @@ function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWeb
     bindHostBridge(bag);
     // The host's ServerConnections is bound now; the settings start from the server's defaults cached by the last page
     startClientDefaultsSync();
-    // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks
-    startCapabilityProbeWarmUp();
+    // Before the warm-up, whose first read of the probe store finds the probes that crashed an earlier page
+    startProbeCrashReports();
+    // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks; it waits for the server's defaults to decide whether it runs
+    void startCapabilityProbeWarmUp();
     // A page that loaded an older add-on build than the server's catalog names reloads between plays
     installOutdatedPageReload();
     const player = new HostCompatibleWebGPUPlayer();

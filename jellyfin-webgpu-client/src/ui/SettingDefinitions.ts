@@ -7,6 +7,7 @@ import type { CustomAudioSpeakerLayout } from 'webgpu-player/audio/NativeMultich
 import type { DeinterlaceMode } from 'webgpu-player/presentation/DeinterlaceTimeline';
 import { HDR_RENDER_SETTING_RANGES, type ToneMapOperator } from 'webgpu-player/presentation/RenderSettings';
 
+import type { DecoderTestDeviceType, DecoderTestTiming } from '../DecoderTestTiming';
 import type { AddonStringKey } from '../host/globalize';
 import { VideoPlayerPreference } from '../PreferredVideoPlayer';
 import type { SettingsButtonPlacement } from '../SettingsButtonPlacement';
@@ -161,6 +162,19 @@ export const AUDIO_SPEAKER_LAYOUT_OPTIONS: ReadonlyArray<SettingOption<CustomAud
     { name: '7.1.2', value: '7.1.2' },
     { name: '7.1.4', value: '7.1.4' }
 ] satisfies Array<SettingOption<CustomAudioSpeakerLayout>>);
+
+export const DECODER_TEST_TIMING_OPTIONS: ReadonlyArray<SettingOption<DecoderTestTiming>> = Object.freeze([
+    { labelKey: 'WebGPUDecoderTestTimingAutomatic', value: 'automatic' },
+    { labelKey: 'WebGPUDecoderTestTimingBackground', value: 'background' },
+    { labelKey: 'WebGPUDecoderTestTimingPlayback', value: 'playback' }
+] satisfies Array<SettingOption<DecoderTestTiming>>);
+
+// The device types that rules and the administrator's checked types name, in the order of DECODER_TEST_DEVICE_TYPES
+export const DECODER_TEST_DEVICE_TYPE_OPTIONS: ReadonlyArray<SettingOption<DecoderTestDeviceType>> = Object.freeze([
+    { labelKey: 'WebGPUDecoderTestDeviceTypeDesktop', value: 'desktop' },
+    { labelKey: 'WebGPUDecoderTestDeviceTypeMobile', value: 'mobile' },
+    { labelKey: 'WebGPUDecoderTestDeviceTypeTV', value: 'tv' }
+] satisfies Array<SettingOption<DecoderTestDeviceType>>);
 
 // Off is Jellyfin Web's own word
 export const DEINTERLACE_MODE_OPTIONS: ReadonlyArray<SettingOption<DeinterlaceMode>> = Object.freeze([
