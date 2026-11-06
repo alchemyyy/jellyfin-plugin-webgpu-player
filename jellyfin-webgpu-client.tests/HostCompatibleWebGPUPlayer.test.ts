@@ -29,7 +29,7 @@ const testState = vi.hoisted(() => {
         headPrefetches: [] as FakeHeadPrefetches[],
         markNegotiation: vi.fn((profile: unknown): unknown => ({ ...(profile as object), marked: true })),
         prediction: { eTag: null, itemId: 'item', mediaSourceId: 'source', url: 'https://jellyfin.example/Videos/item/stream.mkv' },
-        predictDirectPlayStream: vi.fn((..._predictArguments: unknown[]): unknown => null),
+        predictDirectPlayStream: vi.fn<(...predictArguments: unknown[]) => unknown>(() => null),
         preferredVideoPlayer: vi.fn((): string => 'auto'),
         runtimeAvailability: vi.fn((): { available: boolean } => ({ available: true })),
         stopActiveEncodings
