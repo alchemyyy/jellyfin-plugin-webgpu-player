@@ -162,6 +162,7 @@ A decoder compiled once stays in the browser's shader cache, so a later playback
 
 `WebGPUPlayer` (`jellyfin-webgpu-client/src/WebGPUPlayer.ts`) is the player PlaybackManager sees: id `webgpuplayer`, priority 0, and `syncPlayWrapAs = 'htmlvideoplayer'`.
 It owns an HTML player, the add-on's own copy in `src/backend/htmlVideoPlayer/`, which is both the HTML backend and the event and UI shell of the custom path.
+Its speed menu takes any rate from 0.0625x to 16x on the custom path; see [Transitions](playback.md#transitions).
 [Playback in Jellyfin Web](playback.md) and [Negotiation](negotiation.md) follow a session through it.
 
 ## Host-compatible mode

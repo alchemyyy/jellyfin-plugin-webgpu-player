@@ -85,6 +85,16 @@ So `WebGPUPlayer` has `CustomPlaybackMediaElement` report the custom playback th
 - Audio track switch: eligibility runs again.
   If the source is no longer eligible, the session renegotiates; otherwise it restarts as a seek at the current time.
   An external audio file's stream is never eligible (`audio-track-external`), since only the server muxes it in, so switching to one renegotiates rather than playing an embedded track.
+- Speed change: Jellyfin Web's speed menu shows whenever `supports('PlaybackRate')` holds, which is always on the custom path (starting, playing, or falling back) and on an HTML path only when its backend supports it.
+  The custom path offers 0.1x, 0.25x, 0.5x, 0.75x, 1x, 1.25x, 1.5x, 1.75x, 2x, 2.5x, 3x, 4x, 6x, 8x, 10x, and 16x, but the list is only a menu: `setPlaybackRate` takes any rate, so SyncPlay's speed-to-sync rates work.
+  A current rate missing from either path's list, such as SyncPlay's 1.06x or 8x after a fallback to the HTML player, whose list ends at 4x, joins the list in order as `<rate>x`, since the menu's check mark and the speed keys find the current entry by an exact id match, and a miss sends both keys to the first entry.
+  `setPlaybackRate` coerces a string with `Number`, ignores a rate that is not finite or not above 0, and clamps the rest to 0.0625x through 16x.
+  `play()` resets the requested rate to 1, as a media element's load does, and the OSD re-applies its stored rate on `playbackstart`.
+  A rate requested while setup has no controller yet is stored and handed to the controller before it plays.
+  A change that crosses the engine's audible range, 0.25x through 4x, with an audio track restarts the generation at the current time, as an audio track switch does; a startup it supersedes settles with that restart, and its failure falls back.
+  Every other change applies live.
+  The same-session HTML fallback re-applies a rate other than 1 once its `play` resolves, since its load resets the element to 1.
+  The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architecture.html) chapter covers its clock, and its audio and video, at other rates.
 - Stop: the delegate stops the backend synchronously, so `stopped` stays in order.
 
 ## Fallback and renegotiation

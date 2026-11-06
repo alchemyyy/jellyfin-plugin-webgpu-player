@@ -629,6 +629,7 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
         drainBackgroundVideo = vi.fn();
         // The frame loop registers its presenter's preparation, which this controller never runs
         setVideoPresentationPreparer = vi.fn(() => (): void => undefined);
+        setDisplayRefreshInterval = vi.fn();
         canSetAudioStreamIndex = vi.fn(() => true);
         updateAudioDownmixSettings = vi.fn(() => true);
         // Null reports an unknown sink, so track switches fall back to the startup prewarm
@@ -646,9 +647,10 @@ vi.mock('webgpu-player/pipeline/CustomPlaybackController', () => {
         setMuted = vi.fn((muted: boolean) => {
             this.isMuted = muted;
         });
-        setPlaybackRate = vi.fn((playbackRate: number) => {
+        // A live change returns null; tests that cross the audible range's boundary return a restart
+        setPlaybackRate = vi.fn((playbackRate: number): Promise<CustomPlaybackStartResult> | null => {
             this.playbackRate = playbackRate;
-            return true;
+            return null;
         });
         getTelemetry = vi.fn(() => ({
             activeGeneration: null,
@@ -757,6 +759,8 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         presentHeldFields = vi.fn((): boolean => false);
         awaitsLookaheadFrame = vi.fn((): boolean => false);
         recordAnimationFrame = vi.fn();
+        // An unmeasured display, so the frame loop never decimates
+        getDisplayRefreshIntervalMicroseconds = vi.fn((): number | null => null);
         seek = vi.fn();
         refresh = vi.fn();
         endSession = vi.fn();
@@ -1052,6 +1056,7 @@ type MockHTMLPlayer = {
     isMuted: MockFunction
     setPlaybackRate: MockFunction
     getPlaybackRate: MockFunction
+    getSupportedPlaybackRates: MockFunction
     setBrightness: MockFunction
     getBrightness: MockFunction
     setAspectRatio: MockFunction
@@ -1085,6 +1090,7 @@ type MockPresenter = {
     refresh: MockFunction
     seek: MockFunction
     getFrameLookaheadMicroseconds: MockFunction
+    getDisplayRefreshIntervalMicroseconds: MockFunction
     presentDecodedFrame: MockFunction
     presentHeldFields: MockFunction
     recordAnimationFrame: MockFunction
@@ -1130,6 +1136,7 @@ type MockCustomPlaybackController = {
     setAudioStreamIndex: MockFunction
     setVolume: MockFunction
     setNormalizationGain: MockFunction
+    setDisplayRefreshInterval: MockFunction
     setMuted: MockFunction
     setPlaybackRate: MockFunction
     currentTimeMicroseconds: number
@@ -7720,6 +7727,404 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         expect(player.supports('PictureInPicture')).toBe(true);
         expect(player.supports('PlaybackRate')).toBe(true);
+    });
+
+    describe('playback rate', () => {
+        const CUSTOM_PLAYBACK_RATE_IDS = [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 6, 8, 10, 16];
+        // The HTML backend's own menu
+        const HTML_PLAYBACK_RATE_IDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4];
+
+        async function playCustom(player: WebGPUPlayer): Promise<MockCustomPlaybackController> {
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+            return getCustomPlaybackController();
+        }
+
+        function createRestart(
+            controller: MockCustomPlaybackController
+        ): Deferred<CustomPlaybackStartResult> {
+            const restart = createDeferred<CustomPlaybackStartResult>();
+            controller.setPlaybackRate.mockImplementationOnce((playbackRate: number) => {
+                controller.playbackRate = playbackRate;
+                return restart.promise;
+            });
+            return restart;
+        }
+
+        it('offers the custom speed menu while custom playback is active', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            await playCustom(player);
+
+            expect(player.supports('PlaybackRate')).toBe(true);
+            expect(player.getSupportedPlaybackRates()).toEqual(
+                CUSTOM_PLAYBACK_RATE_IDS.map(id => ({ id, name: `${id}x` }))
+            );
+            expect(player.getSupportedPlaybackRates().map(option => option.name)).toEqual(expect.arrayContaining(['0.1x', '1x', '1.25x', '16x']));
+            expect(player.getPlaybackRate()).toBe(1);
+            expect(backend.getSupportedPlaybackRates).not.toHaveBeenCalled();
+            expect(backend.getPlaybackRate).not.toHaveBeenCalled();
+            await player.stop(false);
+        });
+
+        it('lists a current rate the custom menu lacks, such as a SyncPlay correction, in id order', async () => {
+            const player = new WebGPUPlayer();
+            attachPresentationSurface(getBackend());
+            await playCustom(player);
+
+            player.setPlaybackRate(1.06);
+
+            const playbackRates = player.getSupportedPlaybackRates();
+            expect(playbackRates.map(option => option.id)).toEqual([0.1, 0.25, 0.5, 0.75, 1, 1.06, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 6, 8, 10, 16]);
+            expect(playbackRates[5]).toEqual({ id: 1.06, name: '1.06x' });
+            player.setPlaybackRate(1);
+            expect(player.getSupportedPlaybackRates().map(option => option.id)).toEqual(CUSTOM_PLAYBACK_RATE_IDS);
+            await player.stop(false);
+        });
+
+        it.each([['1.5', 1.5], [1.5, 1.5], [2, 2]])('applies the rate %j live to the controller as a number', async (value, rate) => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+
+            player.setPlaybackRate(value);
+
+            expect(controller.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(rate);
+            // The OSD marks its current entry by strict id match
+            expect(player.getPlaybackRate()).toBe(rate);
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+            await player.stop(false);
+        });
+
+        it('clamps rates to the custom range and ignores invalid ones', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+
+            player.setPlaybackRate(0.01);
+            expect(controller.setPlaybackRate).toHaveBeenLastCalledWith(0.0625);
+            expect(player.getPlaybackRate()).toBe(0.0625);
+            player.setPlaybackRate('100');
+            expect(controller.setPlaybackRate).toHaveBeenLastCalledWith(16);
+            expect(player.getPlaybackRate()).toBe(16);
+            for (const value of ['abc', '', 0, -1, Number.NaN, Number.POSITIVE_INFINITY, null as unknown as number]) {
+                player.setPlaybackRate(value);
+            }
+
+            expect(controller.setPlaybackRate).toHaveBeenCalledTimes(2);
+            expect(player.getPlaybackRate()).toBe(16);
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+            await player.stop(false);
+        });
+
+        it('falls back to the HTML backend at the requested rate when a rate restart fails', async () => {
+            const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+            const restart = createRestart(controller);
+
+            player.setPlaybackRate(8);
+            expect(player.getPlaybackRate()).toBe(8);
+            restart.reject(new Error('Rate restart failed'));
+
+            await vi.waitFor(() => expect(backend.setPlaybackRate).toHaveBeenCalledWith(8));
+            expect(controller.destroy).toHaveBeenCalledOnce();
+            expect(backend.play).toHaveBeenCalledOnce();
+            expect(backend.play.mock.invocationCallOrder[0]).toBeLessThan(backend.setPlaybackRate.mock.invocationCallOrder[0]);
+            expect(consoleWarning).toHaveBeenCalledWith('Custom playback control failed; using the HTML backend', expect.any(Error));
+            consoleWarning.mockRestore();
+        });
+
+        it('settles a rate restart that falls back through the controller\'s fallback hook, and lists the rate in the HTML menu', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const htmlPlaybackRates = HTML_PLAYBACK_RATE_IDS.map(id => ({ id, name: `${id}x` }));
+            backend.getSupportedPlaybackRates.mockReturnValue(htmlPlaybackRates);
+            backend.setPlaybackRate.mockImplementation((playbackRate: number) => {
+                backend.getPlaybackRate.mockReturnValue(playbackRate);
+            });
+            const controller = await playCustom(player);
+            const restart = createRestart(controller);
+
+            player.setPlaybackRate(8);
+            const fallback = controller.fallbackHook({
+                disposition: 'same-session-native',
+                generation: 2,
+                mediaTimeMicroseconds: 4_000_000,
+                preserveHTMLSession: true,
+                reason: 'decode-failed'
+            });
+            restart.resolve({ fallbackReason: 'decode-failed', generation: 2, status: 'fallback' });
+            await fallback;
+
+            expect(backend.play).toHaveBeenCalledOnce();
+            expect(backend.play).toHaveBeenCalledWith(expect.objectContaining({ playerStartPositionTicks: 40_000_000 }));
+            expect(backend.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(8);
+            expect(player.supports('PlaybackRate')).toBe(true);
+            expect(player.getPlaybackRate()).toBe(8);
+            expect(player.getSupportedPlaybackRates().map(option => option.id)).toEqual([...HTML_PLAYBACK_RATE_IDS, 8]);
+            expect(player.getSupportedPlaybackRates().at(-1)).toEqual({ id: 8, name: '8x' });
+            // The backend's own list stays as it returned it
+            expect(htmlPlaybackRates.map(option => option.id)).toEqual(HTML_PLAYBACK_RATE_IDS);
+        });
+
+        it('ignores a replaced rate restart\'s failure and falls back on the newest restart\'s', async () => {
+            const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+            const firstRestart = createRestart(controller);
+            player.setPlaybackRate(8);
+            // Back across the audible range's boundary, which restarts the generation again
+            const secondRestart = createRestart(controller);
+            player.setPlaybackRate(2);
+
+            firstRestart.reject(new Error('The replaced rate restart failed'));
+            await waitForMacrotask();
+            expect(controller.setPlaybackRate.mock.calls).toEqual([[8], [2]]);
+            expect(controller.destroy).not.toHaveBeenCalled();
+            expect(backend.play).not.toHaveBeenCalled();
+            expect(consoleWarning).not.toHaveBeenCalled();
+
+            secondRestart.reject(new Error('The newest rate restart failed'));
+            await vi.waitFor(() => expect(backend.setPlaybackRate).toHaveBeenCalledWith(2));
+            expect(controller.destroy).toHaveBeenCalledOnce();
+            expect(backend.play).toHaveBeenCalledOnce();
+            consoleWarning.mockRestore();
+        });
+
+        it('still falls back when a rate restart fails after a live rate change', async () => {
+            const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+            const restart = createRestart(controller);
+            player.setPlaybackRate(8);
+            // Both rates are outside the audible range, so the change applies live
+            player.setPlaybackRate(10);
+
+            restart.reject(new Error('Rate restart failed'));
+
+            await vi.waitFor(() => expect(backend.play).toHaveBeenCalledOnce());
+            expect(controller.setPlaybackRate.mock.calls).toEqual([[8], [10]]);
+            expect(controller.destroy).toHaveBeenCalledOnce();
+            await vi.waitFor(() => expect(backend.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(10));
+            consoleWarning.mockRestore();
+        });
+
+        it('ignores a rate restart\'s failure after its playback stopped', async () => {
+            const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+            const restart = createRestart(controller);
+            player.setPlaybackRate(8);
+
+            await player.stop(false);
+            restart.reject(new Error('The stopped rate restart failed'));
+            await waitForMacrotask();
+
+            expect(consoleWarning).not.toHaveBeenCalledWith('Custom playback control failed; using the HTML backend', expect.anything());
+            expect(backend.play).not.toHaveBeenCalled();
+            consoleWarning.mockRestore();
+        });
+
+        it('keeps the original play pending until a rate restart that superseded its startup finishes', async () => {
+            const initial = createDeferred<CustomPlaybackStartResult>();
+            customDecodeMockState.pendingPlay = initial.promise;
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            const completed = vi.fn();
+            const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' })).then(completed);
+            await vi.waitFor(() => expect(customDecodeMockState.instances).toHaveLength(1));
+            const controller = getCustomPlaybackController();
+            await vi.waitFor(() => expect(controller.play).toHaveBeenCalledOnce());
+            const restart = createRestart(controller);
+
+            player.setPlaybackRate(8);
+            initial.resolve({ fallbackReason: null, generation: 1, status: 'superseded' });
+            await waitForMacrotask();
+            expect(completed).not.toHaveBeenCalled();
+            expect(player.hasPendingPlay()).toBe(true);
+
+            restart.resolve({ fallbackReason: null, generation: 2, status: 'started' });
+            await playPromise;
+            expect(completed).toHaveBeenCalledExactlyOnceWith(undefined);
+            expect(backend.play).not.toHaveBeenCalled();
+            await player.stop(false);
+        });
+
+        it('applies a rate requested during custom startup once the controller exists', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            const container = document.createElement('div');
+            const video = document.createElement('video');
+            container.appendChild(video);
+            const surface = { container, video };
+            const prepared = createDeferred<typeof surface | null>();
+            backend.presentationSurface = surface;
+            backend.prepareCustomPlayback.mockReturnValueOnce(prepared.promise);
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+            await vi.waitFor(() => expect(backend.prepareCustomPlayback).toHaveBeenCalledOnce());
+
+            expect(player.supports('PlaybackRate')).toBe(true);
+            player.setPlaybackRate('2');
+            expect(player.getPlaybackRate()).toBe(2);
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+            prepared.resolve(surface);
+            await playPromise;
+
+            const controller = getCustomPlaybackController();
+            expect(controller.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(2);
+            expect(controller.setPlaybackRate.mock.invocationCallOrder[0]).toBeLessThan(controller.play.mock.invocationCallOrder[0]);
+            expect(player.getPlaybackRate()).toBe(2);
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+            await player.stop(false);
+        });
+
+        it('applies a rate requested during a custom startup that declines to the HTML backend once it plays', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            const prepared = createDeferred<null>();
+            attachPresentationSurface(backend);
+            backend.prepareCustomPlayback.mockReturnValueOnce(prepared.promise);
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+            await vi.waitFor(() => expect(backend.prepareCustomPlayback).toHaveBeenCalledOnce());
+
+            player.setPlaybackRate(2);
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+            prepared.resolve(null);
+            await playPromise;
+
+            expect(backend.play).toHaveBeenCalledOnce();
+            expect(backend.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(2);
+            expect(backend.play.mock.invocationCallOrder[0]).toBeLessThan(backend.setPlaybackRate.mock.invocationCallOrder[0]);
+            await player.stop(false);
+        });
+
+        it('leaves the rate of an HTML play that a stop superseded alone', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            const prepared = createDeferred<null>();
+            const nativePlay = createDeferred<unknown>();
+            attachPresentationSurface(backend);
+            backend.prepareCustomPlayback.mockReturnValueOnce(prepared.promise);
+            backend.play.mockReturnValueOnce(nativePlay.promise);
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            const playPromise = player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+            await vi.waitFor(() => expect(backend.prepareCustomPlayback).toHaveBeenCalledOnce());
+            player.setPlaybackRate(2);
+            prepared.resolve(null);
+            await vi.waitFor(() => expect(backend.play).toHaveBeenCalledOnce());
+
+            const stopPromise = player.stop(false);
+            nativePlay.resolve(undefined);
+
+            await expect(playPromise).resolves.toBe(PLAYBACK_SUPERSEDED);
+            await stopPromise;
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+        });
+
+        it('resets the requested rate when a new item plays', async () => {
+            const player = new WebGPUPlayer();
+            attachPresentationSurface(getBackend());
+            await playCustom(player);
+            player.setPlaybackRate(2);
+
+            const nextController = await playCustom(player);
+
+            expect(player.getPlaybackRate()).toBe(1);
+            expect(nextController.setPlaybackRate).not.toHaveBeenCalled();
+            await player.stop(false);
+        });
+
+        it('re-applies the requested rate once a same-session fallback plays, and ignores a refusal', async () => {
+            const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+            player.setPlaybackRate(1.5);
+            const refusal = new Error('The rate is unsupported');
+            backend.setPlaybackRate.mockImplementationOnce(() => {
+                throw refusal;
+            });
+
+            await controller.fallbackHook({
+                disposition: 'same-session-native',
+                generation: 1,
+                mediaTimeMicroseconds: 4_000_000,
+                preserveHTMLSession: true,
+                reason: 'lifecycle-failed'
+            });
+
+            expect(backend.play).toHaveBeenCalledOnce();
+            expect(backend.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(1.5);
+            expect(backend.play.mock.invocationCallOrder[0]).toBeLessThan(backend.setPlaybackRate.mock.invocationCallOrder[0]);
+            expect(consoleWarning).toHaveBeenCalledWith('The HTML backend refused the requested playback rate', refusal);
+            consoleWarning.mockRestore();
+        });
+
+        it('leaves the HTML backend\'s rate alone after a fallback when the session never changed it', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            attachPresentationSurface(backend);
+            const controller = await playCustom(player);
+
+            await controller.fallbackHook({
+                disposition: 'same-session-native',
+                generation: 1,
+                mediaTimeMicroseconds: 4_000_000,
+                preserveHTMLSession: true,
+                reason: 'lifecycle-failed'
+            });
+
+            expect(backend.play).toHaveBeenCalledOnce();
+            expect(backend.setPlaybackRate).not.toHaveBeenCalled();
+        });
+
+        it('forwards rates to the HTML backend while it plays directly', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            await player.play({
+                mediaSource: {
+                    MediaStreams: [{ Type: 'Video', VideoRangeType: 'HDR10' }]
+                }
+            });
+            const htmlPlaybackRates = [{ id: 1, name: '1x' }];
+            backend.getSupportedPlaybackRates.mockReturnValue(htmlPlaybackRates);
+            backend.getPlaybackRate.mockReturnValue(0.5);
+
+            player.setPlaybackRate('1.5');
+            player.setPlaybackRate('abc');
+
+            expect(player.supports('PlaybackRate')).toBe(true);
+            expect(backend.supports).toHaveBeenCalledWith('PlaybackRate');
+            expect(backend.setPlaybackRate).toHaveBeenCalledExactlyOnceWith(1.5);
+            expect(player.getPlaybackRate()).toBe(0.5);
+            // The backend's current rate, missing from its menu, joins it in id order
+            expect(player.getSupportedPlaybackRates()).toEqual([{ id: 0.5, name: '0.5x' }, { id: 1, name: '1x' }]);
+            expect(htmlPlaybackRates).toEqual([{ id: 1, name: '1x' }]);
+            await player.stop(false);
+        });
     });
 
     it('keeps custom capabilities and ranges masked until native fallback is established', async () => {
