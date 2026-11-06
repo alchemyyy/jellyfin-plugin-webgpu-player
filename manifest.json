@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/alchemyyy/jellyfin-plugin-webgpu-player/main/images/jellyfin-plugin-webgpu-player-banner.png",
         "versions": [
             {
+                "version": "2.0.1.5",
+                "changelog": "Unstable 2.0.1.5, built from 8dd2c50",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases/download/v2.0.1.5-unstable/webgpu-player_2.0.1.5.zip",
+                "checksum": "c53844e4005dc0bf3636202472064d07",
+                "timestamp": "2026-11-06T22:12:03Z"
+            },
+            {
                 "version": "2.0.1.4",
                 "changelog": "Unstable 2.0.1.4, built from edee713",
                 "targetAbi": "12.1.0.0",
