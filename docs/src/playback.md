@@ -57,6 +57,23 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - `WebGPUPlayer.isFetching` mirrors actual backend file-loading state, not custom decoder startup or seeking.
   This keeps "Fetching additional data" paired with `beginFetch`/`endFetch`; normal playback waiting does not leave a phantom subtitle-loading message.
 
+## The `<video>` element
+
+The source-less `<video>` stays the HTML player's own, but other scripts on the page follow the player through it, such as Jellyfin Enhanced's pause screen, tab-switch pause and resume, playback rating badge, intro skip, and bookmarks.
+So `WebGPUPlayer` has `CustomPlaybackMediaElement` report the custom playback through the element, from when the controller is created until it is cleared by a stop, a new play, or a fallback, which hands the element back to the HTML backend.
+
+- `paused`, `ended`, `seeking`, `readyState`, `currentTime`, `duration`, `playbackRate`, and `currentSrc` read the playback; `currentSrc` is the stream URL Jellyfin chose.
+  The members are shadowed on the element itself, and a member another script replaced meanwhile stays as that script left it.
+- `play()`, `pause()`, and a `currentTime` write resume, pause, and seek the controller, as the OSD does, so Jellyfin Web's events and the OSD follow.
+  A seek is clamped to the duration, and a non-finite time throws a `TypeError`.
+  `playbackRate` takes only the playback's own rate and throws `NotSupportedError` for another, as a browser does for a rate it does not support, since the player offers no other rate for custom playback.
+- The element fires the events of a playing element, from the controller's events: `loadstart` and `play` at the start, `durationchange`, `loadedmetadata`, `loadeddata`, `canplay`, and `canplaythrough` at the first ready, then `playing`, `waiting`, `timeupdate`, `pause`, `play`, `seeking`, and `seeked`, and `pause` and `ended` at the end.
+  A seek completes when the controller leaves the seeking state it entered for it, or when the seek, or an audio track restart that superseded it, starts the playback at its position.
+  When the report ends, a playing element fires `pause`, then `emptied`.
+  The events fire as microtasks, in order, so no listener runs inside the controller call that caused it.
+- The HTML player's own media handlers, and the start position a native source left waiting on the element, skip these events (`isCustomPlaybackMediaEvent`), since the controller notifies that player directly; handling them as well would end a playback twice.
+- Meanwhile the element carries `disablepictureinpicture`, so a script that asks for picture-in-picture, such as one that enters it on a tab switch, skips the element, which has no frames to show; `supports('PictureInPicture')` is false for custom playback as well.
+
 ## Transitions
 
 - Seek: a new presentation generation, then `controller.seek`.

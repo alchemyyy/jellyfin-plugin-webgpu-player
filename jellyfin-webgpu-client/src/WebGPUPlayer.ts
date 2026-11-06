@@ -150,6 +150,7 @@ import {
 } from './custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlayCompatibility';
 import ScreenWakeLock from './ScreenWakeLock';
+import CustomPlaybackMediaElement from './CustomPlaybackMediaElement';
 import {
     getCustomPlaybackRuntimeAvailability,
     type CustomPlaybackRuntimeAvailability
@@ -913,6 +914,8 @@ export default class WebGPUPlayer {
     private customPlaybackAudioPrewarm: CustomPlaybackAudioPrewarm | null = null;
     private customPlaybackFallbackPromise: Promise<unknown> | null = null;
     private customPlaybackFrameLoop: CustomPlaybackFrameLoop | null = null;
+    // Reports the custom playback through the source-less <video> to page scripts that follow the player through its element
+    private customPlaybackMediaElement: CustomPlaybackMediaElement | null = null;
     private pendingPausedPresentationRefresh: PendingPausedPresentationRefresh | null = null;
     private customPlaybackHasPlayed = false;
     private customPlaybackAudioSelectionRevision = 0;
@@ -1443,6 +1446,7 @@ export default class WebGPUPlayer {
             if (customPlaybackController) {
                 this.customPlaybackFrameLoop?.setPresentationGeneration(seekGeneration);
                 this.presenter.setDecodedFramePushMode(true, seekGeneration);
+                this.customPlaybackMediaElement?.notifySeeking(requestedTimeMicroseconds);
                 // A burst of seeks collapses to the newest: a queued seek that a newer seek or a teardown replaced never reaches the controller,
                 // and the controller supersedes a running seek's generation when the next one starts
                 const seekPromise = Promise.resolve().then(() => (
@@ -1455,6 +1459,7 @@ export default class WebGPUPlayer {
                     if (!result || this.customPlaybackSeekRevision !== seekRevision) {
                         return;
                     }
+                    this.completeCustomPlaybackMediaSeek(customPlaybackController, backendGeneration, result);
                     this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
                 }).catch((error: unknown): void => {
                     if (this.customPlaybackSeekRevision !== seekRevision) {
@@ -2525,6 +2530,7 @@ export default class WebGPUPlayer {
                 speakerLayout: webGPUUserSettings.audio.speakerLayout
             };
             this.customPlaybackBackendGeneration = backendGeneration;
+            this.attachCustomPlaybackMediaElement(presentationSurface.video, options);
             this.customPlaybackFrameLoop?.destroy();
             this.customPlaybackFrameLoop = this.createCustomPlaybackFrameLoop(customPlaybackController, backendGeneration, presentationGeneration);
             this.customPlaybackEmitUnpause = true;
@@ -2920,6 +2926,43 @@ export default class WebGPUPlayer {
         }
     }
 
+    /** Has the playback's `<video>`, which has no source of its own, report the playback to page scripts until the controller is cleared. */
+    private attachCustomPlaybackMediaElement(video: HTMLVideoElement, options: unknown): void {
+        this.customPlaybackMediaElement?.detach();
+        const source = getOptionalRecord(options).url;
+        // Each control acts only on the active controller, never through the HTML player, whose calls on the element would come back here
+        this.customPlaybackMediaElement = new CustomPlaybackMediaElement(video, typeof source === 'string' ? source : '', {
+            currentTime: (): Microseconds => this.getActiveCustomPlaybackController()?.currentTimeMicroseconds ?? this.lastKnownTimeMicroseconds,
+            duration: (): Microseconds | null => this.getActiveCustomPlaybackController()?.durationMicroseconds ?? null,
+            pause: (): void => {
+                this.getActiveCustomPlaybackController()?.pause();
+            },
+            play: (): void => {
+                this.getActiveCustomPlaybackController()?.resume();
+            },
+            playbackRate: (): number => this.getActiveCustomPlaybackController()?.playbackRate ?? 1,
+            seek: (time: Microseconds): void => {
+                if (this.getActiveCustomPlaybackController()) {
+                    this.currentTime(microsecondsToMilliseconds(time));
+                }
+            }
+        });
+    }
+
+    /**
+     * Completes the element's seek when a seek, or an audio track restart that superseded it, started the playback at its position.
+     * The element completes it itself when the controller leaves the seeking state it entered for the seek; this covers a controller that was already seeking.
+     */
+    private completeCustomPlaybackMediaSeek(
+        customPlaybackController: CustomPlaybackController,
+        backendGeneration: number,
+        result: CustomPlaybackStartResult
+    ): void {
+        if (result.status === 'started' && this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
+            this.customPlaybackMediaElement?.notifySeeked();
+        }
+    }
+
     private handleCustomPlaybackEvent(
         customPlaybackController: CustomPlaybackController,
         backendGeneration: number,
@@ -2930,6 +2973,7 @@ export default class WebGPUPlayer {
         }
 
         const htmlBackend = this.getHTMLCustomPlaybackBackend();
+        const mediaElement = this.customPlaybackMediaElement;
         switch (event.type) {
             case 'audio-output-changed':
                 // A new device can take a different layout, or need the user's downmix
@@ -2940,6 +2984,7 @@ export default class WebGPUPlayer {
                 break;
             case 'statechange':
                 this.synchronizeScreenWakeLock(event.state);
+                mediaElement?.notifyStateChange(event.state);
                 if (event.state === 'paused') {
                     this.customPlaybackFrameLoop?.cancel();
                     const pausedRefresh = this.getCurrentPausedPresentationRefresh(customPlaybackController, backendGeneration);
@@ -2959,6 +3004,7 @@ export default class WebGPUPlayer {
                 }
                 break;
             case 'ready':
+                mediaElement?.notifyReady();
                 if (customPlaybackController.playbackState === 'paused') {
                     this.customPlaybackFrameLoop?.schedule(false);
                 }
@@ -2966,21 +3012,25 @@ export default class WebGPUPlayer {
             case 'playing':
                 this.customPlaybackHasPlayed = true;
                 htmlBackend.notifyCustomPlaybackPlaying(this.customPlaybackEmitUnpause);
+                mediaElement?.notifyPlaying();
                 this.customPlaybackEmitUnpause = false;
                 this.customPlaybackFrameLoop?.schedule(true);
                 break;
             case 'timeupdate':
                 this.lastKnownTimeMicroseconds = event.currentTimeMicroseconds;
                 htmlBackend.notifyCustomPlaybackTimeUpdate(microsecondsToMilliseconds(event.currentTimeMicroseconds));
+                mediaElement?.notifyTimeUpdate();
                 break;
             case 'waiting':
                 if (!this.getCurrentPausedPresentationRefresh(customPlaybackController, backendGeneration)) {
                     htmlBackend.notifyCustomPlaybackWaiting();
+                    mediaElement?.notifyWaiting();
                 }
                 break;
             case 'ended':
                 this.cancelPendingPausedPresentationRefresh();
                 this.customPlaybackFrameLoop?.cancel();
+                mediaElement?.notifyEnded();
                 htmlBackend.notifyCustomPlaybackEnded();
                 break;
             case 'error':
@@ -3329,6 +3379,7 @@ export default class WebGPUPlayer {
         if (!this.isCustomPlaybackAudioSelectionCurrent(customPlaybackController, backendGeneration, selectionRevision)) {
             return;
         }
+        this.completeCustomPlaybackMediaSeek(customPlaybackController, backendGeneration, result);
         this.handleCustomPlaybackStartResult(customPlaybackController, backendGeneration, result);
     }
 
@@ -3370,6 +3421,8 @@ export default class WebGPUPlayer {
         this.cancelPendingPausedPresentationRefresh();
         this.customPlaybackFrameLoop?.destroy();
         this.customPlaybackFrameLoop = null;
+        this.customPlaybackMediaElement?.detach();
+        this.customPlaybackMediaElement = null;
         this.customPlaybackController = null;
         this.customPlaybackAudioDownmixAlgorithm = null;
         this.customPlaybackAudioSettings = null;

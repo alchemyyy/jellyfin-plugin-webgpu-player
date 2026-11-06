@@ -2,10 +2,12 @@ import type { VideoVobSubOptions } from 'libbitsub';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { PLAYBACK_SUPERSEDED } from 'addons/webGPUPlayer/constants/playbackResult';
+import CustomPlaybackMediaElement from 'addons/webGPUPlayer/CustomPlaybackMediaElement';
 import browser from 'scripts/browser';
 import appSettings from 'scripts/settings/appSettings';
 import { currentSettings as userSettings } from 'scripts/settings/userSettings';
 import Events from 'utils/events';
+import type { Microseconds } from 'webgpu-player/MediaTime';
 
 type Deferred<Value> = {
     promise: Promise<Value>
@@ -584,6 +586,44 @@ describe('HtmlVideoPlayer custom presentation shell', () => {
         expect(player.notifyCustomPlaybackEnded()).toBe(false);
         expect(htmlMediaHelperMock.onEndedInternal).toHaveBeenCalledOnce();
         expect(player.currentSrc()).toBeUndefined();
+    });
+
+    it('leaves the media events a custom playback reports on its element to that playback', async () => {
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const playerEvents: string[] = [];
+        for (const eventName of [ 'playing', 'pause', 'unpause', 'timeupdate', 'waiting', 'stopped' ]) {
+            Events.on(player, eventName, () => playerEvents.push(eventName));
+        }
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        await player.prepareCustomPlayback(options);
+        const video = player.getPresentationSurface()?.video;
+        if (!video) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        const mediaElement = new CustomPlaybackMediaElement(video, options.url, {
+            currentTime: () => 0 as Microseconds,
+            duration: () => 60_000_000 as Microseconds,
+            pause: vi.fn(),
+            play: vi.fn(),
+            playbackRate: () => 1,
+            seek: vi.fn()
+        });
+
+        mediaElement.notifyReady();
+        mediaElement.notifyPlaying();
+        mediaElement.notifyTimeUpdate();
+        mediaElement.notifyWaiting();
+        mediaElement.notifyStateChange('paused');
+        mediaElement.notifyEnded();
+        mediaElement.detach();
+        await Promise.resolve();
+
+        // The playback's controller notifies this player itself; handling the element's reports too would end the playback twice
+        expect(playerEvents).toEqual([]);
+        expect(htmlMediaHelperMock.onEndedInternal).not.toHaveBeenCalled();
+        expect(htmlMediaHelperMock.seekOnPlaybackStart).not.toHaveBeenCalled();
+        video.dispatchEvent(new Event('pause'));
+        expect(playerEvents).toEqual([ 'pause' ]);
     });
 
     it('suppresses only the first native unpause during same-session fallback', () => {

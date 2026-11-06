@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 import { MediaError } from 'types/mediaError';
 import Events from 'utils/events';
-import { bindEventsToHlsPlayer } from 'addons/webGPUPlayer/backend/htmlMediaHelper';
+import { bindEventsToHlsPlayer, seekOnPlaybackStart } from 'addons/webGPUPlayer/backend/htmlMediaHelper';
+import CustomPlaybackMediaElement from 'addons/webGPUPlayer/CustomPlaybackMediaElement';
+import type { Microseconds } from 'webgpu-player/MediaTime';
 
 type HLSEventData = {
     details: string
@@ -226,5 +228,29 @@ describe('bindEventsToHlsPlayer session ownership', () => {
         expect(instance._hlsPlayer).toBeNull();
         expect(reject).toHaveBeenCalledOnce();
         expect(reject).toHaveBeenCalledWith(MediaError.FATAL_HLS_ERROR);
+    });
+});
+
+describe('seekOnPlaybackStart', () => {
+    it('never seeks a custom playback that a native source\'s waiting start position sees on the element', async () => {
+        const element = document.createElement('video');
+        const onMediaReady = vi.fn();
+        // The native source ended before its metadata arrived, so its 30 s start position still waits on the element
+        seekOnPlaybackStart({}, element, 300_000_000, onMediaReady);
+        const seek = vi.fn();
+        const mediaElement = new CustomPlaybackMediaElement(element, 'https://example.test/custom.mkv', {
+            currentTime: () => 0 as Microseconds,
+            duration: () => 60_000_000 as Microseconds,
+            pause: vi.fn(),
+            play: vi.fn(),
+            playbackRate: () => 1,
+            seek
+        });
+
+        mediaElement.notifyReady();
+        await Promise.resolve();
+
+        expect(seek).not.toHaveBeenCalled();
+        expect(onMediaReady).not.toHaveBeenCalled();
     });
 });

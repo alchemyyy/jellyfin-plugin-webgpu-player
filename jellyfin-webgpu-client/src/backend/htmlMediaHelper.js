@@ -4,6 +4,8 @@ import browser from 'scripts/browser';
 import Events from 'utils/events';
 import { MediaError } from 'types/mediaError';
 
+import { isCustomPlaybackMediaEvent } from '../CustomPlaybackMediaElement';
+
 export function getSavedVolume() {
     return appSettings.get('volume') || 1;
 }
@@ -148,6 +150,10 @@ export function seekOnPlaybackStart(instance, element, ticks, onMediaReady) {
             // update video player position when media is ready to be sought
             const events = ['durationchange', 'loadeddata', 'play', 'loadedmetadata'];
             const onMediaChange = function(e) {
+                // A listener a native source left behind must not seek a later custom playback reported on the same element
+                if (isCustomPlaybackMediaEvent(e)) {
+                    return;
+                }
                 if (element.currentTime === 0 && element.duration >= seconds) {
                     // seek only when video position is exactly zero,
                     // as this is true only if video hasn't started yet or

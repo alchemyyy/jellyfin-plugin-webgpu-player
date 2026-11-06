@@ -16,7 +16,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   A later refactor may move its host-neutral orchestration into an engine session class.
 - libbitsub replaces libpgs (10-02).
   This follows upstream and adds VobSub support.
-  The custom path drives it through `timeOffset`, measured against the source-less video.
+  The custom path drives it through `timeOffset`, measured against the time the source-less video reports, which is the custom clock since 11-06 (see [Playback in Jellyfin Web](playback.md#the-video-element)).
   VobSub reaches it as the Matroska subtitle file the server extracts, requested as `Stream.mks`, the one name every server from 12.1 serves unchanged (10-27); [Direct play support](direct-play-support.md#vobsub-delivery) has the server's rules.
 - The server offers the engine's decoder packages and passes, and a client fetches each when it needs it (10-16).
   The add-on build carries every package `bin/wgpud/` (engine) holds and every pass file of `bin/wgpup/` (engine), and an administrator uploads, deletes, enables, and disables them on the plugin's settings page.
@@ -48,6 +48,13 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The server's entry rides on the catalog negotiations read already, so detection costs no request and no timer, and nothing on the playback path; a page learns of a deploy at its next play, and reloads after that play.
   The reload waits for a stop, then 10 seconds without a start or a request, so a queue's next item and a second click keep it off, and it reloads only a library page with no dialog open and no field focused: an allowlist rather than a list of pages to avoid, since a page it does not know only waits longer, while a missed form would lose input.
   A `sessionStorage` guard allows one reload per server entry in a tab, so a stale `index.html` from a cache in between cannot loop; the development server publishes no entry, since its plugin host may embed an older build than the page loads.
+- Custom playback reports itself through its source-less `<video>` (11-06); [Playback in Jellyfin Web](playback.md#the-video-element) has the rules.
+  Page scripts follow the player through its element, as Jellyfin Enhanced's pause screen, tab-switch pause and resume, and playback rating badge do, and before this they saw an element paused at zero that never played: a pause screen never came on a pause, but could come during playback after any input and a few idle seconds.
+  Shadowing the element's members keeps the one element the HTML player owns, with no second element and no captured stream, and marking the reports lets the HTML player's handlers tell them from the element's own events.
+  Picture-in-picture stays unsupported for custom playback: the canvas would have to feed a captured stream to the element, and the frame loop presents nothing while the page is hidden, the usual time to want the window, so it would show a still frame.
+  The element carries `disablepictureinpicture` instead, so scripts skip it.
+  Other playback rates stay unsupported too, as the rate menu offers none for custom playback, so the element refuses one as a browser refuses a rate it does not support.
+  Jellyfin Enhanced's rating in the OSD can show another item's rating with any player: it reads the first `.videoOsdBottom` in the document, which can be a cached, hidden video page of an earlier playback.
 
 ## Negotiation
 

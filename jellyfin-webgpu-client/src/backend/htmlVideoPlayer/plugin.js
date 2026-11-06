@@ -19,6 +19,7 @@ import dom from 'utils/dom';
 import { playbackManager } from 'components/playback/playbackmanager';
 import { appRouter } from 'components/router/appRouter';
 import { PLAYBACK_SUPERSEDED } from '../../constants/playbackResult';
+import { isCustomPlaybackMediaEvent } from '../../CustomPlaybackMediaElement';
 import {
     bindEventsToHlsPlayer,
     destroyHlsPlayer,
@@ -1644,6 +1645,10 @@ export class HtmlVideoPlayer {
      * @param e {Event} The event received from the `<video>` element
      */
     onEnded = (e) => {
+        // A custom playback's own reports on the element; its controller notifies this player directly
+        if (isCustomPlaybackMediaEvent(e)) {
+            return;
+        }
         /**
          * @type {HTMLMediaElement}
          */
@@ -1661,6 +1666,9 @@ export class HtmlVideoPlayer {
      * @param e {Event} The event received from the `<video>` element
      */
     onTimeUpdate = (e) => {
+        if (isCustomPlaybackMediaEvent(e)) {
+            return;
+        }
         /**
          * @type {HTMLMediaElement}
          */
@@ -1829,7 +1837,8 @@ export class HtmlVideoPlayer {
     /**
      * Returns the libbitsub offset added to the owned video time.
      * The renderer samples `video.currentTime + timeOffset` on every animation frame and when a worker render settles.
-     * A source-less custom video never advances, so the offset carries the whole custom clock.
+     * The source-less custom video reads whatever time the custom playback reports through it, so the offset is the custom subtitle time less that time,
+     * and the sampled time follows the custom clock between updates.
      */
     #getBitmapSubtitleTimeOffset(videoElement, customTimeMilliseconds) {
         if (!this.#customPlaybackActive) {
@@ -1978,6 +1987,9 @@ export class HtmlVideoPlayer {
      * @param e {Event} The event received from the `<video>` element
      */
     onPlaying = (e) => {
+        if (isCustomPlaybackMediaEvent(e)) {
+            return;
+        }
         /**
          * @type {HTMLMediaElement}
          */
@@ -1988,8 +2000,12 @@ export class HtmlVideoPlayer {
 
     /**
      * @private
+     * @param e {Event} The event received from the `<video>` element
      */
-    onPlay = () => {
+    onPlay = (e) => {
+        if (isCustomPlaybackMediaEvent(e)) {
+            return;
+        }
         if (this._currentPlayOptions?.suppressInitialUnpause === true) {
             this._currentPlayOptions.suppressInitialUnpause = false;
             return;
@@ -2033,12 +2049,19 @@ export class HtmlVideoPlayer {
 
     /**
      * @private
+     * @param e {Event} The event received from the `<video>` element
      */
-    onPause = () => {
+    onPause = (e) => {
+        if (isCustomPlaybackMediaEvent(e)) {
+            return;
+        }
         Events.trigger(this, 'pause');
     };
 
-    onWaiting = () => {
+    onWaiting = (e) => {
+        if (isCustomPlaybackMediaEvent(e)) {
+            return;
+        }
         Events.trigger(this, 'waiting');
     };
 

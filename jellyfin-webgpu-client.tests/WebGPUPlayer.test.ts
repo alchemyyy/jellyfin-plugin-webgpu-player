@@ -3349,6 +3349,48 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(backend.stop).toHaveBeenCalledOnce();
     });
 
+    it('reports custom playback through its source-less video, which controls the playback, until the playback stops', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        const mediaEvents: string[] = [];
+        for (const type of [ 'play', 'playing', 'pause', 'seeking', 'seeked' ]) {
+            video.addEventListener(type, () => mediaEvents.push(type));
+        }
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay', url: JELLYFIN_STREAM_URL }));
+        const customPlaybackController = getCustomPlaybackController();
+        expect(video.paused).toBe(false);
+        expect(video.readyState).toBe(4);
+        expect(video.currentSrc).toBe(JELLYFIN_STREAM_URL);
+        expect(video.currentTime).toBe(1);
+        expect(video.duration).toBe(60);
+
+        video.pause();
+        expect(customPlaybackController.pause).toHaveBeenCalledOnce();
+        expect(player.paused()).toBe(true);
+        await video.play();
+        expect(customPlaybackController.resume).toHaveBeenCalledOnce();
+        expect(player.paused()).toBe(false);
+
+        video.currentTime = 30;
+        expect(video.seeking).toBe(true);
+        expect(video.currentTime).toBe(30);
+        await vi.waitFor(() => expect(video.seeking).toBe(false));
+        expect(customPlaybackController.seek).toHaveBeenCalledWith(30_000_000);
+        expect(mediaEvents).toEqual([ 'play', 'playing', 'pause', 'play', 'playing', 'seeking', 'seeked', 'playing' ]);
+
+        await player.stop(false);
+        expect(Object.getOwnPropertyNames(video)).toEqual([]);
+        expect(video.paused).toBe(true);
+        expect(video.currentSrc).toBe('');
+    });
+
     it('uses raw 10-bit frames for enabled custom HDR tone mapping', async () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
@@ -5247,6 +5289,36 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         expect(audioPrewarmMockState.leases[0].close).toHaveBeenCalledOnce();
         expect(backend.play).toHaveBeenCalledOnce();
+    });
+
+    it('hands the video back before a same-session fallback plays a native source in it', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        // A native play into an element still reporting the custom playback would call the reports' play() instead of the element's own
+        let membersAtNativePlay: string[] | null = null;
+        backend.play.mockImplementationOnce((options: unknown) => {
+            membersAtNativePlay = Object.getOwnPropertyNames(video);
+            return Promise.resolve(options);
+        });
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        expect(video.paused).toBe(false);
+        await getCustomPlaybackController().fallbackHook({
+            disposition: 'same-session-native',
+            generation: 1,
+            mediaTimeMicroseconds: 2_000_000,
+            preserveHTMLSession: true,
+            reason: 'lifecycle-failed'
+        });
+
+        expect(backend.play).toHaveBeenCalledOnce();
+        expect(membersAtNativePlay).toEqual([]);
     });
 
     it('falls back to the same HTML session at the custom clock position', async () => {
