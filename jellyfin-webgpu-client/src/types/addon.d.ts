@@ -4,6 +4,8 @@ import type { TimingTraceControl } from '../TimingTraceControl';
 type WebGPUPlayerAddonConfiguration = {
     // Absolute URL path of the add-on asset route, ending with a slash
     assetBaseURL?: string
+    // The entry module path below the asset route that this page imported, the add-on build's identity; the development server leaves it out
+    entry?: string
 };
 
 export declare global {

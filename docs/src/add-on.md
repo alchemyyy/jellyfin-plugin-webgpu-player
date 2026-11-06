@@ -22,15 +22,51 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 </div>
 
 1. The server plugin rewrites two Jellyfin Web files, through the File Transformation plugin when it is installed and through its own middleware otherwise.
-   `index.html` gets a bootstrap script that sets `window.WebGPUPlayerConfig` (the asset base URL) and defines `window.WebGPUPlayer`, a factory that imports the add-on entry.
+   `index.html` gets a bootstrap script that sets `window.WebGPUPlayerConfig` (the asset base URL and the entry module path) and defines `window.WebGPUPlayer`, a factory that imports the add-on entry.
    `config.json` gets `WebGPUPlayer` appended to its `plugins` list.
 2. Jellyfin Web's plugin manager loads `WebGPUPlayer` through its window plugin path and constructs it with its dependency bag.
 3. `jellyfin-webgpu-client/src/index.ts` configures the engine: the asset base is the add-on route plus `libraries/`, the cache key is the engine build's asset key, and `isHDRToneMappingEnabled` reads the user's preference.
    It names the build whose capability probe verdicts the engine stores, the engine's asset key joined with webpack's `__webpack_hash__`, which also changes with the add-on's own probe code and profile rules.
-   It then binds the host bridge, starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
+   It then binds the host bridge, starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
    The warm-up runs only with custom decode on and the runtime available, and the engine skips it on a client that asks to save data or has fewer than four threads.
    It tells the engine that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
 4. The plugin serves the add-on build at `<BaseUrl>/WebGPUPlayer/assets/<path>`, the engine's served folder included.
+
+## Outdated pages
+
+An open tab keeps the add-on build it loaded, its decode workers included, until it reloads.
+`OutdatedPageReload.ts` reloads such a tab by itself between plays, so a deploy reaches every open tab without a hard refresh or cleared site data.
+
+- A build's identity is its entry module path, such as `plugin.<contenthash>.js`, which webpack names by content, so it changes with every add-on build.
+  The page's side is `window.WebGPUPlayerConfig.entry`, which the bootstrap publishes from the entry it imports.
+  The server's side is `addonEntry` in every `GET WebGPUPlayer/Catalog` answer (`AddonCatalog.Entry`), which the add-on reads at every negotiation already, so noticing a new build costs no request.
+- A catalog that names another entry makes the page outdated; one that names the loaded entry again makes it current.
+  A catalog without `addonEntry`, an older plugin's, a page without `entry`, and any failed read change nothing.
+- An outdated page reloads once nothing plays and nothing starts for 10 seconds, long enough for the queue's next item or a second click:
+  - every playback request through the hooked PlaybackManager methods (`play`, `nextTrack`, `previousTrack`, `setCurrentPlaylistItem`) holds the reload until it settles or a playback starts, since `nextTrack` returns no promise;
+  - a `playbackstart` cancels the wait, and a `playbackstop`, or the end of the last open request, starts it again;
+  - when the wait ends, it reloads only if no request is open and `playbackManager.isPlaying()` is false; a check that throws counts as playing.
+- It never reloads where a reload could lose the user's input.
+  The page must be a library page, by the first segment of the hash route: `home`, `details`, `list`, `movies`, `tv`, `music`, `livetv`, `homevideos`, `musicvideos`, `books`, or `boxsets`.
+  No dialog may be open (`.dialogContainer`, `dialog[open]`), which covers action sheets and the settings panel, and no input, select, text area, or editable element may have focus.
+  The dashboard, the plugin and user settings pages, search, the queue, and the player page never reload; a page that fails the check waits another 10 seconds and checks again, until a playback starts.
+- It reloads at most once per server entry in a tab: `sessionStorage` key `webGPUPlayerReloadedForEntry` holds the entry it last reloaded for, and a catalog naming that entry is ignored, so a stale `index.html` cannot loop.
+  A guard that cannot be stored leaves the page as it is.
+- `window.location.reload()` keeps the URL, so the user lands on the same page; `index.html` is served `no-cache` and every other add-on file is content-addressed, so the reload gets the current build.
+- Nothing runs on the playback path: the hooks add a set entry per request, the listeners return at once on a current page, and the only timer exists while an outdated page waits.
+- The development server's bootstrap (`serve_jellyfin_web_client.sh`) publishes no `entry`, so its pages never reload this way.
+  Its plugin host keeps the add-on build it started with until the engine modules change, so its catalog may name an older entry than the page loads; its live reload reloads pages for each build instead.
+- An item of another server is negotiated against that server's catalog, whose entry may differ; the guard limits that to one reload per entry.
+
+To try it on a live server without a second deploy, make the catalog name another entry in one tab:
+
+1. In the browser's developer tools, override the response of `WebGPUPlayer/Catalog` (Chromium: Network, right-click the request, Override content), changing `addonEntry` to any other string, such as `plugin.test.js`.
+   Without overrides, paste into the console: `const f = window.fetch; window.fetch = async (...a) => { const r = await f(...a); if (!String(a[0]).includes('WebGPUPlayer/Catalog')) return r; const b = await r.json(); b.addonEntry = 'plugin.test.js'; return new Response(JSON.stringify(b), { status: r.status, headers: r.headers }); };`
+2. Play an item, the first play after more than 60 seconds since the last catalog read; the console logs that the page reloads once nothing plays.
+3. Stop it and stay on the details page.
+
+Check: about 10 seconds after the stop, with the details page showing, the tab reloads on the same page, and `sessionStorage.getItem('webGPUPlayerReloadedForEntry')` is `plugin.test.js`.
+With the override still active, later plays never reload again in that tab; a play started within the 10 seconds, or an open dialog, defers the reload.
 
 ## The player
 

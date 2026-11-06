@@ -13,6 +13,7 @@ import DecoderPackageStore, { DecoderPackageStoreError } from 'webgpu-player/dec
 import { parseGPUDecoderHeader } from 'webgpu-player/decode/video/gpu/GPUDecoderManifest';
 
 import type { DecoderPackageRouteSummary } from './custom/CustomDeviceProfile';
+import { noteServerAddonEntry } from './OutdatedPageReload';
 
 // The decoder packages and pass files the server plugin offers: its catalog, and each file fetched only when a playback or the user needs it.
 // A fetched package stays in IndexedDB under its id, so later pages load it without a download until the server offers another version
@@ -184,7 +185,10 @@ async function requestCatalog(apiClient: ServerApiClient): Promise<ServerModuleC
     } catch (error) {
         throw new ServerModuleError('catalog-invalid', getErrorMessage(error));
     }
-    return parseServerModuleCatalog(body);
+    const catalog = parseServerModuleCatalog(body);
+    // The add-on build the server serves now, which an outdated page reloads for between plays
+    noteServerAddonEntry(isRecord(body) ? body.addonEntry : undefined);
+    return catalog;
 }
 
 /**

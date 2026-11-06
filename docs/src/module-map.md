@@ -5,7 +5,7 @@ Each source file's tests are at the same relative path under `jellyfin-webgpu-cl
 The plugin's `README.md` maps the server plugin, and the engine's [Module map](https://alchemyyy.github.io/WebGPU-Player/module-map.html) maps the engine.
 
 - `index.ts`: the add-on entry.
-  It configures the engine's assets and feature flags, installs the timing trace control, binds the host bridge, installs the host-compatible mode, and returns the player.
+  It configures the engine's assets and feature flags, installs the timing trace control, binds the host bridge, installs the outdated page reload and the host-compatible mode, and returns the player.
   Its `renderClientDefaultsEditor` renders the administrator's editor of the client defaults on the plugin's settings page.
 - `TimingTraceControl.ts`: `window.WebGPUPlayerTimingTrace`, which starts, stops, exports, and downloads the engine's timing trace with the build, GPU adapter, screen, and playback metadata, and starts it at load when local storage asks.
 - `WebGPUPlayer.ts`: the Jellyfin-facing player: profile augmentation, the stream-copy veto, eligibility, fallback, renegotiation, and generations.
@@ -25,7 +25,8 @@ The plugin's `README.md` maps the server plugin, and the engine's [Module map](h
 - `ServerClientDefaults.ts`: the server's defaults for the client settings, read at plugin load and on each sign-in, cached per server, and saved by an administrator.
 - `PresentationPassStore.ts`: the shader file sources in IndexedDB, which the settings refer to by key, and the presenter's preset built from them.
 - `DecoderPackages.ts`: the decoder packages the user adds in this browser, kept in IndexedDB, and what they decode for negotiation.
-- `ServerModules.ts`: the server's catalog of decoder packages and pass files, and the packages a playback needs, downloaded then and kept in IndexedDB by id.
+- `ServerModules.ts`: the server's catalog of decoder packages and pass files, and the packages a playback needs, downloaded then and kept in IndexedDB by id; it passes each catalog's `addonEntry` to `OutdatedPageReload.ts`.
+- `OutdatedPageReload.ts`: reloads a page that loaded an older add-on build than the server's catalog names, once nothing plays, on a library page, at most once per server entry in a tab; see [The client add-on](add-on.md#outdated-pages).
 - `ServerPresentationPasses.ts`: the server's pass files as the user's own preset holds them: added on demand, and replaced by the server's newer versions at the first play that presents through WebGPU and when the settings panel opens.
 - `DefaultPresentationFiles.ts`: the server's default shader preset as a user's default files: resolved against the catalog, downloaded into the pass source store once per preset and file version, and cached per user.
 - `ui/WebGPUPlaybackSettingsDialog.ts`: the in-player settings panel, with the settings button placement, live render and downmix updates, and restart-required options marked.

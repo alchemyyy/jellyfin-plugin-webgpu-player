@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.WebGPUPlayer.Addon;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -34,14 +35,14 @@ public sealed class ModuleController(ModuleStore store) : ControllerBase
     };
 
     /// <summary>
-    /// Gets the decoder packages and pass files clients get.
+    /// Gets the decoder packages and pass files clients get, and the add-on entry the server's pages load now.
     /// </summary>
     /// <returns>The catalog.</returns>
     [HttpGet("Catalog")]
     public IActionResult GetCatalog()
     {
         Response.Headers.CacheControl = RevalidateCacheControl;
-        return new JsonResult(store.GetCatalog(), ResponseJsonOptions);
+        return new JsonResult(store.GetCatalog() with { AddonEntry = AddonCatalog.Entry }, ResponseJsonOptions);
     }
 
     /// <summary>

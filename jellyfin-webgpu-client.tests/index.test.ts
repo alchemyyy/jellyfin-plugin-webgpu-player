@@ -15,6 +15,9 @@ const testState = vi.hoisted(() => ({
     }),
     configureCapabilityProbeStore: vi.fn(),
     installTimingTraceControl: vi.fn(),
+    installOutdatedPageReload: vi.fn((): void => {
+        testState.events.push('reload');
+    }),
     startCapabilityProbeWarmUp: vi.fn((): void => {
         testState.events.push('warm');
     }),
@@ -49,6 +52,9 @@ vi.mock('webgpu-player/capability/CapabilityProbeStore', () => ({
 }));
 vi.mock('addons/webGPUPlayer/CapabilityProbeWarmUp', () => ({
     startCapabilityProbeWarmUp: testState.startCapabilityProbeWarmUp
+}));
+vi.mock('addons/webGPUPlayer/OutdatedPageReload', () => ({
+    installOutdatedPageReload: testState.installOutdatedPageReload
 }));
 vi.mock('addons/webGPUPlayer/TimingTraceControl', () => ({
     installTimingTraceControl: testState.installTimingTraceControl
@@ -139,7 +145,7 @@ describe('WebGPU player add-on entry', () => {
         expect(testState.installHostCompatibleMode).toHaveBeenCalledWith(player);
         // The warm-up starts once the bag binds the PlaybackManager it waits on, and the server's defaults sync once it binds ServerConnections,
         // so the settings the player reads at construction start from the cached defaults
-        expect(testState.events).toEqual([ 'bind', 'defaults', 'warm', 'construct', 'install' ]);
+        expect(testState.events).toEqual([ 'bind', 'defaults', 'warm', 'reload', 'construct', 'install' ]);
         // The plugin manager reads these synchronously after construction
         expect([ player.id, player.type, player.name, player.priority ])
             .toEqual([ 'webgpuplayer', 'mediaplayer', 'WebGPU Player', 0 ]);

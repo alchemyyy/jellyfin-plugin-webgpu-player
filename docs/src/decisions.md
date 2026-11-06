@@ -42,6 +42,12 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   `playbackManager.play` with the queue, index, position, media source, and streams takes the host's own path for a playback that starts while another plays: it stops and destroys the old player, reports the stop, and negotiates afresh for the next.
   With SyncPlay, a remote player, or an item not on a server, a restart could break the session, so the toggle only saves there and applies from the next playback.
   The host's player settings menu has no seam, so the toggle is an item the add-on appends to the action sheet the OSD's settings button opens, and it runs once that sheet has closed.
+- An open tab that loaded an older add-on build reloads itself between plays (11-05); [The client add-on](add-on.md#outdated-pages) has the rules.
+  `index.html` is `no-cache` and every other add-on file is content-addressed, so a reload always gets the current build, and only a tab that stays open keeps old code, its persistent decode worker included, until someone reloads it.
+  The identity is the entry module path, which webpack names by content: the bootstrap publishes the entry it imports in `window.WebGPUPlayerConfig.entry`, rather than the add-on reading its own module URL, which webpack's `publicPath: 'auto'` and the development server would make less direct.
+  The server's entry rides on the catalog negotiations read already, so detection costs no request and no timer, and nothing on the playback path; a page learns of a deploy at its next play, and reloads after that play.
+  The reload waits for a stop, then 10 seconds without a start or a request, so a queue's next item and a second click keep it off, and it reloads only a library page with no dialog open and no field focused: an allowlist rather than a list of pages to avoid, since a page it does not know only waits longer, while a missed form would lose input.
+  A `sessionStorage` guard allows one reload per server entry in a tab, so a stale `index.html` from a cache in between cannot loop; the development server publishes no entry, since its plugin host may embed an older build than the page loads.
 
 ## Negotiation
 

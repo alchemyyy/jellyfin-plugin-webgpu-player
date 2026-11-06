@@ -1,6 +1,8 @@
 import loading from 'components/loading/loading';
 import { playbackManager } from 'components/playback/playbackmanager';
 
+import { holdOutdatedPageReload } from '../OutdatedPageReload';
+
 import { installPlaybackManagerHooks } from './PlaybackManagerHooks';
 import { installPlayerSettingsMenu, type PlayerSettingsMenuPlayer } from './PlayerSettingsMenu';
 import { installSettingsEntryPoints } from './SettingsEntryPoints';
@@ -14,13 +16,15 @@ export type HostCompatiblePlayer = PlayerSettingsMenuPlayer & {
 
 const hostCompatiblePlayers = new Set<HostCompatiblePlayer>();
 
-/** Notes a playback request on every add-on player; returns the function that ends it on each. */
+/** Notes a playback request on every add-on player, and holds an outdated page's reload; returns the function that ends it on each. */
 function beginPlaybackRequest(mediaSourceId: string | null): () => void {
+    const endReloadHold = holdOutdatedPageReload();
     const endRequests = Array.from(hostCompatiblePlayers, (player: HostCompatiblePlayer): (() => void) => player.beginPlaybackRequest(mediaSourceId));
     return (): void => {
         for (const endRequest of endRequests) {
             endRequest();
         }
+        endReloadHold();
     };
 }
 

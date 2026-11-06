@@ -60,12 +60,15 @@ type FakeDecoderPackage = { contentHash: string, id: string, kind: 'audio' | 'vi
 
 const testState = vi.hoisted(() => ({
     apiClientAvailable: true,
+    noteServerAddonEntry: vi.fn(),
     // The packages the IndexedDB store holds, by id
     storedPackages: new Map<string, { contentHash: string, id: string, kind: 'audio' | 'video' }>(),
     storeAddCount: 0,
     // The package the loader reads each downloaded file as, by the file's first byte
     packagesByMarker: new Map<number, { contentHash: string, id: string, kind: 'audio' | 'video' }>()
 }));
+
+vi.mock('addons/webGPUPlayer/OutdatedPageReload', () => ({ noteServerAddonEntry: testState.noteServerAddonEntry }));
 
 vi.mock('lib/jellyfin-apiclient', () => {
     const apiClient = {
@@ -187,6 +190,18 @@ describe('ServerModules', () => {
         expect(parseServerModuleCatalog({ decoderPackages: [ HEVC_ENTRY, { id: 'broken' }, headerlessEntry, { ...HEVC_ENTRY, header: 7 } ], passes: [ SHARPEN_ENTRY, { fileName: 7 } ] }))
             .toEqual({ decoderPackages: [ HEVC_ENTRY, headerlessEntry ], passes: [ SHARPEN_ENTRY ] });
         expect(() => parseServerModuleCatalog([])).toThrow('catalog-invalid');
+    });
+
+    it('tells the outdated page reload the add-on entry each catalog read names, and keeps the catalog\'s shape', async () => {
+        const { loadServerModuleCatalog } = await importServerModules();
+        responses.set(CATALOG_URL, respondJSON({ ...CATALOG, addonEntry: 'plugin.0123abcd.js' }));
+
+        await expect(loadServerModuleCatalog()).resolves.toEqual(CATALOG);
+        // An older plugin's catalog names no entry
+        responses.set(CATALOG_URL, respondJSON(CATALOG));
+        await loadServerModuleCatalog(null, true);
+
+        expect(testState.noteServerAddonEntry.mock.calls).toEqual([ [ 'plugin.0123abcd.js' ], [ undefined ] ]);
     });
 
     it('downloads only the video packages that decode the target, leaving out the user\'s ids', async () => {

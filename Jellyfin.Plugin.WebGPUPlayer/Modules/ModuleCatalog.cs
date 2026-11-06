@@ -9,4 +9,10 @@ namespace Jellyfin.Plugin.WebGPUPlayer.Modules;
 /// <param name="Passes">The offered pass files.</param>
 public sealed record ModuleCatalog(
     IReadOnlyList<DecoderPackageInfo> DecoderPackages,
-    IReadOnlyList<PassFileInfo> Passes);
+    IReadOnlyList<PassFileInfo> Passes)
+{
+    /// <summary>
+    /// Gets the entry module path of the add-on build the server's pages load now, which a page that loaded another build compares to reload itself between plays.
+    /// </summary>
+    public string? AddonEntry { get; init; }
+}

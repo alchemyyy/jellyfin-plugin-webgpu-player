@@ -540,6 +540,9 @@ function watchPlugin(context) {
 /**
  * Returns the bootstrap the plugin adds to index.html (Transformations/WebClientFunctions.cs), for this server:
  * the add-on's asset route, and the window factory through which Jellyfin Web's plugin manager imports the add-on's entry.
+ * It leaves out the entry the plugin's bootstrap publishes, which turns the add-on's reload of an outdated page off (OutdatedPageReload.ts):
+ * the plugin host here embeds the add-on build it started with and starts again only for new engine modules, so its catalog may name an older entry
+ * than the page loads, and the live reload events reload pages for each build instead.
  */
 function createBootstrapScript(entry) {
     return '<script data-webgpu-player-bootstrap>'

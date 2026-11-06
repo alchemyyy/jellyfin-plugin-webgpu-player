@@ -27,7 +27,7 @@ A client downloads a decoder package only when a playback needs it, and a pass f
 
 | Route | Caller | Answer |
 | --- | --- | --- |
-| `GET WebGPUPlayer/Catalog` | A signed-in user | The offered packages and pass files, each with its SHA-256 and size, and each video package with its header |
+| `GET WebGPUPlayer/Catalog` | A signed-in user | The offered packages and pass files, each with its SHA-256 and size, and each video package with its header, and `addonEntry`, the add-on entry module the server's pages load now, which an outdated page reloads for ([The client add-on](add-on.md#outdated-pages)) |
 | `GET WebGPUPlayer/DecoderPackages/{id}` | A signed-in user | The offered package, with its SHA-256 as its entity tag |
 | `GET WebGPUPlayer/Passes/{fileName}` | A signed-in user | The offered pass file, with its SHA-256 as its entity tag |
 | `GET WebGPUPlayer/Catalog/All` | An administrator | Every file the store holds, with its source, state, and problem |

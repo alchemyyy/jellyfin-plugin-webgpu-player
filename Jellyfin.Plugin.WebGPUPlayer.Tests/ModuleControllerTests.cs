@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.WebGPUPlayer.Addon;
 using Jellyfin.Plugin.WebGPUPlayer.Modules;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
@@ -66,6 +67,21 @@ public sealed class ModuleControllerTests : IDisposable
         Assert.Equal("hevc", Assert.Single(package.GetProperty("codecs").EnumerateArray()).GetString());
         Assert.StartsWith("//! id: hevc\n", package.GetProperty("header").GetString(), StringComparison.Ordinal);
         Assert.Equal(ModuleTestFiles.SharpenFileName, Assert.Single(catalog.RootElement.GetProperty("passes").EnumerateArray()).GetProperty("fileName").GetString());
+    }
+
+    [Fact]
+    public async Task GetCatalog_NamesTheAddonEntryTheServerServesNow()
+    {
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using WebApplication application = await StartServerAsync(cancellationToken);
+        using HttpClient client = CreateClient(application, UserRole);
+
+        using HttpResponseMessage response = await client.GetAsync(new Uri(CatalogPath, UriKind.Relative), cancellationToken);
+        using JsonDocument catalog = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+
+        // The test assembly embeds the add-on build, as the plugin does, so the bootstrap and the catalog name the same entry
+        Assert.NotNull(AddonCatalog.Entry);
+        Assert.Equal(AddonCatalog.Entry, catalog.RootElement.GetProperty("addonEntry").GetString());
     }
 
     [Fact]

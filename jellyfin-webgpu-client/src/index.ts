@@ -8,6 +8,7 @@ import { installHostCompatibleMode } from './compat/HostCompatibleMode';
 import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
 import { loadAddonStrings } from './host/globalize';
 import HostCompatibleWebGPUPlayer from './HostCompatibleWebGPUPlayer';
+import { installOutdatedPageReload } from './OutdatedPageReload';
 import { startClientDefaultsSync } from './ServerClientDefaults';
 import { installTimingTraceControl } from './TimingTraceControl';
 import { getWebGPUHDRToneMappingEnabled } from './WebGPUPlaybackPreferences';
@@ -50,6 +51,8 @@ function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWeb
     startClientDefaultsSync();
     // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks
     startCapabilityProbeWarmUp();
+    // A page that loaded an older add-on build than the server's catalog names reloads between plays
+    installOutdatedPageReload();
     const player = new HostCompatibleWebGPUPlayer();
     installHostCompatibleMode(player);
     return player;

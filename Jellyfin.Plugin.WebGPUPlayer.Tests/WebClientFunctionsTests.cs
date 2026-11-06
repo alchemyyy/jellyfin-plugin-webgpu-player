@@ -87,6 +87,7 @@ public sealed class WebClientFunctionsTests
         Assert.Equal(WebClientFunctions.AddonLoadTimeoutMilliseconds, (int?)settings["loadTimeout"]);
         Assert.Contains("pathname.lastIndexOf('/web/')", script, StringComparison.Ordinal);
         Assert.Contains("window.WebGPUPlayerConfig = {", script, StringComparison.Ordinal);
+        Assert.Contains("entry: settings.entry", script, StringComparison.Ordinal);
         Assert.Contains("window.WebGPUPlayer = function () {", script, StringComparison.Ordinal);
         Assert.Contains("import(assetBaseURL + settings.entry)", script, StringComparison.Ordinal);
         Assert.Contains("return Promise.race([load, timeout]);", script, StringComparison.Ordinal);

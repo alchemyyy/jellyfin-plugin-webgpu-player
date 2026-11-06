@@ -28,6 +28,9 @@ const testState = vi.hoisted(() => ({
     userId: 'user-1' as string | null
 }));
 
+// The server catalog's reader reaches the outdated page reload, which follows the host's PlaybackManager; these tests play nothing
+vi.mock('components/playback/playbackmanager', () => ({ playbackManager: {} }));
+
 // The signed-in user's local settings, which the add-on build redirects to its shim
 vi.mock('scripts/settings/userSettings', () => ({
     currentSettings: {

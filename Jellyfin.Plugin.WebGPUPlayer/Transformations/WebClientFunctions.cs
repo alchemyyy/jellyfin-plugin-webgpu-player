@@ -50,7 +50,8 @@ public static class WebClientFunctions
             const base = webIndex === -1 ? '' : pathname.substring(0, webIndex);
             const assetBaseURL = base + settings.assetPath;
             window.{{ClientConfigName}} = {
-                assetBaseURL: assetBaseURL
+                assetBaseURL: assetBaseURL,
+                entry: settings.entry
             };
             window.{{ClientPluginName}} = function () {
                 let timer;
@@ -117,7 +118,7 @@ public static class WebClientFunctions
     }
 
     /// <summary>
-    /// Builds the inline script that publishes the add-on asset URL and defines the window factory that imports the entry module.
+    /// Builds the inline script that publishes the add-on asset URL and the entry module the page loads, and defines the window factory that imports that module.
     /// </summary>
     /// <param name="entry">The add-on entry module path below the asset route.</param>
     /// <returns>The complete script element.</returns>
