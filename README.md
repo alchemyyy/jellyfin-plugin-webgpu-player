@@ -42,16 +42,12 @@ The plugin itself is basically a wrapper for injecting modifications into the Je
 
 <h4 align="center">Unstable Builds</h4>
 
-Unstable builds are cut from `main` between releases and published as [pre-releases](https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases). To get them, add this second repository beside the one above:
+Unstable builds are [pre-releases](https://github.com/alchemyyy/jellyfin-plugin-webgpu-player/releases) cut from `main` between releases, numbered after the release they follow (2.0.1.3 is the third after 2.0.1.0). To get them, add this repository alongside the one above:
 ```
 https://raw.githubusercontent.com/alchemyyy/jellyfin-plugin-webgpu-player/refs/heads/unstable/manifest.json
 ```
 
-Both repositories list the same plugin, so Jellyfin offers the versions of both, and its Update Plugins task, which runs at startup and every 24 hours, moves the server to the newest: each unstable build, and each release when it ships. An unstable build's version is the release it follows with a build number in its last part, so 2.0.1.3 is the third unstable build after 2.0.1.0.
-
-- To leave the unstable builds, remove their repository. Jellyfin never downgrades a plugin, so the server keeps its unstable build until the next release, which is always newer. To go back at once, uninstall the plugin and install it again.
-- To roll back to an earlier build, uninstall the plugin, install that version from the plugin's page, which lists every version with its changelog, and restart Jellyfin. Installing an older version over a newer one does nothing, since Jellyfin loads only the newest version installed.
-- The Update Plugins task installs the newest version again at the next startup or within a day. To stay on an earlier build, disable that scheduled task, which stops updates to every plugin, or set `"autoUpdate": false` in the `meta.json` in the plugin's folder in the server's `plugins` directory.
+Jellyfin then updates to each unstable build and each release. To leave, remove the repository; the server keeps its build until the next release. To roll back, uninstall the plugin, install an older version from its page, and restart; disable the Update Plugins scheduled task to stay there.
 
 <h2 align="center">Development</h2>
 
