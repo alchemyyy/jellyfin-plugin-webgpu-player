@@ -149,6 +149,7 @@ import {
     type DecoderPackageRouteSummary
 } from './custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlayCompatibility';
+import { reportPlaybackFallback } from './PlaybackFallbackReports';
 import ScreenWakeLock from './ScreenWakeLock';
 import CustomPlaybackMediaElement from './CustomPlaybackMediaElement';
 import {
@@ -965,7 +966,13 @@ export default class WebGPUPlayer {
     constructor() {
         const audioOutputManager = initializeWebGPUAudioOutputManager();
         this.htmlDelegate = new HTMLPlayerDelegate(this, this.handleBackendStopped, this.handleBackendError, audioOutputManager);
-        this.presenter = new WebGPUPresenter(this.handlePresentationFallback, this.handleDecodedPresentationRefresh);
+        this.presenter = new WebGPUPresenter(
+            this.handlePresentationFallback,
+            this.handleDecodedPresentationRefresh,
+            (reason: GPUDeviceLostReason, message: string): void => {
+                reportPlaybackFallback('device-lost', reason, message);
+            }
+        );
         this.applyPresentationSettings(loadWebGPUUserSettings());
         // Settings that follow the server's defaults change with them; the player lives as long as the page, so it stays subscribed
         subscribeClientDefaults((): void => {
@@ -2650,21 +2657,20 @@ export default class WebGPUPlayer {
         }
     }
 
-    /** Logs why custom playback declined a source, which otherwise falls back without an error. */
+    /** Logs why custom playback declined a source, which otherwise falls back without an error, and reports it to the server. */
     private warnCustomPlaybackIneligible(eligibility: CustomPlaybackEligibility | null): void {
         // Mirrors the fallback getCustomPlaybackUnavailableResult selects
-        const message: string = this.currentPlaybackRequiresSourceRenegotiation ?
-            CUSTOM_PLAYBACK_INELIGIBLE_RENEGOTIATION_MESSAGE :
-            CUSTOM_PLAYBACK_INELIGIBLE_HTML_BACKEND_MESSAGE;
+        const renegotiates = this.currentPlaybackRequiresSourceRenegotiation;
+        let reason: string;
         if (!eligibility) {
-            console.warn(message, CUSTOM_PLAYBACK_ELIGIBILITY_UNAVAILABLE_REASON);
-            return;
+            reason = CUSTOM_PLAYBACK_ELIGIBILITY_UNAVAILABLE_REASON;
+        } else if (eligibility.eligible) {
+            reason = WEBGPU_PRESENTATION_DISABLED_REASON;
+        } else {
+            reason = eligibility.reason;
         }
-        if (!eligibility.eligible) {
-            console.warn(message, eligibility.reason);
-            return;
-        }
-        console.warn(message, WEBGPU_PRESENTATION_DISABLED_REASON);
+        console.warn(renegotiates ? CUSTOM_PLAYBACK_INELIGIBLE_RENEGOTIATION_MESSAGE : CUSTOM_PLAYBACK_INELIGIBLE_HTML_BACKEND_MESSAGE, reason);
+        reportPlaybackFallback('custom-playback-declined', reason, renegotiates ? 'source-renegotiation' : 'html-backend');
     }
 
     private getCustomPlaybackUnavailableResult(
@@ -3213,6 +3219,9 @@ export default class WebGPUPlayer {
         if (!this.isCustomPlaybackCurrent(customPlaybackController, backendGeneration)) {
             return Promise.resolve(PLAYBACK_SUPERSEDED);
         }
+        // Names where the playback goes as runCustomPlaybackFallback decides it
+        const renegotiates = request.disposition === 'renegotiate-source' || this.currentPlaybackRequiresSourceRenegotiation;
+        reportPlaybackFallback('custom-playback-fallback', request.reason, renegotiates ? 'source-renegotiation' : 'html-backend');
 
         const fallbackOperation = this.runCustomPlaybackFallback(customPlaybackController, backendGeneration, request);
         const fallbackPromise = fallbackOperation.finally((): void => {
@@ -3619,6 +3628,7 @@ export default class WebGPUPlayer {
         if (generation !== this.presentationGeneration) {
             return;
         }
+        reportPlaybackFallback('presentation', reason, detail);
 
         const customPlaybackController = this.getActiveCustomPlaybackController();
         this.webGPUPresentationEnabled = false;

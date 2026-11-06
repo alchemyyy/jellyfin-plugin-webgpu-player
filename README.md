@@ -142,7 +142,7 @@ Open `http://127.0.0.1:5173/web/` and sign in to your server. Jellyfin Web runs 
 | `Jellyfin.Plugin.WebGPUPlayer/Addon/` | Embedded add-on catalog and the asset route |
 | `Jellyfin.Plugin.WebGPUPlayer/Modules/` | The decoder packages and pass files the server offers: the store of bundled files, uploads, and disabled keys in the plugin's data folder, the readers of package and pass headers, and their routes |
 | `Jellyfin.Plugin.WebGPUPlayer/ClientDefaults/` | The administrator's defaults for every client setting: the store of `client-defaults.json` in the plugin's data folder, its shape check, and its routes |
-| `Jellyfin.Plugin.WebGPUPlayer/Diagnostics/` | The route clients report crashed capability probes to, which checks each report and writes a warning per crash to the server log |
+| `Jellyfin.Plugin.WebGPUPlayer/Diagnostics/` | The routes clients report crashed capability probes and playback fallbacks to, which check each report and write a log line per entry to the server log |
 | `Jellyfin.Plugin.WebGPUPlayer/Configuration/` | The plugin's dashboard settings page and its controller, which mount the add-on's client defaults editor and manage the server's decoders and passes |
 | `Jellyfin.Plugin.WebGPUPlayer.DevHost/` | A host of the plugin's routes for `serve_jellyfin_web_client.sh`, which signs requests in through a Jellyfin server of your own |
 | `bin/` | Build output, one folder per project (generated, gitignored): the .NET projects, and the client add-on in `bin/jellyfin-webgpu-client/` |

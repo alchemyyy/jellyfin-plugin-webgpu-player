@@ -117,6 +117,10 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The next page knows the crash, but on iOS its storage and console are readable only through a Mac's Web Inspector, which few users who meet the crash have.
   The server's log is the one place an administrator reads with what they already have, under Dashboard > Logs, so the add-on posts each crash there, with the browser calls the probe had in flight, and the settings panel shows the same blocked and suspect calls, grouped by test, to the user.
   The report runs once per crash, on the page that finds it, so it costs nothing on a browser that never crashes, and a failed post is only logged, since the crash stays in the browser's stored verdicts.
+- Why a playback left the WebGPU route is reported to the server's log too, once per kind and reason in a page (11-06); [The client add-on](add-on.md#playback-fallback-reports) has the kinds and the route.
+  A laptop whose browser had been set to render on Microsoft's software rasterizer, WARP, had no WebGPU adapter, so its presenter fell back and its HEVC sources transcoded, and only its console said why.
+  Unlike a crash, a fallback can repeat on every play, so the add-on sends each kind and reason once per page load, and a declined source logs as information, since a transcoded source declines by design.
+  A device loss is reported whether or not the presenter recovers, since a recovered loss still names a GPU or driver reset.
 - PlaybackInfo bodies are gzipped on the wire rather than the device profile compacted (11-05).
   Every PlaybackInfo POST carries the whole device profile, about 167 KB of JSON with 279 codec profiles, and behind a slow upstream its upload cost about 110 ms of each play while Jellyfin answered in about 20 ms.
   Compacting the profile would change Jellyfin's decisions: StreamBuilder applies the conditions of every applicable codec profile to a transcode target in reverse order, and does not seed `rangetype` from the source, so merging or dropping the repeated VideoRangeType and VideoProfile conditions changes the `rangetype` and `profile` options of HEVC copy and encode targets.

@@ -435,6 +435,11 @@ vi.mock('addons/webGPUPlayer/ServerModules', () => ({
     loadServerVideoDecoderPackages: vi.fn(() => Promise.resolve([]))
 }));
 
+// The reports post through the host's API client; their own suite covers them
+vi.mock('addons/webGPUPlayer/PlaybackFallbackReports', () => ({
+    reportPlaybackFallback: vi.fn()
+}));
+
 vi.mock('webgpu-player/presentation/PresentationSetup', async importOriginal => {
     const originalModule = await importOriginal<
         typeof import('webgpu-player/presentation/PresentationSetup')

@@ -9,6 +9,7 @@ import { bindHostBridge, type HostPluginBag } from './host/HostBridge';
 import { loadAddonStrings } from './host/globalize';
 import HostCompatibleWebGPUPlayer from './HostCompatibleWebGPUPlayer';
 import { installOutdatedPageReload } from './OutdatedPageReload';
+import { startPlaybackFallbackReports } from './PlaybackFallbackReports';
 import { startProbeCrashReports } from './ProbeCrashReports';
 import { startClientDefaultsSync } from './ServerClientDefaults';
 import { installTimingTraceControl } from './TimingTraceControl';
@@ -52,6 +53,8 @@ function WebGPUPlayerAddon(this: unknown, bag: HostPluginBag): HostCompatibleWeb
     startClientDefaultsSync();
     // Before the warm-up, whose first read of the probe store finds the probes that crashed an earlier page
     startProbeCrashReports();
+    // Before the player, whose presenter and playbacks report their fallbacks
+    startPlaybackFallbackReports();
     // The host's PlaybackManager is bound now, so the warm-up can wait out its playbacks; it waits for the server's defaults to decide whether it runs
     void startCapabilityProbeWarmUp();
     // A page that loaded an older add-on build than the server's catalog names reloads between plays

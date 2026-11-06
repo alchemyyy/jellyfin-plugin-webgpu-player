@@ -27,7 +27,7 @@ It wraps the engine in a Jellyfin player and supplies the device profile, the se
 2. Jellyfin Web's plugin manager loads `WebGPUPlayer` through its window plugin path and constructs it with its dependency bag.
 3. `jellyfin-webgpu-client/src/index.ts` configures the engine: the asset base is the add-on route plus `libraries/`, the cache key is the engine build's asset key, and `isHDRToneMappingEnabled` reads the user's preference.
    It names the build whose capability probe verdicts the engine stores, the engine's asset key joined with webpack's `__webpack_hash__`, which also changes with the add-on's own probe code and profile rules.
-   It then binds the host bridge, starts the probe crash reports (`ProbeCrashReports.ts`, below), starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
+   It then binds the host bridge, starts the probe crash reports (`ProbeCrashReports.ts`, below) and the playback fallback reports (`PlaybackFallbackReports.ts`, below), starts the capability probe warm-up (`CapabilityProbeWarmUp.ts`), installs the outdated page reload (`OutdatedPageReload.ts`, below), installs the host-compatible mode, and returns a `HostCompatibleWebGPUPlayer`.
    The warm-up runs only with custom decode on and the runtime available, and only on a client whose [decoder test timing](#decoder-test-timing) is `background`; the engine skips it on a client that asks to save data or has fewer than four threads.
    It tells the engine at once that PlaybackManager's `isPlaying()` holds background probes, so none runs during a playback; see [Negotiation](negotiation.md).
    `index.ts` does not wait for the warm-up, which decides whether it runs once the server's client defaults settle and logs that decision once to the console.
@@ -90,6 +90,25 @@ The settings panel lists the blocked and suspect steps grouped by test, from the
   Nothing it does throws into the engine or holds a probe or a playback.
 - The server answers 204 and writes one warning per crash to its log, naming the probe, its steps, the browser's User-Agent, and the Jellyfin client, device, and client version from the authorization header, `unknown` where it names none.
   An administrator reads them under Dashboard > Logs.
+
+## Playback fallback reports
+
+A playback that leaves the WebGPU route says why only in the browser's console, which an administrator rarely sees, as when a laptop's browser rendered in software and had no WebGPU adapter.
+`PlaybackFallbackReports.ts` sends those reasons to the server too, through the probe crash reports' queue (`ServerReportQueue.ts`), so the same headers, sign-in wait, and failure handling apply.
+
+- `index.ts` starts it before it constructs the player; a fallback before then is not reported.
+- `WebGPUPlayer.ts` reports four kinds, each with the reason code its console line logs and a terse detail:
+  - `presentation`: the presenter fell back to the browser's own video, with the presenter's reason and detail, such as `adapter-unavailable` and `requestAdapter: null`.
+  - `device-lost`: the browser lost the presenter's GPU device, with the browser's reason and message, whether the presenter then recovered or fell back; a device the presenter destroys itself is not reported.
+  - `custom-playback-fallback`: a custom playback stopped and handed its playback on, with the engine's reason, such as `decode-failed`, and where the playback went, `html-backend` or `source-renegotiation`.
+  - `custom-playback-declined`: custom playback declined a source before it started, with the eligibility reason, such as `codec-unsupported` or `play-method-unsupported`, and where the playback went.
+- Each kind and reason is sent once per page, with its first detail, so a browser that falls back on every play reports it once per page load.
+- It posts to `POST WebGPUPlayer/Diagnostics/PlaybackFallbacks` with the body `{ "fallbacks": [ { "kind": "presentation", "reason": "adapter-unavailable", "detail": "requestAdapter: null" } ] }`.
+- The route accepts 1 to 16 fallbacks, each of the four kinds, with a reason of 1 to 64 characters and a detail of 0 to 256, every string printable ASCII, and refuses anything else whole with 400.
+  The add-on replaces any other character with `?` and cuts each string to its limit, since a browser's message may hold any text.
+- The server answers 204 and logs each fallback with its reason, its detail (`no detail` when empty), and the client, as it logs a probe crash.
+  `presentation`, `device-lost`, and `custom-playback-fallback` are warnings; `custom-playback-declined` is information, since a declined source is the route working as designed, as when the server transcodes.
+  The lines start with `WebGPU Player: WebGPU presentation fell back`, `WebGPU Player: the WebGPU device was lost`, `WebGPU Player: custom playback fell back`, and `WebGPU Player: custom playback declined a source`.
 
 ## Decoder test timing
 
