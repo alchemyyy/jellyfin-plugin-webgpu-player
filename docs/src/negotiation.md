@@ -33,6 +33,11 @@ The stock profile is the one the add-on's HTML backend returns from `getDevicePr
    - The selection request carries no `MaxStreamingBitrate`.
    - `AllowVideoStreamCopy` becomes false when `WebGPUPlayer.supportsVideoStreamCopy` vetoes the source, which it does for any Dolby Vision descriptor and any interlaced video (see [Interlaced video](#interlaced-video)).
    - When the selected source will transcode, a second request sizes the transcode with the detected bitrate.
+   - Every PlaybackInfo POST then goes out gzipped (`compat/GzipText.ts`) with `Content-Encoding: gzip`, since the device profile makes the body large; without `CompressionStream`, or when compression fails, the JSON goes out plain.
+     Axios runs request interceptors in reverse registration order, so the compression interceptor is registered before the negotiation one and runs after it.
+     The server plugin's `PlaybackInfoDecompressionMiddleware`, installed ahead of Jellyfin's pipeline by `PlaybackInfoDecompressionStartupFilter`, decompresses the body before Jellyfin reads it, up to 16 MiB, and answers 413 past that and 400 for invalid gzip.
+     Jellyfin therefore negotiates on the same profile JSON either way.
+     When a server without that middleware, such as an older plugin build or the development host's server, answers a gzipped body with 400 or 415, the interceptor sends the same JSON again plain, and that axios instance sends its PlaybackInfo bodies plain from then on.
 4. Start the session.
    `WebGPUPlayer.play` consumes the stock-profile proof.
    It sets `currentPlaybackRequiresSourceRenegotiation` when the profile was augmented, the method is DirectPlay or DirectStream, and `NativeDirectPlayCompatibility.isSameSessionNativePlaybackCompatible` fails for the stock profile.

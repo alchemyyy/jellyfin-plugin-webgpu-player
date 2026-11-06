@@ -22,6 +22,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHostedService<FileTransformationRegistrar>();
         serviceCollection.AddTransient<IStartupFilter, WebClientRewriteStartupFilter>();
 
+        // The add-on gzips its PlaybackInfo bodies; the middleware decompresses them before Jellyfin reads them
+        serviceCollection.AddTransient<IStartupFilter, PlaybackInfoDecompressionStartupFilter>();
+
         // NOTE: The server registers services before it creates plugins, so the stores open at their first request, once the plugin knows its data folder
         serviceCollection.AddSingleton(provider => ModuleStore.OpenBundled(
             GetDataFolderPath(),

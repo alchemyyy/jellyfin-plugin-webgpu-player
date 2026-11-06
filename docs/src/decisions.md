@@ -85,6 +85,10 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The add-on starts the engine's warm-up when Jellyfin Web constructs the player, which is when the host's PlaybackManager is bound, so the engine can hold its background probes while `isPlaying()` reports a playback, paused ones included.
   The store's build key is the engine's asset key with webpack's `__webpack_hash__`, because the add-on's profile rules and its copy of the probe code change without the engine's assets; a commit hash would not do, since every uncommitted build of a commit reads the same `<sha>-dirty`.
   The settings dialog offers the engine's clear, for a change no fingerprint shows that has not yet failed a start.
+- PlaybackInfo bodies are gzipped on the wire rather than the device profile compacted (11-05).
+  Every PlaybackInfo POST carries the whole device profile, about 167 KB of JSON with 279 codec profiles, and behind a slow upstream its upload cost about 110 ms of each play while Jellyfin answered in about 20 ms.
+  Compacting the profile would change Jellyfin's decisions: StreamBuilder applies the conditions of every applicable codec profile to a transcode target in reverse order, and does not seed `rangetype` from the source, so merging or dropping the repeated VideoRangeType and VideoProfile conditions changes the `rangetype` and `profile` options of HEVC copy and encode targets.
+  The add-on therefore sends the same JSON gzipped with `Content-Encoding: gzip`, and the plugin's `PlaybackInfoDecompressionMiddleware` restores it before Jellyfin reads it, so every negotiation decision stays as it was.
 
 ## Playback robustness
 

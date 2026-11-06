@@ -5,6 +5,7 @@ import { appHost } from 'components/apphost';
 import { AppFeature } from 'constants/appFeature';
 import { ServerConnections } from 'lib/jellyfin-apiclient';
 
+import { gzipText } from './GzipText';
 import {
     selectOptimalMediaSource,
     type DirectPlayEnvironment,
@@ -70,6 +71,8 @@ type TranscodeSizingFollowUp = TranscodeSizingRequest & Readonly<{
 }>;
 
 type NegotiatedRequestConfig = InternalAxiosRequestConfig & {
+    /** Uncompressed JSON of a PlaybackInfo body that was sent gzipped */
+    webGPUPlayerPlaybackInfoJson?: string
     webGPUPlayerTranscodeSizing?: TranscodeSizingFollowUp
 };
 
@@ -77,6 +80,9 @@ type DeviceProfileRecord = Record<string, unknown>;
 
 const negotiations = new Map<string, NegotiationRecord>();
 const installedAxiosInstances = new WeakSet<AxiosInstance>();
+/** Axios instances whose server rejected a gzipped PlaybackInfo body, which then send it plain */
+const gzipRejectingAxiosInstances = new WeakSet<AxiosInstance>();
+const GZIP_REJECTION_STATUSES = new Set([ 400, 415 ]);
 let negotiationSequence = 0;
 
 /** Tags a device profile copy so its PlaybackInfo request can be matched to this negotiation. */
@@ -229,6 +235,48 @@ export async function interceptPlaybackInfoRequest(config: InternalAxiosRequestC
     return config;
 }
 
+function serializeRequestBody(data: unknown): string | undefined {
+    if (typeof data === 'string') {
+        return data;
+    }
+    if (data && typeof data === 'object' && (Array.isArray(data) || Object.getPrototypeOf(data) === Object.prototype)) {
+        return JSON.stringify(data);
+    }
+    return undefined;
+}
+
+/**
+ * Gzips a PlaybackInfo POST body: the device profile makes it large, and the plugin's server middleware decompresses it.
+ * When not compressing, without CompressionStream, or when compression fails, the JSON goes out uncompressed without a Content-Encoding header.
+ */
+export async function compressPlaybackInfoRequest(
+    config: InternalAxiosRequestConfig,
+    compress: boolean
+): Promise<InternalAxiosRequestConfig> {
+    if (!isPlaybackInfoRequest(config)) {
+        return config;
+    }
+    const negotiatedConfig = config as NegotiatedRequestConfig;
+    // A re-issued request copies the previous config, including its encoding and stored JSON
+    config.headers.delete('Content-Encoding');
+    negotiatedConfig.webGPUPlayerPlaybackInfoJson = undefined;
+    const json = serializeRequestBody(config.data);
+    if (json === undefined) {
+        return config;
+    }
+
+    const compressed = compress ? await gzipText(json) : null;
+    config.headers.setContentType('application/json');
+    if (!compressed) {
+        config.data = json;
+        return config;
+    }
+    config.data = compressed;
+    config.headers.set('Content-Encoding', 'gzip');
+    negotiatedConfig.webGPUPlayerPlaybackInfoJson = json;
+    return config;
+}
+
 function createDirectPlayEnvironment(serverId: string | null | undefined): DirectPlayEnvironment | null {
     const apiClient = getApiClient(serverId);
     if (!apiClient) {
@@ -256,7 +304,7 @@ export async function interceptPlaybackInfoResponse(
     if (!playbackInfo || playbackInfo.ErrorCode || !Array.isArray(playbackInfo.MediaSources)) {
         return response;
     }
-    const sentBody = parseRequestBody(config.data);
+    const sentBody = parseRequestBody(config.webGPUPlayerPlaybackInfoJson ?? config.data);
     const environment = createDirectPlayEnvironment(sizing.serverId);
     if (!sentBody || !environment) {
         return response;
@@ -283,6 +331,26 @@ export async function interceptPlaybackInfoResponse(
     return axiosInstance.request<PlaybackInfoResponse>(sizedConfig);
 }
 
+/**
+ * Falls back to plain JSON when a server without the plugin's decompression middleware, such as an older plugin build, rejects a gzipped PlaybackInfo body.
+ * The instance then sends its PlaybackInfo bodies plain; every other error is rethrown unchanged.
+ */
+export async function recoverRejectedPlaybackInfoRequest(axiosInstance: AxiosInstance, error: unknown): Promise<AxiosResponse> {
+    const config = (error as { config?: NegotiatedRequestConfig } | null)?.config;
+    const status = (error as { response?: { status?: number } } | null)?.response?.status;
+    const json = config?.webGPUPlayerPlaybackInfoJson;
+    if (!config || json === undefined || status === undefined || !GZIP_REJECTION_STATUSES.has(status)) {
+        throw error;
+    }
+    gzipRejectingAxiosInstances.add(axiosInstance);
+    const plainConfig: NegotiatedRequestConfig = {
+        ...config,
+        data: json,
+        webGPUPlayerPlaybackInfoJson: undefined
+    };
+    return axiosInstance.request(plainConfig);
+}
+
 /** Installs the PlaybackInfo interceptors once per axios instance; returns whether they are active. */
 export function ensurePlaybackInfoInterceptors(serverId: string | null | undefined): boolean {
     const getApi = (ServerConnections as { getApi?: (id?: string | null) => { axiosInstance?: AxiosInstance } | undefined }).getApi;
@@ -295,9 +363,15 @@ export function ensurePlaybackInfoInterceptors(serverId: string | null | undefin
     }
     if (!installedAxiosInstances.has(axiosInstance)) {
         installedAxiosInstances.add(axiosInstance);
+        // Axios runs request interceptors in reverse registration order, so compression is registered first to run after negotiation
+        axiosInstance.interceptors.request.use(
+            (config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> =>
+                compressPlaybackInfoRequest(config, !gzipRejectingAxiosInstances.has(axiosInstance))
+        );
         axiosInstance.interceptors.request.use(interceptPlaybackInfoRequest);
         axiosInstance.interceptors.response.use(
-            (response: AxiosResponse): Promise<AxiosResponse> => interceptPlaybackInfoResponse(axiosInstance, response)
+            (response: AxiosResponse): Promise<AxiosResponse> => interceptPlaybackInfoResponse(axiosInstance, response),
+            (error: unknown): Promise<AxiosResponse> => recoverRejectedPlaybackInfoRequest(axiosInstance, error)
         );
     }
     return true;

@@ -1,5 +1,6 @@
-import axios, { type AxiosAdapter, type AxiosInstance, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import axios, { AxiosError, type AxiosAdapter, type AxiosInstance, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
+import { gunzipSync } from 'node:zlib';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { PlaybackBitrateRequest } from 'addons/webGPUPlayer/compat/PlaybackBitratePolicy';
 import type { PlaybackInfoRequestBody } from 'addons/webGPUPlayer/compat/PlaybackInfoPolicy';
@@ -31,6 +32,9 @@ const SDR_STREAM = { Type: 'Video', VideoRangeType: 'SDR' };
 
 type CapturedRequest = {
     body: PlaybackInfoRequestBody
+    contentEncoding: unknown
+    contentType: unknown
+    rawJson: string | undefined
     url: string | undefined
 };
 
@@ -78,15 +82,37 @@ function createTranscodeOnlySource(id = 'item'): Record<string, unknown> {
     };
 }
 
-/** Creates an axios instance whose adapter records requests and answers with queued PlaybackInfo bodies. */
+function decodeRequestData(data: unknown): string | undefined {
+    if (typeof data === 'string') {
+        return data;
+    }
+    if (data instanceof ArrayBuffer || Object.prototype.toString.call(data) === '[object ArrayBuffer]') {
+        return gunzipSync(new Uint8Array(data as ArrayBuffer)).toString('utf8');
+    }
+    return undefined;
+}
+
+/** A queued answer that fails the request with this status */
+class ErrorStatus {
+    constructor(readonly status: number) {}
+}
+
+/** Creates an axios instance whose adapter records requests (gunzipping compressed bodies) and answers with queued PlaybackInfo bodies or error statuses. */
 function createRecordingInstance(responseBodies: unknown[]): { instance: AxiosInstance, requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
     const adapter: AxiosAdapter = (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
-        const body = typeof config.data === 'string' ? JSON.parse(config.data) as PlaybackInfoRequestBody : {};
-        requests.push({ body, url: config.url });
+        const contentEncoding = config.headers.get('Content-Encoding');
+        const rawJson = contentEncoding === 'gzip' || typeof config.data === 'string' ? decodeRequestData(config.data) : undefined;
+        const body = rawJson === undefined ? {} : JSON.parse(rawJson) as PlaybackInfoRequestBody;
+        requests.push({ body, contentEncoding, contentType: config.headers.get('Content-Type'), rawJson, url: config.url });
+        const answer = responseBodies.shift();
+        if (answer instanceof ErrorStatus) {
+            const response: AxiosResponse = { config, data: null, headers: {}, status: answer.status, statusText: 'Error' };
+            return Promise.reject(new AxiosError('rejected', AxiosError.ERR_BAD_REQUEST, config, undefined, response));
+        }
         return Promise.resolve({
             config,
-            data: responseBodies.shift(),
+            data: answer,
             headers: {},
             status: 200,
             statusText: 'OK'
@@ -168,7 +194,8 @@ describe('ensurePlaybackInfoInterceptors', () => {
         expect(ensurePlaybackInfoInterceptors('server')).toBe(true);
 
         expect(serverConnectionsMock.getApi).toHaveBeenCalledWith('server');
-        expect(requestUse).toHaveBeenCalledTimes(1);
+        // Compression is registered before negotiation so axios runs it last
+        expect(requestUse).toHaveBeenCalledTimes(2);
         expect(responseUse).toHaveBeenCalledTimes(1);
     });
 
@@ -210,6 +237,57 @@ describe('PlaybackInfo interception through axios', () => {
             IsPlayback: true,
             MaxStreamingBitrate: DETECTED_BITRATE
         });
+        expect(requests[0].contentEncoding).toBe('gzip');
+    });
+
+    it('gzips the negotiated PlaybackInfo JSON after negotiation rewrote it', async () => {
+        const { instance, requests } = install([ { MediaSources: [] } ]);
+        const item: NegotiationItem = { Id: 'item', MediaStreams: [ SDR_STREAM ], ServerId: 'server' };
+
+        await postPlaybackInfo(instance, {
+            DeviceProfile: markPlaybackInfoNegotiation({ Name: 'webgpu' }, createPlayer(), item, undefined),
+            IsPlayback: true,
+            MaxStreamingBitrate: DETECTED_BITRATE
+        });
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0].contentEncoding).toBe('gzip');
+        expect(requests[0].contentType).toBe('application/json');
+        expect(requests[0].rawJson).toBe(JSON.stringify({ DeviceProfile: { Name: 'webgpu' }, IsPlayback: true }));
+    });
+
+    it('serializes and gzips object bodies', async () => {
+        const { instance, requests } = install([ {} ]);
+
+        await instance.request({ data: { IsPlayback: true }, method: 'POST', url: PLAYBACK_INFO_URL });
+
+        expect(requests[0].contentEncoding).toBe('gzip');
+        expect(requests[0].rawJson).toBe('{"IsPlayback":true}');
+    });
+
+    describe('without CompressionStream', () => {
+        beforeEach(() => {
+            vi.stubGlobal('CompressionStream', undefined);
+        });
+
+        afterEach(() => {
+            vi.unstubAllGlobals();
+        });
+
+        it('sends plain JSON without a Content-Encoding header', async () => {
+            const { instance, requests } = install([ {} ]);
+
+            await instance.request({
+                data: JSON.stringify({ IsPlayback: true }),
+                headers: { 'Content-Encoding': 'gzip' },
+                method: 'POST',
+                url: PLAYBACK_INFO_URL
+            });
+
+            expect(requests[0].contentEncoding).toBeUndefined();
+            expect(requests[0].contentType).toBe('application/json');
+            expect(requests[0].rawJson).toBe('{"IsPlayback":true}');
+        });
     });
 
     it('selects without bitrate, then sizes the transcode the server decided', async () => {
@@ -234,6 +312,7 @@ describe('PlaybackInfo interception through axios', () => {
             StartTimeTicks: 0
         });
         expect(requests[1].url).toBe(PLAYBACK_INFO_URL);
+        expect(requests[1].contentEncoding).toBe('gzip');
         expect(requests[1].body).toEqual({
             DeviceProfile: { Name: 'webgpu' },
             EnableDirectPlay: false,
@@ -368,5 +447,57 @@ describe('PlaybackInfo interception through axios', () => {
         await instance.request({ method: 'GET', url: PLAYBACK_INFO_URL });
 
         expect(requests[0].body).toEqual(JSON.parse(body));
+        expect(requests[0].contentEncoding).toBeUndefined();
+        expect(requests[1].contentEncoding).toBeUndefined();
+    });
+
+    it('re-sends a gzipped body the server rejects as plain JSON, and sends plain from then on', async () => {
+        const playbackInfo = { MediaSources: [] };
+        const { instance, requests } = install([ new ErrorStatus(400), playbackInfo, {} ]);
+        const item: NegotiationItem = { Id: 'item', MediaStreams: [ SDR_STREAM ], ServerId: 'server' };
+
+        const response = await postPlaybackInfo(instance, {
+            DeviceProfile: markPlaybackInfoNegotiation({ Name: 'webgpu' }, createPlayer(), item, undefined),
+            IsPlayback: true,
+            MaxStreamingBitrate: DETECTED_BITRATE
+        });
+        await postPlaybackInfo(instance, { IsPlayback: true });
+
+        const negotiatedJson = JSON.stringify({ DeviceProfile: { Name: 'webgpu' }, IsPlayback: true });
+        expect(requests).toHaveLength(3);
+        expect(requests[0].contentEncoding).toBe('gzip');
+        expect(requests[0].rawJson).toBe(negotiatedJson);
+        expect(requests[1].contentEncoding).toBeUndefined();
+        expect(requests[1].rawJson).toBe(negotiatedJson);
+        expect(response.data).toBe(playbackInfo);
+        expect(requests[2].contentEncoding).toBeUndefined();
+        expect(requests[2].rawJson).toBe('{"IsPlayback":true}');
+    });
+
+    it('rethrows a 500 for a gzipped body without a retry', async () => {
+        const { instance, requests } = install([ new ErrorStatus(500) ]);
+
+        await expect(postPlaybackInfo(instance, { IsPlayback: true })).rejects.toMatchObject({ response: { status: 500 } });
+
+        expect(requests).toHaveLength(1);
+    });
+
+    describe('with an uncompressed body', () => {
+        beforeEach(() => {
+            vi.stubGlobal('CompressionStream', undefined);
+        });
+
+        afterEach(() => {
+            vi.unstubAllGlobals();
+        });
+
+        it('rethrows a 400 without a retry', async () => {
+            const { instance, requests } = install([ new ErrorStatus(400) ]);
+
+            await expect(postPlaybackInfo(instance, { IsPlayback: true })).rejects.toMatchObject({ response: { status: 400 } });
+
+            expect(requests).toHaveLength(1);
+            expect(requests[0].contentEncoding).toBeUndefined();
+        });
     });
 });
