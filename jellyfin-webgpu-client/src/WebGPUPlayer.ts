@@ -159,6 +159,7 @@ import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlay
 import { reportPlaybackFallback } from './PlaybackFallbackReports';
 import ScreenWakeLock from './ScreenWakeLock';
 import CustomPlaybackMediaElement from './CustomPlaybackMediaElement';
+import CustomPlaybackPictureInPicture from './CustomPlaybackPictureInPicture';
 import {
     getCustomPlaybackRuntimeAvailability,
     type CustomPlaybackRuntimeAvailability
@@ -200,7 +201,8 @@ import WebGPUPresenter, {
     type PresentationFallbackReason,
     type PresentationPresetFile,
     type PresentationSurface,
-    type PresentationTelemetry
+    type PresentationTelemetry,
+    type PresentedPictureObserver
 } from 'webgpu-player/presentation/WebGPUPresenter';
 import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
 import type { VideoDecoderPackage } from 'webgpu-player/decode/packages/DecoderPackage';
@@ -632,6 +634,11 @@ type CustomPlaybackSetupDeadline = {
     release: () => void
 };
 
+/** Logs a picture-in-picture request the browser refused, as the HTML player logs its own. */
+function logPictureInPictureError(error: unknown): void {
+    console.error(`Picture in picture error: ${String(error)}`);
+}
+
 /**
  * Bounds custom playback setup.
  * The deadline covers capability, presentation, and controller construction; the setup releases it when the controller starts, whose progress-aware startup bound then applies.
@@ -930,6 +937,23 @@ export default class WebGPUPlayer {
     private readonly pendingBackendStopPromises = new Set<Promise<unknown>>();
     private readonly pendingStopCounts = new Map<number, number>();
     private readonly screenWakeLock = new ScreenWakeLock();
+    // Shows custom playback in a picture-in-picture window, through a copy of each picture the presenter draws
+    private readonly pictureInPicture = new CustomPlaybackPictureInPicture({
+        observePictures: (observer: PresentedPictureObserver): (() => void) => this.presenter.setPresentedPictureObserver(observer),
+        onChange: (): void => {
+            this.synchronizeCustomPlaybackPageVisibility();
+        },
+        onPausedOpen: (): void => {
+            // The presenter keeps no paused picture to copy, so the paused playback draws its frame again, as after a resize
+            this.handleDecodedPresentationRefresh(this.presentationGeneration);
+        },
+        pause: (): void => {
+            this.getActiveCustomPlaybackController()?.pause();
+        },
+        play: (): void => {
+            this.getActiveCustomPlaybackController()?.resume();
+        }
+    });
 
     private backendOperationTail: Promise<void> | null = null;
     private backendStopCallBarrier: Promise<void> | null = null;
@@ -1221,9 +1245,14 @@ export default class WebGPUPlayer {
     supports(feature: string): boolean {
         switch (feature) {
             case 'AirPlay':
-            case 'PictureInPicture':
             case 'SetBrightness':
                 return this.hasAuthoritativeHTMLPlaybackSurface() && this.htmlDelegate.player.supports(feature);
+            case 'PictureInPicture':
+                // Custom playback shows in a window of its own, and the browser's own playback in its element's, even while WebGPU presents it
+                if (this.isCustomPictureInPictureSource()) {
+                    return CustomPlaybackPictureInPicture.isSupported();
+                }
+                return this.hasNativeHTMLPlayback() && this.htmlDelegate.player.supports(feature);
             case 'PlaybackRate':
                 return this.isCustomPlaybackPathActive()
                     || (this.hasAuthoritativeHTMLPlaybackSurface() && this.htmlDelegate.player.supports(feature));
@@ -1365,6 +1394,10 @@ export default class WebGPUPlayer {
         this.incrementPendingStopCount(sessionGeneration);
         const invalidatedGeneration = this.advancePresentationGeneration();
         this.presenter.endSession(invalidatedGeneration);
+        // A stop between queued items keeps an open window for the next playback; a player torn down closes it, as the HTML backend's element goes
+        if (destroyPlayer) {
+            this.pictureInPicture.exit().catch(logPictureInPictureError);
+        }
 
         const ownedGeneration = this.ownedBackendSessionGeneration ?? sessionGeneration;
         const stopPromise = this.callBackendStop(ownedGeneration, destroyPlayer);
@@ -1391,6 +1424,7 @@ export default class WebGPUPlayer {
             document.removeEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
         this.screenWakeLock.release();
+        this.pictureInPicture.exit().catch(logPictureInPictureError);
         this.customPlaybackFrameLoop?.destroy();
         const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(this.backendSessionGeneration);
         if (audioPrewarmClose) {
@@ -1477,6 +1511,7 @@ export default class WebGPUPlayer {
 
             this.attachNativePresentation();
             this.restoreHTMLPlaybackRate();
+            this.moveCustomPictureInPictureToHTMLPlayback();
             return playResult;
         } catch (error) {
             this.beginCustomPlaybackAudioPrewarmClose(generation);
@@ -1808,15 +1843,23 @@ export default class WebGPUPlayer {
     }
 
     setPictureInPictureEnabled(enabled: boolean): void {
+        if (!enabled && this.pictureInPicture.isOpen()) {
+            this.pictureInPicture.exit().catch(logPictureInPictureError);
+            return;
+        }
+        if (enabled && this.isCustomPictureInPictureSource()) {
+            this.pictureInPicture.enter().catch(logPictureInPictureError);
+            return;
+        }
         this.htmlDelegate.player.setPictureInPictureEnabled(enabled);
     }
 
     isPictureInPictureEnabled(): boolean {
-        return this.htmlDelegate.player.isPictureInPictureEnabled();
+        return this.pictureInPicture.isOpen() || this.htmlDelegate.player.isPictureInPictureEnabled();
     }
 
-    togglePictureInPicture(): unknown {
-        return this.htmlDelegate.player.togglePictureInPicture();
+    togglePictureInPicture(): void {
+        this.setPictureInPictureEnabled(!this.isPictureInPictureEnabled());
     }
 
     setAirPlayEnabled(enabled: boolean): void {
@@ -2571,8 +2614,7 @@ export default class WebGPUPlayer {
                 stage: 'surface',
                 status: 'in-progress'
             };
-            const htmlBackend = this.getHTMLCustomPlaybackBackend();
-            const presentationSurface = await htmlBackend.prepareCustomPlayback(options);
+            const presentationSurface = await this.prepareCustomPlaybackSurface(options);
             if (!this.isCustomPlaybackSetupCurrent(backendGeneration, setupRevision)) {
                 return { status: 'superseded' };
             }
@@ -3080,7 +3122,7 @@ export default class WebGPUPlayer {
                 this.applyStaticHDRMetadata(event.metadata);
                 break;
             case 'statechange':
-                this.synchronizeScreenWakeLock(event.state);
+                this.synchronizePlayingState(event.state);
                 mediaElement?.notifyStateChange(event.state);
                 if (event.state === 'paused') {
                     this.customPlaybackFrameLoop?.cancel();
@@ -3145,17 +3187,22 @@ export default class WebGPUPlayer {
         }
     }
 
-    /** Holds the screen wake lock while playing, keeps it across a seek or restart, and releases it in any other state. */
-    private synchronizeScreenWakeLock(state: CustomPlaybackState): void {
+    /**
+     * Holds the screen wake lock and plays the picture-in-picture window's video while playing, keeps both across a seek or restart,
+     * and releases the lock and pauses the video in any other state.
+     */
+    private synchronizePlayingState(state: CustomPlaybackState): void {
         switch (state) {
             case 'playing':
                 this.screenWakeLock.acquire();
+                this.pictureInPicture.setPlaying(true);
                 break;
             case 'seeking':
             case 'starting':
                 break;
             default:
                 this.screenWakeLock.release();
+                this.pictureInPicture.setPlaying(false);
                 break;
         }
     }
@@ -3178,11 +3225,13 @@ export default class WebGPUPlayer {
 
     private readonly handleDocumentVisibilityChange = (): void => {
         this.screenWakeLock.handleVisibilityChange();
+        this.pictureInPicture.handlePageVisibilityChange();
         this.synchronizeCustomPlaybackPageVisibility();
     };
 
     /**
      * Hidden pages get no animation frames, so the frame loop drains decoded video on a timer instead.
+     * A picture-in-picture window keeps presentation visible while the hidden page still paints for it, as Chromium's does.
      * A returning page restarts the presentation loop for any video resync.
      */
     private synchronizeCustomPlaybackPageVisibility(): void {
@@ -3194,7 +3243,7 @@ export default class WebGPUPlayer {
             frameLoop.destroy();
             return;
         }
-        frameLoop.synchronizePageVisibility(isDocumentVisible());
+        frameLoop.synchronizePageVisibility(isDocumentVisible() || this.pictureInPicture.isPresentedWhileHidden());
     }
 
     private readonly handleDecodedPresentationRefresh = (generation: number): void => {
@@ -3371,6 +3420,7 @@ export default class WebGPUPlayer {
             this.lastKnownTimeMicroseconds = latestRecoveryTimeMicroseconds;
             this.customPlaybackRecoveryTimeMicroseconds = null;
             this.restoreHTMLPlaybackRate();
+            this.moveCustomPictureInPictureToHTMLPlayback();
             return result;
         } catch (error) {
             if (this.isRequestedSessionCurrent(backendGeneration)) {
@@ -3419,6 +3469,41 @@ export default class WebGPUPlayer {
         } catch (error) {
             console.warn('The HTML backend refused the requested playback rate', error);
         }
+    }
+
+    /**
+     * Moves an open custom playback window to the HTML backend's element once the backend plays the source itself.
+     * Chromium keeps decoding a video in picture-in-picture while the page is hidden, where it disables the video track of a hidden page's other videos,
+     * so the window shows the browser's own picture rather than a copy of WebGPU's; while a window is open, a request needs no user gesture.
+     */
+    private moveCustomPictureInPictureToHTMLPlayback(): void {
+        if (!this.pictureInPicture.isOpen()) {
+            return;
+        }
+        const video = this.htmlDelegate.player.getPresentationSurface()?.video;
+        if (!video) {
+            this.pictureInPicture.exit().catch(logPictureInPictureError);
+            return;
+        }
+        video.requestPictureInPicture().catch((error: unknown): void => {
+            logPictureInPictureError(error);
+            this.pictureInPicture.exit().catch(logPictureInPictureError);
+        });
+    }
+
+    /**
+     * Prepares the HTML backend's surface for custom playback, after moving a native playback's window there: that window shows the surface's element,
+     * whose `disablepictureinpicture` would close it, and while a window is open, the request needs no user gesture.
+     */
+    private prepareCustomPlaybackSurface(options: unknown): Promise<PresentationSurface | typeof PLAYBACK_SUPERSEDED | null> {
+        const htmlBackend = this.getHTMLCustomPlaybackBackend();
+        const video = this.htmlDelegate.player.getPresentationSurface()?.video;
+        if (!video || document.pictureInPictureElement !== video || !CustomPlaybackPictureInPicture.isSupported()) {
+            return htmlBackend.prepareCustomPlayback(options);
+        }
+        return this.pictureInPicture.enter()
+            .catch(logPictureInPictureError)
+            .then(() => htmlBackend.prepareCustomPlayback(options));
     }
 
     private updateCustomPlaybackAudioSelection(audioStreamIndex: number): void {
@@ -3559,6 +3644,8 @@ export default class WebGPUPlayer {
         }
 
         this.screenWakeLock.release();
+        // An open window keeps the last picture, paused, for the next playback or a hand-off to the HTML backend
+        this.pictureInPicture.setPlaying(false);
         this.cancelPendingPausedPresentationRefresh();
         this.customPlaybackFrameLoop?.destroy();
         this.customPlaybackFrameLoop = null;
@@ -3622,11 +3709,20 @@ export default class WebGPUPlayer {
             || this.customPlaybackFallbackPromise !== null;
     }
 
-    private hasAuthoritativeHTMLPlaybackSurface(): boolean {
+    /** Whether the HTML backend plays the session's source itself, as the browser decodes it, whether or not WebGPU presents it. */
+    private hasNativeHTMLPlayback(): boolean {
         return this.backendSessionActive
             && this.backendPlayPendingGeneration === null
-            && !this.webGPUPresentationEnabled
             && !this.isCustomPlaybackPathActive();
+    }
+
+    private hasAuthoritativeHTMLPlaybackSurface(): boolean {
+        return this.hasNativeHTMLPlayback() && !this.webGPUPresentationEnabled;
+    }
+
+    /** Whether custom playback starts or plays, whose picture only the presenter draws, so a window shows it through a copy. */
+    private isCustomPictureInPictureSource(): boolean {
+        return this.customPlaybackStartingGeneration !== null || this.getActiveCustomPlaybackController() !== null;
     }
 
     private getHTMLCustomPlaybackBackend(): HTMLCustomPlaybackContract {

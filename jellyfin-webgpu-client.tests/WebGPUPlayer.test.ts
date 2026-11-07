@@ -32,6 +32,7 @@ import { DEINTERLACE_MODES } from 'webgpu-player/presentation/DeinterlaceTimelin
 import { UNKNOWN_VIDEO_STREAM_FIELDS, type VideoStreamFields } from 'webgpu-player/decode/video/VideoFields';
 import { addPassSource } from 'addons/webGPUPlayer/PresentationPassStore';
 import { installIndexedDBFake } from './indexedDBFake';
+import { installPictureInPictureFake, type PictureInPictureFake } from './pictureInPictureFake';
 import {
     INVERT_PASS_SOURCE,
     SATURATION_PARAMETER_NAME,
@@ -762,6 +763,8 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
         // An unmeasured display, so the frame loop never decimates
         getDisplayRefreshIntervalMicroseconds = vi.fn((): number | null => null);
         seek = vi.fn();
+        // A picture-in-picture window observes the drawn pictures; this presenter draws none
+        setPresentedPictureObserver = vi.fn(() => (): void => undefined);
         refresh = vi.fn();
         endSession = vi.fn();
         destroy = vi.fn();
@@ -1101,6 +1104,7 @@ type MockPresenter = {
     setDeinterlaceMode: MockFunction
     setHDROutputEnabled: MockFunction
     setPresentationParameter: MockFunction
+    setPresentedPictureObserver: MockFunction
     setPresentationPreset: MockFunction
     startSession: MockFunction
     updateRenderSettings: MockFunction
@@ -7599,8 +7603,8 @@ describe('WebGPUPlayer HTML delegation', () => {
         expect(backend.setBrightness).toHaveBeenCalledWith(80);
         expect(backend.setAspectRatio).toHaveBeenCalledWith('cover');
         expect(presenter.refresh).toHaveBeenCalledWith(0);
-        expect(backend.setPictureInPictureEnabled).toHaveBeenCalledWith(true);
-        expect(backend.togglePictureInPicture).toHaveBeenCalledOnce();
+        // A toggle without a window open asks the backend for one, as its own toggle does
+        expect(backend.setPictureInPictureEnabled.mock.calls).toEqual([ [ true ], [ true ] ]);
         expect(backend.setAirPlayEnabled).toHaveBeenCalledWith(true);
         expect(backend.toggleAirPlay).toHaveBeenCalledOnce();
         expect(player.getVolume()).toBe(50);
@@ -7720,13 +7724,153 @@ describe('WebGPUPlayer HTML delegation', () => {
 
         await player.play(createKnownSDRPlayOptions());
 
-        expect(player.supports('PictureInPicture')).toBe(false);
+        // The browser decodes this playback, so its element's own window shows it even while WebGPU presents it on the page
+        expect(player.supports('PictureInPicture')).toBe(true);
         expect(player.supports('PlaybackRate')).toBe(false);
 
         presenter.fallbackHandler(1);
 
         expect(player.supports('PictureInPicture')).toBe(true);
         expect(player.supports('PlaybackRate')).toBe(true);
+    });
+
+    describe('picture-in-picture', () => {
+        let pictureInPicture: PictureInPictureFake;
+
+        beforeEach(() => {
+            pictureInPicture = installPictureInPictureFake();
+        });
+
+        afterEach(() => {
+            restoreDocumentVisibility();
+            pictureInPicture.uninstall();
+        });
+
+        /** Starts custom playback in a surface whose video the test keeps */
+        async function playCustomInSurface(player: WebGPUPlayer, video: HTMLVideoElement): Promise<MockCustomPlaybackController> {
+            const container = document.createElement('div');
+            container.appendChild(video);
+            getBackend().presentationSurface = { container, video };
+            playbackPreferencesMockState.customDecodeEnabled = true;
+            customDecodeMockState.eligible = true;
+            await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+            return getCustomPlaybackController();
+        }
+
+        /** Lets the media events queued so far reach their listeners */
+        async function deliverMediaEvents(): Promise<void> {
+            for (let turn = 0; turn < 4; turn += 1) {
+                await Promise.resolve();
+            }
+        }
+
+        /** Runs the animation frames requested so far, as one frame the page paints runs them */
+        function paintFrame(): void {
+            for (const [ identifier, callback ] of [ ...animationFrameMockState.callbacks ]) {
+                animationFrameMockState.callbacks.delete(identifier);
+                callback(0);
+            }
+        }
+
+        it('shows custom playback in a window of its own, which keeps presenting while the hidden page paints for it', async () => {
+            const player = new WebGPUPlayer();
+            const backend = getBackend();
+            const video = document.createElement('video');
+            const controller = await playCustomInSurface(player, video);
+            expect(player.supports('PictureInPicture')).toBe(true);
+
+            player.togglePictureInPicture();
+            await vi.waitFor(() => expect(player.isPictureInPictureEnabled()).toBe(true));
+            // The player's element has no frames to show, so the window plays a video of its own, as the playback plays
+            const windowVideo = pictureInPicture.streamVideos[0] as HTMLVideoElement;
+            expect(pictureInPicture.pictureInPictureElement()).toBe(windowVideo);
+            expect(windowVideo).not.toBe(video);
+            expect(windowVideo.paused).toBe(false);
+            expect(backend.setPictureInPictureEnabled).not.toHaveBeenCalled();
+            // The animation frames stay the test's own, which paintFrame runs
+            vi.useFakeTimers({ toFake: [ 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval' ] });
+
+            changeDocumentVisibility('hidden');
+            expect(controller.setPageVisibility).toHaveBeenLastCalledWith(false);
+            // The hidden page paints a frame, as Chromium paints a page whose video is in picture-in-picture, and the frame loop presents in it
+            paintFrame();
+            expect(controller.setPageVisibility).toHaveBeenLastCalledWith(true);
+            expect(controller.takeFrame).toHaveBeenCalledOnce();
+            await vi.advanceTimersByTimeAsync(CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS * 4);
+            expect(controller.drainBackgroundVideo).not.toHaveBeenCalled();
+
+            // Once the window closes, the hidden page drains decoded video again
+            player.togglePictureInPicture();
+            await deliverMediaEvents();
+            expect(player.isPictureInPictureEnabled()).toBe(false);
+            expect(controller.setPageVisibility).toHaveBeenLastCalledWith(false);
+            await vi.advanceTimersByTimeAsync(CUSTOM_PLAYBACK_BACKGROUND_DRAIN_INTERVAL_MILLISECONDS);
+            expect(controller.drainBackgroundVideo).toHaveBeenCalledOnce();
+        });
+
+        it('pauses the window\'s video with the playback, and keeps the window across a stop until the player is torn down', async () => {
+            const player = new WebGPUPlayer();
+            await playCustomInSurface(player, document.createElement('video'));
+            player.togglePictureInPicture();
+            await vi.waitFor(() => expect(player.isPictureInPictureEnabled()).toBe(true));
+            const windowVideo = pictureInPicture.streamVideos[0] as HTMLVideoElement;
+
+            player.pause();
+            expect(windowVideo.paused).toBe(true);
+            player.unpause();
+            expect(windowVideo.paused).toBe(false);
+
+            // A stop between queued items keeps the window, paused on the last picture, for the next playback
+            await player.stop(false);
+            await deliverMediaEvents();
+            expect(pictureInPicture.pictureInPictureElement()).toBe(windowVideo);
+            expect(windowVideo.paused).toBe(true);
+            expect(player.supports('PictureInPicture')).toBe(false);
+
+            player.destroy();
+            await deliverMediaEvents();
+            expect(pictureInPicture.pictureInPictureElement()).toBeNull();
+        });
+
+        it('hands an open window to the HTML backend\'s element once a fallback plays the source there', async () => {
+            const player = new WebGPUPlayer();
+            const video = document.createElement('video');
+            const controller = await playCustomInSurface(player, video);
+            player.togglePictureInPicture();
+            await vi.waitFor(() => expect(player.isPictureInPictureEnabled()).toBe(true));
+            // The native playback has its size before its play resolves
+            getBackend().play.mockImplementationOnce((options: unknown) => {
+                pictureInPicture.loadMetadata(video);
+                return Promise.resolve(options);
+            });
+
+            await controller.fallbackHook({
+                disposition: 'same-session-native',
+                generation: 1,
+                mediaTimeMicroseconds: 2_000_000,
+                preserveHTMLSession: true,
+                reason: 'lifecycle-failed'
+            });
+            await deliverMediaEvents();
+
+            expect(pictureInPicture.pictureInPictureElement()).toBe(video);
+            expect(player.supports('PictureInPicture')).toBe(true);
+        });
+
+        it('takes the window of a native playback for the custom playback that follows it in the same element', async () => {
+            const player = new WebGPUPlayer();
+            const video = document.createElement('video');
+            pictureInPicture.loadMetadata(video);
+            await video.requestPictureInPicture();
+
+            await playCustomInSurface(player, video);
+            await deliverMediaEvents();
+
+            expect(pictureInPicture.pictureInPictureElement()).toBe(pictureInPicture.streamVideos[0]);
+            expect(player.isPictureInPictureEnabled()).toBe(true);
+            // The element itself keeps telling page scripts it cannot enter picture-in-picture
+            expect(video.hasAttribute('disablepictureinpicture')).toBe(true);
+        });
     });
 
     describe('playback rate', () => {

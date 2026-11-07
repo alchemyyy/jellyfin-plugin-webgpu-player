@@ -51,10 +51,18 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - Custom playback reports itself through its source-less `<video>` (11-06); [Playback in Jellyfin Web](playback.md#the-video-element) has the rules.
   Page scripts follow the player through its element, as Jellyfin Enhanced's pause screen, tab-switch pause and resume, and playback rating badge do, and before this they saw an element paused at zero that never played: a pause screen never came on a pause, but could come during playback after any input and a few idle seconds.
   Shadowing the element's members keeps the one element the HTML player owns, with no second element and no captured stream, and marking the reports lets the HTML player's handlers tell them from the element's own events.
-  Picture-in-picture stays unsupported for custom playback: the canvas would have to feed a captured stream to the element, and the frame loop presents nothing while the page is hidden, the usual time to want the window, so it would show a still frame.
-  The element carries `disablepictureinpicture` instead, so scripts skip it.
-  Other playback rates stay unsupported too, as the rate menu offers none for custom playback, so the element refuses one as a browser refuses a rate it does not support.
+  Picture-in-picture shows custom playback through a `<video>` of its own (11-06), as the next entry has it, rather than through this element, where the stream's own media events would mix with the reports.
+  The element carries `disablepictureinpicture`, so scripts that ask the element itself for a window skip it.
+  Other playback rates stay unsupported on the element, as the rate menu offers none for custom playback, so the element refuses one as a browser refuses a rate it does not support.
   Jellyfin Enhanced's rating in the OSD can show another item's rating with any player: it reads the first `.videoOsdBottom` in the document, which can be a cached, hidden video page of an earlier playback.
+- Custom playback's picture-in-picture window plays a copy of each picture the presenter draws, and the frame loop keeps presenting while Chromium paints the hidden page for the window (11-06); [Playback in Jellyfin Web](playback.md#picture-in-picture) has the rules.
+  A WebGPU canvas has no picture to read after the task that drew it: in Chrome 156 a copy made in a later task, or in an earlier animation frame callback of the same frame, reads black.
+  So the presenter hands each picture to an observer in that task, which copies the picture's region into a 2D canvas whose captured stream the window plays.
+  Capturing the presenter's canvas itself would carry the bars around the picture into a window shaped like the page's video box, and would end with any canvas the presenter replaces, as a new color pipeline or a lost device does.
+  Before this the frame loop presented nothing while the page was hidden, the usual time to want the window, so a window would have shown a still frame.
+  Chromium paints a hidden page while one of its videos is in picture-in-picture (its `kHiddenButPainting` page state), and animation frames keep running there: in Chrome 156 a hidden page ran about 125 a second with a window open and none without one.
+  So an animation frame that runs while the page is hidden keeps presentation visible, and a browser that stops painting keeps the hidden page's drain rather than a playback whose frames nobody takes.
+  An HTML playback keeps its element's own window even while WebGPU presents it: Chromium disables the video track of a hidden page's video with audio 10 s after the page hides, unless that video is in picture-in-picture, so a copy of WebGPU's picture of it would freeze.
 
 ## Negotiation
 

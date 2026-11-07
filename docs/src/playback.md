@@ -35,6 +35,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 - The frame loop takes the controller's current frame each animation frame and presents it.
 - No animation frame runs while the page is hidden, so the frame loop's 25 ms timer takes and discards due frames against the clock instead.
   Credits keep flowing and audio stays the master.
+  An open picture-in-picture window is the exception while the hidden page still paints for it; see [Picture-in-picture](#picture-in-picture).
 - A screen wake lock is held while the controller is playing, because the source-less `<video>` never earns the browser's own video wake lock.
   It is kept across seeks, released on pause, end, stop, and fallback, and requested again when the page becomes visible.
 - Before eligibility, `WebGPUPlayer` resolves the user's speaker layout against the destination's channel count with the engine's `selectCustomAudioSpeakerLayout`, stereo when the user forces stereo, and hands it with the binaural choice to the engine's eligibility as `audioRenderTarget`.
@@ -72,7 +73,29 @@ So `WebGPUPlayer` has `CustomPlaybackMediaElement` report the custom playback th
   When the report ends, a playing element fires `pause`, then `emptied`.
   The events fire as microtasks, in order, so no listener runs inside the controller call that caused it.
 - The HTML player's own media handlers, and the start position a native source left waiting on the element, skip these events (`isCustomPlaybackMediaEvent`), since the controller notifies that player directly; handling them as well would end a playback twice.
-- Meanwhile the element carries `disablepictureinpicture`, so a script that asks for picture-in-picture, such as one that enters it on a tab switch, skips the element, which has no frames to show; `supports('PictureInPicture')` is false for custom playback as well.
+- Meanwhile the element carries `disablepictureinpicture`, so a script that asks the element itself for picture-in-picture, such as one that enters it on a tab switch, skips it, since it has no frames to show.
+  The player's own picture-in-picture shows custom playback through a `<video>` of its own; see [Picture-in-picture](#picture-in-picture).
+
+## Picture-in-picture
+
+The OSD's picture-in-picture button shows whenever `supports('PictureInPicture')` holds, and opens and closes the window through `togglePictureInPicture`.
+
+- An HTML playback shows in its element's own window, as in stock Jellyfin Web, even while WebGPU presents it on the page.
+  The browser keeps decoding a video in picture-in-picture while the page is hidden, but Chromium stops decoding the video track of a hidden page's other videos, so a copy of WebGPU's picture of it would stop there.
+- Custom playback shows in the window of `CustomPlaybackPictureInPicture`, whose `<video>`, outside the document, plays the stream captured from a 2D canvas.
+  Each picture the presenter draws reaches that canvas through the engine's `WebGPUPresenter.setPresentedPictureObserver`, in the task that drew it, the only time a WebGPU canvas can be read, cropped to the picture's region of the canvas and scaled to at most 1920 on its longer side.
+  `supports('PictureInPicture')` holds for it while custom playback starts or plays, in a browser with the Picture-in-Picture API and canvas capture.
+- The window's video plays while the playback plays and pauses while it pauses, which the window's controls show.
+  Jellyfin Web's media session handlers take the window's play and pause buttons, and a pause or play of the video's own, as closing the window pauses it, reaches the controller.
+- A paused stream keeps the frame it rendered last, so the video plays until it renders a picture copied while paused, as a seek while paused draws one.
+  A window that opens on a paused playback asks the playback to draw its frame again, as a resize does, since the presenter keeps no picture to copy.
+- Chromium keeps painting a hidden page while one of its videos is in picture-in-picture, so animation frames keep running there.
+  Once one has run since the page was hidden, the frame loop presents as on a visible page while the window is open, and the controller keeps its video decoder.
+  A browser that stops painting the page leaves the window on the last picture and the playback on the hidden page's drain.
+- The window stays open across a stop between queued items, paused on the last picture, for the next playback; a player torn down closes it.
+  Once the HTML backend plays the source itself, after a fallback or for a next item it plays, the window moves to the backend's element.
+  A native playback's window moves to a custom playback that follows it in the element, before the element carries `disablepictureinpicture`, which would close it.
+  While a window is open, either request needs no user gesture.
 
 ## Transitions
 
