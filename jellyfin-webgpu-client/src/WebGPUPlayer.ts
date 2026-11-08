@@ -1013,6 +1013,7 @@ export default class WebGPUPlayer {
             this.applyPresentationSettings(settings);
             this.reloadDefaultPresentationPreset(settings);
         });
+        // The host reuses the player after destroy(), for its next playback, so this listener stays too; without a playback it does nothing
         if (typeof document !== 'undefined') {
             document.addEventListener('visibilitychange', this.handleDocumentVisibilityChange);
         }
@@ -1387,9 +1388,6 @@ export default class WebGPUPlayer {
     destroy(): void {
         this.pendingCustomPlaybackSeekTimeMicroseconds = null;
         this.customPlaybackStartingGeneration = null;
-        if (typeof document !== 'undefined') {
-            document.removeEventListener('visibilitychange', this.handleDocumentVisibilityChange);
-        }
         this.screenWakeLock.release();
         this.customPlaybackFrameLoop?.destroy();
         const audioPrewarmClose = this.closeCustomPlaybackAudioPrewarm(this.backendSessionGeneration);
