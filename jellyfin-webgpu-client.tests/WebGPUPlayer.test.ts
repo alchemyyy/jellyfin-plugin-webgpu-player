@@ -6313,6 +6313,28 @@ describe('WebGPUPlayer HTML delegation', () => {
         }
     });
 
+    it('follows the page\'s visibility in a playback after the host destroyed the player', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        attachPresentationSurface(backend);
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        // The host destroys the player at the end of its queue, and plays the next item through the same instance
+        player.destroy();
+        attachPresentationSurface(getBackend());
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        const customPlaybackController = getCustomPlaybackController();
+
+        try {
+            changeDocumentVisibility('hidden');
+
+            expect(customPlaybackController.setPageVisibility).toHaveBeenLastCalledWith(false);
+        } finally {
+            restoreDocumentVisibility();
+        }
+    });
+
     it('drains custom playback that starts hidden until its controller is detached', async () => {
         const player = new WebGPUPlayer();
         const backend = getBackend();
