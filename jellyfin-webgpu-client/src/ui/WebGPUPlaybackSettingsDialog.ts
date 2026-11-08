@@ -1037,7 +1037,13 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             commitSectionSettings(configuration.section);
         };
         const onNumberChange = (): void => {
-            settings = updateNumericSetting(settings, configuration.key, Number(numberInput.value));
+            // An emptied or unparsable field keeps the setting, which the field shows again; Number('') is 0, which would mute the audio or blacken the picture
+            const value = numberInput.valueAsNumber;
+            if (!Number.isFinite(value)) {
+                synchronizeControls();
+                return;
+            }
+            settings = updateNumericSetting(settings, configuration.key, value);
             commitSectionSettings(configuration.section);
         };
         slider.addEventListener('input', onSliderInput);

@@ -835,10 +835,16 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         }
         const fileIndex = Number(input.dataset.fileIndex);
         const parameterName = input.dataset.parameterName;
-        const value = Number(input.value);
+        // NaN for an emptied or unparsable field, which keeps the parameter; Number('') is 0
+        const value = input.valueAsNumber;
         const files = getEffectiveFiles();
         const changedFile = files.at(fileIndex);
-        if (!changedFile || !Number.isFinite(value)) {
+        if (!changedFile) {
+            return;
+        }
+        if (!Number.isFinite(value)) {
+            // The field shows the parameter again: its stored value, else the value it was rendered with, the pass's default
+            input.value = String(changedFile.parameters[parameterName] ?? input.defaultValue);
             return;
         }
         const saveFailure = savePresentation({
