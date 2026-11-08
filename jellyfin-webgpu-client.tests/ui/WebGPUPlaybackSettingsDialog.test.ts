@@ -712,6 +712,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         );
         brightnessInput.value = '0.25';
         brightnessInput.dispatchEvent(new Event('change'));
+        // An emptied field keeps the setting rather than taking 0, and shows it again
+        brightnessInput.value = '';
+        brightnessInput.dispatchEvent(new Event('change'));
+        expect(brightnessInput.value).toBe('0.25');
 
         const automaticInputPeakCheckbox = requirePanelElement<HTMLInputElement>(
             panel,
@@ -2122,6 +2126,12 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(presentationMethods.setPresentationParameter).toHaveBeenCalledTimes(1);
         expect(presentationMethods.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
+        expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
+        // An emptied field keeps the parameter rather than taking 0, and shows it again
+        parameterInput.value = '';
+        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(parameterInput.value).toBe(String(CHANGED_SATURATION));
+        expect(presentationMethods.setPresentationParameter).toHaveBeenCalledTimes(1);
         expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
