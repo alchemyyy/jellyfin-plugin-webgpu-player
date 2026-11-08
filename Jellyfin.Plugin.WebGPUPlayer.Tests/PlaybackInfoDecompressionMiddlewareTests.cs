@@ -2,6 +2,10 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Threading.Tasks;
+using Jellyfin.Data;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
+using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -80,6 +84,69 @@ public sealed class PlaybackInfoDecompressionMiddlewareTests
     }
 
     [Fact]
+    public async Task SignedInGzipPlaybackInfo_IsDecompressed()
+    {
+        byte[] json = Encoding.UTF8.GetBytes(PlaybackInfoJson);
+        DefaultHttpContext context = CreateContext("POST", "/Items/item/PlaybackInfo", Gzip(json), "gzip");
+        FakeAuthorizationContext authorization = UseAuthorization(context, isAuthenticated: true);
+        ReceivedRequest received = new ReceivedRequest();
+
+        await new PlaybackInfoDecompressionMiddleware(received.Next).InvokeAsync(context);
+
+        Assert.Equal(1, authorization.CallCount);
+        Assert.True(received.Called);
+        Assert.Equal(json, received.Body);
+        Assert.False(received.HasContentEncoding);
+    }
+
+    [Fact]
+    public async Task UnauthenticatedGzipPlaybackInfo_ReachesNextStillCompressed()
+    {
+        // A body that inflates past the limit: decompressing it would answer 413, so reaching next shows it was not read
+        byte[] compressed = Gzip(new byte[PlaybackInfoDecompressionMiddleware.MaximumDecompressedByteLength + 1]);
+        DefaultHttpContext context = CreateContext("POST", "/Items/item/PlaybackInfo", compressed, "gzip");
+        UseAuthorization(context, isAuthenticated: false);
+        ReceivedRequest received = new ReceivedRequest();
+
+        await new PlaybackInfoDecompressionMiddleware(received.Next).InvokeAsync(context);
+
+        Assert.True(received.Called);
+        Assert.Equal(compressed, received.Body);
+        Assert.Equal(compressed.Length, received.ContentLength);
+        Assert.True(received.HasContentEncoding);
+    }
+
+    [Fact]
+    public async Task DisabledUsersGzipPlaybackInfo_ReachesNextStillCompressed()
+    {
+        byte[] compressed = Gzip(Encoding.UTF8.GetBytes(PlaybackInfoJson));
+        DefaultHttpContext context = CreateContext("POST", "/Items/item/PlaybackInfo", compressed, "gzip");
+        User user = new User("locked-out", "auth-provider", "reset-provider");
+        user.SetPermission(PermissionKind.IsDisabled, true);
+        UseAuthorization(context, isAuthenticated: true, user);
+        ReceivedRequest received = new ReceivedRequest();
+
+        await new PlaybackInfoDecompressionMiddleware(received.Next).InvokeAsync(context);
+
+        Assert.True(received.Called);
+        Assert.Equal(compressed, received.Body);
+        Assert.True(received.HasContentEncoding);
+    }
+
+    [Fact]
+    public async Task OtherRequests_DoNotAuthenticate()
+    {
+        DefaultHttpContext context = CreateContext("POST", "/Sessions/Playing", Encoding.UTF8.GetBytes(PlaybackInfoJson), null);
+        FakeAuthorizationContext authorization = UseAuthorization(context, isAuthenticated: true);
+        ReceivedRequest received = new ReceivedRequest();
+
+        await new PlaybackInfoDecompressionMiddleware(received.Next).InvokeAsync(context);
+
+        Assert.True(received.Called);
+        Assert.Equal(0, authorization.CallCount);
+    }
+
+    [Fact]
     public void RegisterServices_AddsTheDecompressionMiddleware()
     {
         ServiceCollection services = new ServiceCollection();
@@ -103,6 +170,15 @@ public sealed class PlaybackInfoDecompressionMiddlewareTests
         }
 
         return context;
+    }
+
+    private static FakeAuthorizationContext UseAuthorization(DefaultHttpContext context, bool isAuthenticated, User? user = null)
+    {
+        FakeAuthorizationContext authorization = new FakeAuthorizationContext(isAuthenticated, user);
+        context.RequestServices = new ServiceCollection()
+            .AddSingleton<IAuthorizationContext>(authorization)
+            .BuildServiceProvider();
+        return authorization;
     }
 
     private static byte[] Gzip(byte[] content)
@@ -134,6 +210,22 @@ public sealed class PlaybackInfoDecompressionMiddlewareTests
             Body = body.ToArray();
             ContentLength = context.Request.ContentLength;
             HasContentEncoding = context.Request.Headers.ContainsKey("Content-Encoding");
+        }
+    }
+
+    private sealed class FakeAuthorizationContext(bool isAuthenticated, User? user) : IAuthorizationContext
+    {
+        public int CallCount { get; private set; }
+
+        public Task<AuthorizationInfo> GetAuthorizationInfo(HttpContext requestContext)
+        {
+            CallCount++;
+            return Task.FromResult(new AuthorizationInfo { IsAuthenticated = isAuthenticated, User = user });
+        }
+
+        public Task<AuthorizationInfo> GetAuthorizationInfo(HttpRequest requestContext)
+        {
+            return GetAuthorizationInfo(requestContext.HttpContext);
         }
     }
 }
