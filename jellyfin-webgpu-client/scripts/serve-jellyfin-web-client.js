@@ -63,8 +63,9 @@ const HOP_BY_HOP_HEADERS = [ 'connection', 'keep-alive', 'proxy-connection', 'te
 // The redirect statuses a browser follows, and how many redirects it follows for one request
 const REDIRECT_STATUSES = new Set([ 301, 302, 303, 307, 308 ]);
 const MAXIMUM_REDIRECTS = 20;
-// The page origin's credentials, which a browser leaves out of a request it follows to another origin
-const CREDENTIAL_HEADERS = [ 'authorization', 'cookie' ];
+// The page origin's credentials, which a browser leaves out of a request it follows to another origin:
+// the standard ones, and Jellyfin's own token headers (as the DevHost's ServerUserAuthenticationHandler reads them)
+const CREDENTIAL_HEADERS = [ 'authorization', 'cookie', 'proxy-authorization', 'x-emby-authorization', 'x-emby-token', 'x-mediabrowser-token' ];
 const NO_STORE = 'no-store';
 const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -93,6 +94,7 @@ const CONTENT_TYPES = new Map([
 ]);
 const HTTP_OK = 200;
 const HTTP_FOUND = 302;
+const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 const HTTP_INTERNAL_SERVER_ERROR = 500;
 const HTTP_BAD_GATEWAY = 502;
@@ -847,6 +849,23 @@ function isPluginRoute(pathname) {
     return pathname.startsWith(PLUGIN_ROUTE_PATH) && !pathname.startsWith(ASSET_PATH);
 }
 
+/**
+ * Whether a request names this server by a loopback host and its own port.
+ * Any other Host is a page whose name was rebound to this machine (DNS rebinding), which must not reach the server through it.
+ */
+function isLoopbackHost(hostHeader, port) {
+    if (typeof hostHeader !== 'string') {
+        return false;
+    }
+    let url;
+    try {
+        url = new URL(`http://${hostHeader}`);
+    } catch {
+        return false;
+    }
+    return LOOPBACK_HOST_NAMES.has(url.hostname) && Number(url.port || 80) === port && url.username === '' && url.pathname === '/';
+}
+
 /** Serves Jellyfin Web, the add-on, the plugin, and the live reload events, and forwards every other request to the server. */
 async function handleRequest(request, response, context) {
     const { pathname, searchParams } = new URL(request.url, 'http://localhost');
@@ -938,6 +957,10 @@ async function serve(options) {
 
     const context = { addonDirectory, build: new AddonBuild(), config, events: new LiveReloadEvents(), pluginHost, revision: 0, server, webDirectory };
     const httpServer = http.createServer((request, response) => {
+        if (!isLoopbackHost(request.headers.host, config.dev_client_port)) {
+            sendText(request, response, HTTP_FORBIDDEN, TEXT_CONTENT_TYPE, `Open http://${LOOPBACK_ADDRESS}:${config.dev_client_port}${WEB_PATH} instead`);
+            return;
+        }
         handleRequest(request, response, context).catch(error => {
             console.error(`${MESSAGE_PREFIX}: ${request.method} ${request.url}: ${getErrorMessage(error)}`);
             if (response.headersSent) {
@@ -948,6 +971,10 @@ async function serve(options) {
         });
     });
     httpServer.on('upgrade', (request, socket, head) => {
+        if (!isLoopbackHost(request.headers.host, config.dev_client_port)) {
+            socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+            return;
+        }
         proxyUpgrade(request, socket, head, server);
     });
     await listen(httpServer, config.dev_client_port);
