@@ -183,7 +183,10 @@ export default function (view) {
         }
     };
 
-    /** Queues a change after the pending ones; its result renders, and its failure shows in the status line. */
+    /**
+     * Queues a change after the pending ones; its result renders, and its failure shows in the status line.
+     * A failed change renders the server's listing again, so a checkbox the user toggled shows the state the server kept.
+     */
     const runChange = change => {
         pendingChange = pendingChange
             .then(change)
@@ -193,8 +196,13 @@ export default function (view) {
                 }
                 setStatus(message);
             })
-            .catch(error => {
+            .catch(async error => {
                 setStatus(error instanceof Error ? error.message : String(error));
+                try {
+                    render(await requestListing('GET', LISTING_PATH));
+                } catch {
+                    // The status line already names the failure
+                }
             });
     };
 
