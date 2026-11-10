@@ -2,6 +2,7 @@ import escapeHtml from 'escape-html';
 
 import globalize from 'lib/globalize';
 
+import { createButtonHTML } from '../controls/SettingControls';
 import { HIDDEN_CLASS, translateToHTML } from '../SettingsPanelHTML';
 import {
     anchorToNearestSides,
@@ -250,6 +251,15 @@ function createWindowListHTML(listedWindows: readonly ListedWindow[]): string {
         </li>`).join('');
 }
 
+/** Returns the buttons above the window list, which show or hide every listed window at once. */
+function createWindowListActionsHTML(): string {
+    return `
+        <div class="webgpuWindowListActions">
+            ${createButtonHTML({ attributes: 'data-show-all-windows', icon: 'visibility', label: globalize.translate('WebGPUShowAllWindows') })}
+            ${createButtonHTML({ attributes: 'data-hide-all-windows', icon: 'visibility_off', label: globalize.translate('WebGPUHideAllWindows') })}
+        </div>`;
+}
+
 function requireChild<ElementType extends Element>(parent: ParentNode, selector: string): ElementType {
     const child = parent.querySelector<ElementType>(selector);
     if (!child) {
@@ -317,6 +327,7 @@ export function createSettingsWindowManager(options: SettingsWindowManagerOption
     const windowList = element.querySelector<HTMLElement>(WINDOW_LIST_SELECTOR);
     if (windowList) {
         windowList.innerHTML = createWindowListHTML(listedWindows);
+        windowList.insertAdjacentHTML('beforebegin', createWindowListActionsHTML());
     }
 
     const cleanupCallbacks: Array<() => void> = [];
@@ -610,16 +621,26 @@ export function createSettingsWindowManager(options: SettingsWindowManagerOption
         target?.focus();
     };
 
-    const setVisible = (id: string, visible: boolean): void => {
-        if (master?.id === id) {
-            return;
-        }
+    /** Shows or hides one listed window in the state and, for the host's window, through the host; the caller lays the windows out. */
+    const applyVisible = (id: string, visible: boolean): void => {
         if (hosted?.id === id) {
             // Playback info shown from the settings closes with them, as it did beside the earlier panel
             hostedShownBySettings = visible;
             pendingHostedShown = visible;
             updateState(id, { visible });
             hosted.setShown(visible);
+            return;
+        }
+        // A window shown again opens expanded, so it shows what the user asked for
+        updateState(id, visible ? { collapsed: false, visible } : { visible });
+    };
+
+    const setVisible = (id: string, visible: boolean): void => {
+        if (master?.id === id) {
+            return;
+        }
+        if (hosted?.id === id) {
+            applyVisible(id, visible);
             synchronize();
             return;
         }
@@ -628,8 +649,7 @@ export function createSettingsWindowManager(options: SettingsWindowManagerOption
             return;
         }
         const hadFocus = windowFrame.frame.contains(document.activeElement);
-        // A window shown again opens expanded, so it shows what the user asked for
-        updateState(id, visible ? { collapsed: false, visible } : { visible });
+        applyVisible(id, visible);
         notifyChange();
         if (visible) {
             raise(windowFrame.frame);
@@ -637,6 +657,23 @@ export function createSettingsWindowManager(options: SettingsWindowManagerOption
             // Focus leaves a hidden window for its toggle in the master's list, where it shows again
             windowList?.querySelector<HTMLElement>(`[data-window-toggle="${id}"]`)?.focus();
         }
+    };
+
+    /** Shows or hides every listed window, laying them out once; a window that shows already keeps its collapse, and a hidden one opens expanded. */
+    const setAllVisible = (visible: boolean): void => {
+        for (const entry of listedWindows) {
+            // The host may not have shown or hidden its window yet as the settings asked
+            const shown = hosted?.id === entry.id ? pendingHostedShown ?? isShown(entry.id) : isShown(entry.id);
+            if (shown === visible) {
+                continue;
+            }
+            applyVisible(entry.id, visible);
+            const frame = frames.get(entry.id)?.frame;
+            if (visible && frame) {
+                raise(frame);
+            }
+        }
+        notifyChange();
     };
 
     const toggleCollapsed = (id: string): void => {
@@ -681,7 +718,7 @@ export function createSettingsWindowManager(options: SettingsWindowManagerOption
         notifyChange();
     };
 
-    // Clicks on the window list, the title bar buttons, and the master's own buttons
+    // Clicks on the window list and the buttons above it, the title bar buttons, and the master's own buttons
     const onClick = (event: MouseEvent): void => {
         const target = event.target instanceof Element ? event.target : null;
         const toggle = target?.closest<HTMLElement>('[data-window-toggle]');
@@ -691,6 +728,10 @@ export function createSettingsWindowManager(options: SettingsWindowManagerOption
         if (toggle) {
             const id = toggle.dataset.windowToggle ?? '';
             setVisible(id, !isShown(id));
+        } else if (target.closest('[data-show-all-windows]')) {
+            setAllVisible(true);
+        } else if (target.closest('[data-hide-all-windows]')) {
+            setAllVisible(false);
         } else if (target.closest('.webgpuSettingsClose')) {
             options.onClose();
         } else if (target.closest('[data-reset-layout]')) {
