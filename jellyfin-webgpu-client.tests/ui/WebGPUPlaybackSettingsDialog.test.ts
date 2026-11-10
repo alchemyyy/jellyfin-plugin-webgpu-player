@@ -790,14 +790,14 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(roots).toHaveLength(1);
         const panel = roots[0];
         expect(panel.classList.contains('webgpuUi')).toBe(true);
-        // The pinned master window, then the section windows, which show expanded by default
+        // The pinned master window, then the section windows, which stay hidden until the user shows them, expanded
         expect(Array.from(panel.querySelectorAll<HTMLElement>('[data-window]'), (frame: HTMLElement): string => frame.dataset.window ?? ''))
             .toEqual([ MASTER_WINDOW_ID, ...SECTION_WINDOW_IDS ]);
         expect(requireWindow(panel, MASTER_WINDOW_ID).hidden).toBe(false);
         expect(requireWindow(panel, MASTER_WINDOW_ID).querySelector('[data-window-collapse]')).toBeNull();
         for (const id of SECTION_WINDOW_IDS) {
             const frame = requireWindow(panel, id);
-            expect(frame.hidden).toBe(false);
+            expect(frame.hidden).toBe(true);
             expect(frame.classList.contains('webgpuWindow-collapsed')).toBe(false);
             expect(requirePanelElement<HTMLElement>(frame, '[data-window-body]').hidden).toBe(false);
         }
@@ -1297,12 +1297,16 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         await panelPromise;
     });
 
-    it('shows playback info as a window beside the master while the windows are open, and hides it when they close', async () => {
+    it('shows playback info as a window beside the master once the user shows it, and hides it when the windows close', async () => {
         installLayoutHarness(createFullHDLayoutHarness());
         const player = createTestPlayer();
 
         const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
         const panel = requireSettingsWindows();
+        // Hidden until the user shows it
+        expect(handleCommand).not.toHaveBeenCalled();
+        expect(requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).getAttribute('aria-pressed')).toBe('false');
+        requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).click();
         expect(handleCommand).toHaveBeenCalledTimes(1);
         expect(handleCommand).toHaveBeenLastCalledWith('togglestats');
 
@@ -1358,6 +1362,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const player = createTestPlayer();
 
         const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
+        requireWindowToggle(requireSettingsWindows(), PLAYBACK_INFO_WINDOW_ID).click();
         await toggleWebGPUPlaybackSettingsPanel(player);
         await panelPromise;
         expect(handleCommand).toHaveBeenCalledTimes(2);
@@ -1374,6 +1379,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
         let panelPromise = showWebGPUPlaybackSettingsPanel(player);
         let panel = requireSettingsWindows();
+        requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).click();
         await runHostPlaybackInfoToggles();
         const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
         // The overlay's close button hides it without a command
@@ -1421,6 +1427,11 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(Array.from(windowList.querySelectorAll<HTMLElement>('[data-window-toggle]'), (toggle: HTMLElement): string => toggle.dataset.windowToggle ?? ''))
             .toEqual([ ...SECTION_WINDOW_IDS, PLAYBACK_INFO_WINDOW_ID ]);
         const audioToggle = requireWindowToggle(panel, 'audio');
+        // Every window but the master starts hidden
+        expect(audioToggle.getAttribute('aria-pressed')).toBe('false');
+        expect(requireWindow(panel, 'audio').hidden).toBe(true);
+        audioToggle.click();
+        expect(requireWindow(panel, 'audio').hidden).toBe(false);
         expect(audioToggle.getAttribute('aria-pressed')).toBe('true');
 
         // A window shown again opens expanded, though the user had collapsed it
@@ -1436,6 +1447,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(audioToggle.getAttribute('aria-pressed')).toBe('true');
         expect(readStoredWindowState().audio).toEqual({ collapsed: false, position: null, visible: true });
 
+        requireWindowToggle(panel, 'interface').click();
         requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'interface'), '[data-window-hide]').click();
         expect(requireWindow(panel, 'interface').hidden).toBe(true);
         expect(requireWindowToggle(panel, 'interface').getAttribute('aria-pressed')).toBe('false');
@@ -1447,13 +1459,58 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(requireWindow(panel, 'interface').hidden).toBe(true);
         expect(requireWindow(panel, 'audio').hidden).toBe(false);
 
-        // The layout reset returns every window to its default: shown and expanded, the collapsed ones too
+        // The layout reset returns every window to its default: hidden, and expanded once shown again
         requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'audio'), '[data-window-collapse]').click();
         requirePanelElement<HTMLButtonElement>(panel, '[data-reset-layout]').click();
-        expect(requireWindow(panel, 'interface').hidden).toBe(false);
-        expect(readStoredWindowState().interface).toEqual({ collapsed: false, position: null, visible: true });
-        expect(readStoredWindowState().audio).toEqual({ collapsed: false, position: null, visible: true });
+        expect(requireWindow(panel, 'audio').hidden).toBe(true);
+        expect(readStoredWindowState().interface).toEqual({ collapsed: false, position: null, visible: false });
+        expect(readStoredWindowState().audio).toEqual({ collapsed: false, position: null, visible: false });
         expect(requireWindow(panel, 'audio').classList.contains('webgpuWindow-collapsed')).toBe(false);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('shows and hides every listed window at once from the buttons above the list, opening the hidden ones expanded', async () => {
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+        const panel = requireSettingsWindows();
+        requirePanelElement<HTMLButtonElement>(panel, '[data-show-all-windows]').click();
+        for (const id of SECTION_WINDOW_IDS) {
+            expect(requireWindow(panel, id).hidden).toBe(false);
+        }
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        expect(playbackInfo.classList.contains('hide')).toBe(false);
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'audio'), '[data-window-collapse]').click();
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'pipeline'), '[data-window-hide]').click();
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-hide-all-windows]').click();
+        for (const id of SECTION_WINDOW_IDS) {
+            expect(requireWindow(panel, id).hidden).toBe(true);
+            expect(requireWindowToggle(panel, id).getAttribute('aria-pressed')).toBe('false');
+            expect(readStoredWindowState()[id].visible).toBe(false);
+        }
+        expect(requireWindow(panel, MASTER_WINDOW_ID).hidden).toBe(false);
+        await runHostPlaybackInfoToggles();
+        expect(playbackInfo.classList.contains('hide')).toBe(true);
+        expect(readStoredWindowState()[PLAYBACK_INFO_WINDOW_ID].visible).toBe(false);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-show-all-windows]').click();
+        for (const id of SECTION_WINDOW_IDS) {
+            expect(requireWindow(panel, id).hidden).toBe(false);
+            // The window the user had collapsed opens expanded too
+            expect(requireWindow(panel, id).classList.contains('webgpuWindow-collapsed')).toBe(false);
+            expect(readStoredWindowState()[id]).toEqual({ collapsed: false, position: null, visible: true });
+        }
+        await runHostPlaybackInfoToggles();
+        expect(playbackInfo.classList.contains('hide')).toBe(false);
+        expect(requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).getAttribute('aria-pressed')).toBe('true');
+
+        // A window that shows already keeps its collapse
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'picture'), '[data-window-collapse]').click();
+        requirePanelElement<HTMLButtonElement>(panel, '[data-show-all-windows]').click();
+        expect(requireWindow(panel, 'picture').classList.contains('webgpuWindow-collapsed')).toBe(true);
+        expect(handleCommand).toHaveBeenCalledTimes(3);
+
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
     });
@@ -1505,18 +1562,19 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const closeButton = requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose');
 
         pressKey(closeButton, '1', { code: 'Digit1' });
+        expect(requireWindow(panel, 'picture').hidden).toBe(false);
+        expect(readStoredWindowState().picture.visible).toBe(true);
+        // Shown, it takes the focus on its title
+        expect(document.activeElement).toBe(requirePanelElement<HTMLElement>(requireWindow(panel, 'picture'), '[data-window-title]'));
+        pressKey(closeButton, '1', { code: 'Numpad1' });
         expect(requireWindow(panel, 'picture').hidden).toBe(true);
         expect(readStoredWindowState().picture.visible).toBe(false);
-        pressKey(closeButton, '1', { code: 'Numpad1' });
-        expect(requireWindow(panel, 'picture').hidden).toBe(false);
-        // Shown again, it takes the focus on its title
-        expect(document.activeElement).toBe(requirePanelElement<HTMLElement>(requireWindow(panel, 'picture'), '[data-window-title]'));
 
         // A select takes its digits to choose an option
         pressKey(requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="decoderTestTiming"]'), '4', { code: 'Digit4' });
-        expect(requireWindow(panel, 'interface').hidden).toBe(false);
-        pressKey(closeButton, '4', { code: 'Digit4' });
         expect(requireWindow(panel, 'interface').hidden).toBe(true);
+        pressKey(closeButton, '4', { code: 'Digit4' });
+        expect(requireWindow(panel, 'interface').hidden).toBe(false);
 
         closeButton.click();
         await panelPromise;
@@ -1548,7 +1606,11 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const presentationMethods = createPresentationPlayerMethods();
         const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const pipeline = requireWindow(panel, 'pipeline');
-        // Expanded from the start, the window follows the player at once
+        // Hidden at first, the window does not follow the player
+        expect(presentationMethods.getActivePresentationPlan).not.toHaveBeenCalled();
+
+        // Shown, and so expanded, it follows the player at once
+        requireWindowToggle(panel, 'pipeline').click();
         expect(presentationMethods.getActivePresentationPlan).toHaveBeenCalledTimes(1);
         expect(presentationMethods.getPresentationRoute).toHaveBeenCalledTimes(1);
         expect(requirePanelElement<HTMLElement>(pipeline, '[data-pipeline-graph]').childElementCount).toBe(1);

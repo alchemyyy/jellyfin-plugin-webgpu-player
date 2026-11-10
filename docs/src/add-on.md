@@ -285,8 +285,9 @@ The OSD's WebGPU Settings button opens the settings as windows over the player, 
 | Playback Info | The host's own playback info overlay, which the windows place and move like one of theirs |
 
 - The master window is pinned to the room's start corner and can neither move, collapse, nor hide; its title bar resets the window layout and closes the settings.
-  Its list shows or hides every other window, and the digits 1 to 9 do the same; each section window's title bar has its reset, a button's width of space, its collapse square, and its hide button.
-  A window shows expanded whenever it appears: at the first opening, after the layout reset, which also expands the windows that show, and when the list or a digit shows it; only the user collapses a window, which stays collapsed while it shows, the next opening included.
+  Its list shows or hides every other window, and the digits 1 to 9 do the same; Show all and Hide all, above the list, show or hide every listed window at once, with one layout; each section window's title bar has its reset, a button's width of space, its collapse square, and its hide button.
+  The settings open as the master window alone: every other window, the playback info included, stays hidden until the user shows it, and the layout reset hides them again.
+  A window shows expanded whenever it appears, when the list, a digit, or Show all shows it; only the user collapses a window, which stays collapsed while it shows, Show all and the next opening included.
   A window's reset restores the defaults of its settings; Reset all restores every setting's.
 - A section window moves by dragging its title bar, or by the arrow keys on its title (Shift moves further); Enter on the title collapses or expands it, Home returns it to its slot, and Delete hides it.
   The playback info moves by a press anywhere on it but its close button.
@@ -301,8 +302,8 @@ The OSD's WebGPU Settings button opens the settings as windows over the player, 
   A dropped window takes the place it was dropped on, and the windows it covers make room; once the room grows again, every window returns to where the user put it.
 - Where the user put a window is stored as its distance from the room's nearer side on each axis, so a window near the right or the bottom edge follows that edge as the player resizes; vertically the distance is to the window's title bar, so expanding a window grows it downward.
 - `ui/windows/SettingsWindowState.ts` stores which windows show, which are collapsed, and where the user put each in localStorage under `<userId>-webGPUSettingsWindows` (version 1), apart from the settings: the layout belongs to this browser and its screen, has no server default, and the settings' resets leave it.
-- The playback info shows when the windows open, and hides when they close if they showed it; playback info that showed before they opened stays.
-  Closing it with its own button hides it at every later opening until the master's list shows it again; the host hiding it by itself, as when the playback ends, changes nothing.
+- The playback info shows when the user shows it from the master's list, and hides when the windows close if they showed it; playback info that showed before they opened stays, listed as shown.
+  Shown from the list, it shows again at every later opening until the user hides it, with the list or its own close button; the host hiding it by itself, as when the playback ends, changes nothing.
 - The pipeline graph, `ui/pipeline/`, is the engine sandbox's turned to run top to bottom, so it fits a window's width: the source with its route, one node per planned pass that leads to the canvas, and the canvas, with each texture's edges from its writer to its readers.
   A pass the canvas cannot be reached from, such as the black bar analysis, whose result the CPU reads, is a side pass: it gets no node, so the chain stays straight, and a list below the graph names it with what it reads, before the passes the plan left out.
   A node shows the pass's label without the engine's `Presentation` prefix, and a pass of the user's shader files in the accent color.

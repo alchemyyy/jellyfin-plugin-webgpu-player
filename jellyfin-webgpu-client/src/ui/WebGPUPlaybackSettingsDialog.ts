@@ -347,7 +347,8 @@ function createWindowDefinitions(): SettingsWindowDefinition[] {
     ): SettingsWindowDefinition => ({
         actionsHTML,
         contentHTML,
-        defaultVisible: true,
+        // Until the user shows it from the master's list, a section window stays hidden, so the settings open as the master window alone
+        defaultVisible: false,
         id,
         role: 'section',
         title: globalize.translate(titleKey),
@@ -472,7 +473,8 @@ function findShownVideoOsdPage(): HTMLElement | null {
 function createPlaybackInfoWindow(): HostedSettingsWindow {
     let expectedShown: boolean | null = null;
     return {
-        defaultVisible: true,
+        // Hidden until the user shows it from the master's list, as the section windows are
+        defaultVisible: false,
         findShown: findShownPlaybackInfo,
         id: PLAYBACK_INFO_WINDOW_ID,
         setShown: (shown: boolean): void => {

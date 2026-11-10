@@ -190,6 +190,18 @@ button.webgpuWindowTitle:focus-visible {
     container-type: inline-size;
 }
 
+// Above the list: buttons that show or hide every listed window at once, side by side
+.webgpuWindowListActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--webgpu-ui-gap);
+    margin: 0 0 0.4em;
+
+    .webgpuButton {
+        width: 100%;
+    }
+}
+
 // The master window's list of the other windows: each entry shows or hides its window, with the digit that does the same
 .webgpuWindowList {
     display: grid;
