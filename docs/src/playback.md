@@ -41,7 +41,7 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
   At startup the count is the audio prewarm's `destination.maxChannelCount`; at a track switch it is the live output's, else the prewarm's; without either the layout is stereo.
 - Each decoded PCM track then plays to the engine's `selectCustomAudioOutputLayout` of that layout, the whole layout when the eligibility reports `audioRendersObjects`, and the binaural choice goes with it to `play`, `setAudioStreamIndex`, and `reconfigureAudioOutput`.
 - `play` and `setAudioStreamIndex` also take the track's `audioMetadataLayout` (`getAudioMetadataLayout`): Jellyfin's channel count, which screens a track whose container declares a count no layout has, as a Matroska header written from its first frames can, and the speaker mask of a 2.1 FLAC, whose decoder reports none.
-- Each playback keeps a snapshot of the audio settings it started with; the settings panel updates it as it applies a change.
+- Each playback keeps a snapshot of the audio settings it started with; the settings windows update it as they apply a change.
 - The add-on triggers a live audio output switch when the output reports `sinkchange` with a different channel count, and when force stereo, the speaker layout, binaural rendering, or the downmix algorithm changes.
   A binaural change that keeps the layout applies between packets without a pause.
 - The stats overlay's audio category shows the output layout and the number of objects a decoder package renders, each once the engine reports it.

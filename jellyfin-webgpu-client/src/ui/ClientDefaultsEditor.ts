@@ -126,14 +126,14 @@ const RULE_PROBLEM_KEYS: Readonly<Record<DecoderTestRuleProblem['reason'], strin
     'too-many': 'WebGPUDecoderTestRuleTooMany'
 });
 
-/** Returns the rows of a section's numeric settings, in the panel's order. */
+/** Returns the rows of a section's numeric settings, in the settings windows' order. */
 function getNumericRows(section: NumericControlConfiguration['section']): SettingRow[] {
     return NUMERIC_CONTROL_CONFIGURATIONS
         .filter((configuration: NumericControlConfiguration): boolean => configuration.section === section)
         .map((configuration: NumericControlConfiguration): SettingRow => ({ configuration, key: configuration.key, kind: 'number' }));
 }
 
-// The decoder tests lead the page; then the sections and rows of the playback settings panel, in its order, where the shader preset follows the presentation section
+// The decoder tests lead the page; then the sections and rows of the in-player settings, in their order, where the shader preset follows the presentation section
 const LEADING_SECTIONS: readonly SettingSection[] = Object.freeze([
     {
         descriptionKey: 'WebGPUDecoderTestsHelp',
@@ -171,6 +171,12 @@ const LEADING_SECTIONS: readonly SettingSection[] = Object.freeze([
                 kind: 'select',
                 labelKey: 'WebGPUSettingsButtonPlacement',
                 options: SETTINGS_BUTTON_PLACEMENT_OPTIONS
+            },
+            {
+                descriptionKey: 'WebGPUFailureWarningSettingHelp',
+                key: 'webGPUFailureWarning',
+                kind: 'boolean',
+                labelKey: 'WebGPUFailureWarningSetting'
             }
         ],
         titleKey: 'WebGPUPlayerControls'
@@ -298,7 +304,8 @@ function getSettingValues(settings: WebGPUUserSettings, separateValues: Separate
         settingsButtonPlacement: settings.osd.settingsButtonPlacement,
         speakerLayout: settings.audio.speakerLayout,
         surroundLevel: downmix.surroundLevel,
-        toneMapOperator: toneMapping.operator
+        toneMapOperator: toneMapping.operator,
+        webGPUFailureWarning: settings.osd.webGPUFailureWarning
     };
 }
 
@@ -794,7 +801,7 @@ export async function renderClientDefaultsEditor(element: HTMLElement): Promise<
     root.innerHTML = createEditorHTML();
     element.textContent = '';
     element.appendChild(root);
-    // The host may not have registered emby-select on its dashboard, as in the playback settings panel
+    // The host may not have registered emby-select on its dashboard
     scheduleSelectLabelFallback(root);
     const statusElement = requireElement<HTMLElement>(root, '[data-client-defaults-status]');
     const saveButton = requireElement<HTMLButtonElement>(root, '[data-client-defaults-save]');

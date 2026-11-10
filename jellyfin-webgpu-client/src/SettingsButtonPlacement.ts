@@ -1,4 +1,4 @@
-// Where the video OSD offers the WebGPU Settings panel: a button in the OSD's control bar, beside the host's settings button or at the bar's end,
+// Where the video OSD offers the WebGPU Settings windows: a button in the OSD's control bar, beside the host's settings button or at the bar's end,
 // or an item of the host's player settings menu instead of a button
 
 export type SettingsButtonPlacement = 'after-settings' | 'before-settings' | 'controls-end' | 'settings-menu';

@@ -1,0 +1,268 @@
+// The settings windows: floating windows over the player, each a title bar over its content, after the style of game client GUIs.
+// The windows' root covers the viewport without taking clicks; the manager sets each window's place and width inline, and the height its content scrolls within
+.webgpuSettingsWindows {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 100001;
+    font-size: 84%;
+    line-height: 1.35;
+    pointer-events: none;
+
+    // The windows and their parts hide by the attribute, which the windows' own display rules would otherwise override
+    [hidden] {
+        display: none !important;
+    }
+}
+
+.webgpuSettingsWindows-tv {
+    font-size: 60%;
+}
+
+.webgpuWindow {
+    position: absolute;
+    display: flex;
+    box-sizing: border-box;
+    min-width: 0;
+    overflow: hidden;
+    flex-direction: column;
+    background: var(--webgpu-ui-background);
+    border: 0.0625em solid var(--webgpu-ui-border);
+    border-radius: var(--webgpu-ui-radius);
+    box-shadow: 0 0.35em 1.25em rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+}
+
+// The master window holds the core settings and is pinned, so its frame carries the accent
+.webgpuWindow-master {
+    border-color: rgba(0, 164, 220, 0.5);
+}
+
+// A dragged window moves by a transform on a layer of its own, so following the pointer repaints and lays out nothing
+.webgpuWindow-dragging {
+    will-change: transform;
+}
+
+.webgpuSettingsWindows-animated .webgpuWindow {
+    transition: left 0.16s ease-out, top 0.16s ease-out;
+}
+
+.webgpuSettingsWindows-animated .webgpuWindow-dragging {
+    box-shadow: 0 0.6em 2em rgba(0, 0, 0, 0.6);
+    transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .webgpuSettingsWindows-animated .webgpuWindow {
+        transition: none;
+    }
+}
+
+.webgpuWindowTitleBar {
+    display: flex;
+    flex: none;
+    gap: 0.2em;
+    min-height: 2.3em;
+    padding-block: 0.15em;
+    padding-inline: 0.35em 0.2em;
+    align-items: center;
+    background: var(--webgpu-ui-title-background);
+    border-bottom: 0.0625em solid var(--webgpu-ui-border);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+
+    .webgpuWindow-master & {
+        cursor: default;
+    }
+
+    .webgpuWindow-collapsed & {
+        border-bottom-color: transparent;
+    }
+
+    .webgpuWindow-dragging & {
+        cursor: grabbing;
+    }
+}
+
+.webgpuWindowTitle {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0.25em 0.35em;
+    overflow: hidden;
+    color: var(--webgpu-ui-accent-text);
+    background: none;
+    border: 0;
+    border-radius: var(--webgpu-ui-radius);
+    font: inherit;
+    font-weight: 600;
+    text-align: start;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: inherit;
+}
+
+button.webgpuWindowTitle:hover {
+    background: var(--webgpu-ui-hover);
+}
+
+button.webgpuWindowTitle:focus-visible {
+    outline: none;
+    box-shadow: var(--webgpu-ui-focus-ring);
+}
+
+.webgpuWindowActions {
+    display: flex;
+    flex: none;
+    gap: 0.1em;
+    align-items: center;
+}
+
+.webgpuWindowButton {
+    display: inline-flex;
+    flex: none;
+    width: 1.95em;
+    height: 1.95em;
+    margin: 0;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--webgpu-ui-text-muted);
+    background: none;
+    border: 0;
+    border-radius: var(--webgpu-ui-radius);
+    cursor: pointer;
+
+    > .material-icons {
+        font-size: 1.25em;
+    }
+
+    &:hover {
+        color: var(--webgpu-ui-text);
+        background: var(--webgpu-ui-hover);
+    }
+
+    &:focus-visible {
+        color: var(--webgpu-ui-text);
+        outline: none;
+        box-shadow: var(--webgpu-ui-focus-ring);
+    }
+}
+
+// A button's width and its gap keep a section window's reset apart from its collapse square, so a press meant for one does not reach the other
+.webgpuWindowButton + .webgpuWindowCollapse {
+    margin-inline-start: 2.05em;
+}
+
+// The square toggle at the end of a section window's title bar: filled while the window shows its content
+.webgpuWindowCollapseBox,
+.webgpuWindowToggleBox {
+    display: block;
+    box-sizing: border-box;
+    width: 0.9em;
+    height: 0.9em;
+    flex: none;
+    border: 0.125em solid currentcolor;
+    border-radius: 0.12em;
+}
+
+.webgpuWindowCollapse[aria-expanded="true"] .webgpuWindowCollapseBox,
+.webgpuWindowToggle[aria-pressed="true"] .webgpuWindowToggleBox {
+    background: var(--webgpu-ui-accent);
+    border-color: var(--webgpu-ui-accent);
+    box-shadow: inset 0 0 0 0.1em rgba(0, 0, 0, 0.55);
+}
+
+.webgpuWindowBody {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.webgpuWindowContent {
+    padding: 0.5em 0.65em 0.7em;
+    container-type: inline-size;
+}
+
+// The master window's list of the other windows: each entry shows or hides its window, with the digit that does the same
+.webgpuWindowList {
+    display: grid;
+    gap: 0.1em;
+    margin: 0 0 0.55em;
+    padding: 0;
+    list-style: none;
+}
+
+.webgpuWindowToggle {
+    display: flex;
+    gap: 0.6em;
+    width: 100%;
+    min-height: 2.1em;
+    margin: 0;
+    padding: 0.2em 0.5em;
+    align-items: center;
+    color: var(--webgpu-ui-text-muted);
+    background: none;
+    border: 0;
+    border-radius: var(--webgpu-ui-radius);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+
+    &[aria-pressed="true"] {
+        color: var(--webgpu-ui-accent-text);
+    }
+
+    &:hover {
+        color: var(--webgpu-ui-text);
+        background: var(--webgpu-ui-hover);
+    }
+
+    &:focus-visible {
+        outline: none;
+        box-shadow: var(--webgpu-ui-focus-ring);
+    }
+}
+
+.webgpuWindowToggleName {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webgpuWindowToggleKey {
+    flex: none;
+    min-width: 1.4em;
+    padding: 0 0.3em;
+    color: var(--webgpu-ui-text-muted);
+    border: 0.0625em solid var(--webgpu-ui-border);
+    border-radius: 0.2em;
+    font-family: var(--webgpu-ui-monospace);
+    font-size: 85%;
+    text-align: center;
+}
+
+// The host's playback info while the settings place it: it moves by a press anywhere on it
+.playerStats.webgpuSettingsHostedWindow {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+
+// The host puts its playback info below the windows; dragged, or stacked over them when no free room holds it, it shows above them
+.playerStats.webgpuSettingsHostedWindow-stacked,
+.playerStats.webgpuSettingsHostedWindow.webgpuWindow-dragging {
+    z-index: 100002;
+}
+
+.playerStats.webgpuSettingsHostedWindow.webgpuWindow-dragging {
+    cursor: grabbing;
+}

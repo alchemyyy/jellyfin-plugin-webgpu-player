@@ -1,5 +1,3 @@
-import escapeHtml from 'escape-html';
-
 import layoutManager from 'components/layoutManager';
 import globalize from 'lib/globalize';
 import { handleCommand } from 'scripts/inputManager';
@@ -8,11 +6,28 @@ import { applySettingsButtonPlacement } from '../compat/SettingsEntryPoints';
 import type { AddonStringKey } from '../host/globalize';
 import { loadServerModuleCatalog } from '../ServerModules';
 import { getDefaultAudioDownmixAlgorithm, webGPUAudioDownmixAlgorithm } from '../shims/userSettings';
+import { getLastWebGPUFailureReport, showWebGPUFailureReport } from '../WebGPUFailureWarning';
+import {
+    bindControlInfo,
+    bindControlKeys,
+    bindNumericControl,
+    bindSelectTitles,
+    createActionControlHTML,
+    createButtonHTML,
+    createCheckboxControlHTML,
+    createNumericControlHTML,
+    createSelectControlHTML,
+    refreshSelectTitles,
+    type ControlText,
+    type NumericControlBinding
+} from './controls/SettingControls';
 import { bindDecoderPackageSection, createDecoderPackageSectionHTML } from './DecoderPackageSection';
-import { scheduleSelectLabelFallback } from './SelectLabelFallback';
+import { createPipelineGraphView, startPipelineGraphUpdates } from './pipeline/PipelineGraphView';
 import {
     bindPresentationSection,
-    createPresentationSectionHTML,
+    createHDROutputControlHTML,
+    createPipelineControlsHTML,
+    createShaderPassesHTML,
     type PresentationSectionController
 } from './PresentationSettingsSection';
 import {
@@ -23,26 +38,16 @@ import {
     NUMERIC_CONTROL_CONFIGURATIONS,
     SETTINGS_BUTTON_PLACEMENT_OPTIONS,
     TONE_MAP_OPERATOR_OPTIONS,
-    type NumericControlConfiguration,
     type NumericSettingKey
 } from './SettingDefinitions';
+import { HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 import {
-    createDefaultButtonHTML,
-    createDescribedSettingButtonsHTML,
-    createInfoButtonHTML,
-    getSettingDescriptionId,
-    HIDDEN_CLASS,
-    setStatus,
-    translateToHTML
-} from './SettingsPanelHTML';
-
-import 'elements/emby-button/emby-button';
-import 'elements/emby-button/paper-icon-button-light';
-import 'elements/emby-checkbox/emby-checkbox';
-import 'elements/emby-input/emby-input';
-import 'elements/emby-select/emby-select';
-import 'elements/emby-slider/emby-slider';
-import 'material-design-icons-iconfont';
+    createSettingsWindowManager,
+    createWindowActionHTML,
+    type HostedSettingsWindow,
+    type SettingsWindowDefinition,
+    type SettingsWindowManager
+} from './windows/SettingsWindowManager';
 
 import {
     clearStoredCapabilityProbeVerdicts,
@@ -73,6 +78,9 @@ import {
 
 import './WebGPUPlaybackSettingsDialog.scss';
 
+// The WebGPU settings as windows over the player: a pinned master window with the playback settings and the list of the other windows,
+// and the picture, pipeline, audio, and interface windows, which the user shows, hides, collapses, and moves; the host's playback info joins them
+
 type DefaultSettingKey =
     | NumericSettingKey
     | 'audioDownmixAlgorithm'
@@ -85,7 +93,8 @@ type DefaultSettingKey =
     | 'forceStereoDownmix'
     | 'operator'
     | 'settingsButtonPlacement'
-    | 'speakerLayout';
+    | 'speakerLayout'
+    | 'webGPUFailureWarning';
 
 type ActivePanel = {
     close: () => void
@@ -93,29 +102,20 @@ type ActivePanel = {
     promise: Promise<void>
 };
 
-// Whether the panel asked the host to show its playback info, which the panel hides again on close:
-// - none: not asked;
-// - pending: asked, but not showing yet;
-// - shown: asked, and shown since
-type PlaybackInfoRequest = 'none' | 'pending' | 'shown';
-
-const PLAYBACK_INFO_GAP_PX = 8;
+const MASTER_WINDOW_ID = 'playback';
+const PICTURE_WINDOW_ID = 'picture';
+const PIPELINE_WINDOW_ID = 'pipeline';
+const AUDIO_WINDOW_ID = 'audio';
+const INTERFACE_WINDOW_ID = 'interface';
+const PLAYBACK_INFO_WINDOW_ID = 'playbackInfo';
 const PLAYBACK_INFO_CLASS = 'playerStats';
 const PLAYBACK_INFO_SELECTOR = `.${PLAYBACK_INFO_CLASS}`;
-// The stylesheet places playback info with this class at the offset property, from the panel's start edge
-const PLAYBACK_INFO_BESIDE_CLASS = 'webgpuSettingsPlaybackInfo';
-const PLAYBACK_INFO_OFFSET_PROPERTY = '--webgpu-playback-info-offset';
-// Playback info moves beside the panel when the space there, in the panel's ems, fits it legibly
-const PLAYBACK_INFO_MINIMUM_SPACE_EM = 22;
 // The video OSD's input command that shows or hides the host's playback info
 const TOGGLE_PLAYBACK_INFO_COMMAND = 'togglestats';
 // The video OSD page; the host's view manager keeps pages of earlier views in the document, hidden by class, so more than one can match
 const VIDEO_OSD_PAGE_SELECTOR = '#videoOsdPage';
-// The video OSD's bottom controls: the title, the timeline, and the buttons
+// The video OSD's bottom controls: the title, the timeline, and the buttons, which only fade while the pointer idles
 const OSD_CONTROLS_SELECTOR = '.videoOsdBottom-maincontrols .osdControls';
-const OSD_CONTROLS_GAP_PX = 8;
-const PANEL_TOP_PROPERTY = '--webgpu-settings-top';
-const PANEL_MAXIMUM_HEIGHT_PROPERTY = '--webgpu-settings-max-height';
 const LIST_SEPARATOR = ', ';
 
 let activePanel: ActivePanel | null = null;
@@ -204,363 +204,185 @@ function updateNumericSetting(
     }
 }
 
-function createNumericControlHTML(configuration: NumericControlConfiguration): string {
-    const settingKey = configuration.key;
-    const range = configuration.range;
-    const label = globalize.translate(configuration.labelKey);
-    const description = translateToHTML(configuration.descriptionKey);
-    const labelText = configuration.unitKey ?
-        translateToHTML('WebGPUSettingWithUnit', label, globalize.translate(configuration.unitKey)) :
-        escapeHtml(label);
+/** Returns a control's texts from its label, description, and in-sentence name keys. */
+function getControlText(labelKey: AddonStringKey, descriptionKey: AddonStringKey | null, nameKey: AddonStringKey): ControlText {
+    return {
+        description: descriptionKey === null ? null : globalize.translate(descriptionKey),
+        label: globalize.translate(labelKey),
+        name: globalize.translate(nameKey)
+    };
+}
+
+function createNumericControlsHTML(section: 'audio' | 'render'): string {
+    return NUMERIC_CONTROL_CONFIGURATIONS
+        .filter((configuration): boolean => configuration.section === section)
+        .map(createNumericControlHTML)
+        .join('');
+}
+
+/** Returns a window's reset button for its title bar, which restores the window's settings to their defaults. */
+function createWindowResetHTML(windowId: string, className: string, label: string): string {
+    return createWindowActionHTML({ attributes: `data-reset-window="${windowId}"`, className, icon: 'settings_backup_restore', label });
+}
+
+/** The master window: the list of the other windows, the playback settings, the decoder test results, the keys, and the full reset. */
+function createMasterContentHTML(): string {
     return `
-        <div
-            class="webgpuSettingsNumericControl"
-            data-setting="${settingKey}"
-            title="${description}"
-        >
-            <div class="webgpuSettingsNumericRow">
-                <label class="webgpuSettingsControlLabel" for="webgpu-${settingKey}-slider">
-                    ${labelText}
-                </label>
-                <div class="webgpuSettingsSliderContainer">
-                    <input
-                        aria-describedby="${getSettingDescriptionId(settingKey)}"
-                        id="webgpu-${settingKey}-slider"
-                        class="webgpuSettingsSlider"
-                        data-setting-slider="${settingKey}"
-                        is="emby-slider"
-                        max="${range.maximum}"
-                        min="${range.minimum}"
-                        step="${range.step}"
-                        type="range"
-                    />
-                </div>
-                <div class="webgpuSettingsNumberContainer">
-                    <input
-                        aria-describedby="${getSettingDescriptionId(settingKey)}"
-                        aria-label="${translateToHTML('WebGPUSettingNumericValue', label)}"
-                        class="webgpuSettingsNumber"
-                        data-setting-number="${settingKey}"
-                        is="emby-input"
-                        max="${range.maximum}"
-                        min="${range.minimum}"
-                        step="${range.step}"
-                        type="number"
-                    />
-                </div>
-                ${createDefaultButtonHTML(settingKey, label)}
-            </div>
-            <div
-                class="webgpuSettingsControlDescription"
-                id="${getSettingDescriptionId(settingKey)}"
-            >${description}</div>
+        <ul aria-label="${translateToHTML('WebGPUSettingsWindowList')}" class="webgpuWindowList" data-settings-window-list></ul>
+        <h3 class="webgpuGroupTitle">${translateToHTML('WebGPUPlayback')}</h3>
+        ${createCheckboxControlHTML('enableCustomDecode', getControlText('WebGPUEnableCustomDecode', 'WebGPUEnableCustomDecodeHelp', 'WebGPUSettingNameCustomDecode'), { reset: true })}
+        ${createCheckboxControlHTML('enableHDRToneMapping', getControlText('WebGPUEnableHDRToneMapping', 'WebGPUEnableHDRToneMappingHelp', 'WebGPUSettingNameHDRToneMapping'), { reset: true })}
+        ${createCheckboxControlHTML('enableGPUDecodeSlicing', getControlText('WebGPUEnableGPUDecodeSlicing', 'WebGPUEnableGPUDecodeSlicingHelp', 'WebGPUSettingNameGPUDecodeSlicing'), { reset: true })}
+        ${createSelectControlHTML(
+            'decoderTestTiming',
+            getControlText('WebGPUDecoderTestTiming', 'WebGPUDecoderTestTimingDialogHelp', 'WebGPUSettingNameDecoderTestTiming'),
+            createSettingOptionsHTML(DECODER_TEST_TIMING_OPTIONS),
+            { reset: true }
+        )}
+        <div class="webgpuStatus" data-playback-status role="status">${translateToHTML('WebGPUPlaybackChangesRestartRequired')}</div>
+        ${createActionControlHTML(
+            'probeCache',
+            getControlText('WebGPUClearProbeCache', 'WebGPUClearProbeCacheHelp', 'WebGPUSettingNameDecoderTestResults'),
+            createButtonHTML({ className: 'webgpuSettingsClearProbeCache', icon: 'restart_alt', label: globalize.translate('WebGPUClearProbeCache') })
+        )}
+        <div class="webgpuStatus webgpuSettingsCrashedProbes ${HIDDEN_CLASS}" data-crashed-probes></div>
+        ${createActionControlHTML(
+            'keyboardShortcuts',
+            getControlText('WebGPUKeyboardShortcuts', 'WebGPUKeyboardShortcutsHelp', 'WebGPUSettingNameKeyboardShortcuts'),
+            `<span class="webgpuSettingsKeysLabel"><span class="material-icons keyboard" aria-hidden="true"></span>${translateToHTML('WebGPUKeyboardShortcuts')}</span>`
+        )}
+        <div class="webgpuButtonRow webgpuWindowFooter">
+            ${createButtonHTML({ className: 'webgpuSettingsResetAll', icon: 'settings_backup_restore', label: globalize.translate('WebGPUResetAll'), variant: 'danger' })}
         </div>`;
 }
 
-function createSectionControlsHTML(section: 'audio' | 'render'): string {
-    let controlsHTML = '';
-    for (const configuration of NUMERIC_CONTROL_CONFIGURATIONS) {
-        if (configuration.section === section) {
-            controlsHTML += createNumericControlHTML(configuration);
-        }
-    }
-    return controlsHTML;
+/** The picture window: tone mapping, the display controls, and HDR output. */
+function createPictureContentHTML(): string {
+    return `
+        ${createSelectControlHTML(
+            'operator',
+            getControlText('WebGPUToneMapOperator', 'WebGPUToneMapOperatorHelp', 'WebGPUSettingNameToneMapOperator'),
+            createSettingOptionsHTML(TONE_MAP_OPERATOR_OPTIONS),
+            { reset: true }
+        )}
+        ${createCheckboxControlHTML('automaticInputPeakNits', getControlText('WebGPUTrackSourcePeakMetadata', 'WebGPUTrackSourcePeakMetadataHelp', 'WebGPUSettingNameSourcePeakTracking'), { reset: true })}
+        ${createNumericControlsHTML('render')}
+        <div aria-live="polite" class="webgpuStatus" data-render-status role="status"></div>
+        ${createHDROutputControlHTML()}`;
 }
 
-function createPanelHTML(): string {
+/** The pipeline window: the deinterlacing and black bar switches, the graph of the passes the picture runs through, the shader pass selector, and the decoders. */
+function createPipelineContentHTML(): string {
     return `
-        <button
-            aria-label="${translateToHTML('WebGPUCloseSettings')}"
-            class="webgpuSettingsClose"
-            is="paper-icon-button-light"
-            title="${translateToHTML('ButtonClose')}"
-            type="button"
-        ><span class="material-icons close" aria-hidden="true"></span></button>
-        <div class="webgpuSettingsContent">
-                <h2 class="webgpuSettingsTitle" id="webgpu-settings-title">${translateToHTML('WebGPUSettings')}</h2>
-                <section class="webgpuSettingsSection" aria-labelledby="webgpu-player-controls-title">
-                    <h3 class="webgpuSettingsSectionTitle" id="webgpu-player-controls-title">
-                        ${translateToHTML('WebGPUPlayerControls')}
-                    </h3>
-                    <div class="webgpuSettingsSelectRow">
-                        <div class="selectContainer webgpuSettingsSelectContainer">
-                            <select
-                                aria-describedby="${getSettingDescriptionId('settingsButtonPlacement')}"
-                                data-setting-select="settingsButtonPlacement"
-                                id="webgpu-settings-button-placement"
-                                is="emby-select"
-                                label="${translateToHTML('WebGPUSettingsButtonPlacement')}"
-                            >${createSettingOptionsHTML(SETTINGS_BUTTON_PLACEMENT_OPTIONS)}</select>
-                        </div>
-                        ${createDescribedSettingButtonsHTML('settingsButtonPlacement', globalize.translate('WebGPUSettingNameSettingsButtonPlacement'))}
-                    </div>
-                    <div
-                        class="fieldDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('settingsButtonPlacement')}"
-                    >${translateToHTML('WebGPUSettingsButtonPlacementHelp')}</div>
-                </section>
+        ${createPipelineControlsHTML()}
+        <div class="webgpuSettingsPipelineGraph" data-pipeline-graph></div>
+        ${createShaderPassesHTML()}
+        ${createDecoderPackageSectionHTML()}`;
+}
 
-                <section class="webgpuSettingsSection" aria-labelledby="webgpu-playback-title">
-                    <h3 class="webgpuSettingsSectionTitle" id="webgpu-playback-title">
-                        ${translateToHTML('WebGPUPlayback')}
-                    </h3>
-                    <div class="webgpuSettingsCheckboxRow">
-                        <label class="checkboxContainer">
-                            <input
-                                aria-describedby="${getSettingDescriptionId('enableCustomDecode')}"
-                                data-setting-checkbox="enableCustomDecode"
-                                is="emby-checkbox"
-                                type="checkbox"
-                            />
-                            <span>${translateToHTML('WebGPUEnableCustomDecode')}</span>
-                        </label>
-                        ${createDescribedSettingButtonsHTML('enableCustomDecode', globalize.translate('WebGPUSettingNameCustomDecode'))}
-                    </div>
-                    <div
-                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('enableCustomDecode')}"
-                    >${translateToHTML('WebGPUEnableCustomDecodeHelp')}</div>
-                    <div class="webgpuSettingsCheckboxRow">
-                        <label class="checkboxContainer">
-                            <input
-                                aria-describedby="${getSettingDescriptionId('enableHDRToneMapping')}"
-                                data-setting-checkbox="enableHDRToneMapping"
-                                is="emby-checkbox"
-                                type="checkbox"
-                            />
-                            <span>${translateToHTML('WebGPUEnableHDRToneMapping')}</span>
-                        </label>
-                        ${createDescribedSettingButtonsHTML('enableHDRToneMapping', globalize.translate('WebGPUSettingNameHDRToneMapping'))}
-                    </div>
-                    <div
-                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('enableHDRToneMapping')}"
-                    >${translateToHTML('WebGPUEnableHDRToneMappingHelp')}</div>
-                    <div class="webgpuSettingsCheckboxRow">
-                        <label class="checkboxContainer">
-                            <input
-                                aria-describedby="${getSettingDescriptionId('enableGPUDecodeSlicing')}"
-                                data-setting-checkbox="enableGPUDecodeSlicing"
-                                is="emby-checkbox"
-                                type="checkbox"
-                            />
-                            <span>${translateToHTML('WebGPUEnableGPUDecodeSlicing')}</span>
-                        </label>
-                        ${createDescribedSettingButtonsHTML('enableGPUDecodeSlicing', globalize.translate('WebGPUSettingNameGPUDecodeSlicing'))}
-                    </div>
-                    <div
-                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('enableGPUDecodeSlicing')}"
-                    >${translateToHTML('WebGPUEnableGPUDecodeSlicingHelp')}</div>
-                    <div class="webgpuSettingsSelectRow">
-                        <div class="selectContainer webgpuSettingsSelectContainer">
-                            <select
-                                aria-describedby="${getSettingDescriptionId('decoderTestTiming')}"
-                                data-setting-select="decoderTestTiming"
-                                id="webgpu-decoder-test-timing"
-                                is="emby-select"
-                                label="${translateToHTML('WebGPUDecoderTestTiming')}"
-                            >${createSettingOptionsHTML(DECODER_TEST_TIMING_OPTIONS)}</select>
-                        </div>
-                        ${createDescribedSettingButtonsHTML('decoderTestTiming', globalize.translate('WebGPUSettingNameDecoderTestTiming'))}
-                    </div>
-                    <div
-                        class="fieldDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('decoderTestTiming')}"
-                    >${translateToHTML('WebGPUDecoderTestTimingDialogHelp')}</div>
-                    <div class="webgpuSettingsStatus" data-playback-status role="status">
-                        ${translateToHTML('WebGPUPlaybackChangesRestartRequired')}
-                    </div>
-                    <div class="webgpuSettingsDescribedButtonRow">
-                        <button
-                            aria-describedby="${getSettingDescriptionId('probeCache')}"
-                            class="raised webgpuSettingsClearProbeCache"
-                            is="emby-button"
-                            type="button"
-                        >${translateToHTML('WebGPUClearProbeCache')}</button>
-                        ${createInfoButtonHTML('probeCache', globalize.translate('WebGPUSettingNameDecoderTestResults'))}
-                    </div>
-                    <div class="fieldDescription webgpuSettingsCrashedProbes ${HIDDEN_CLASS}" data-crashed-probes></div>
-                    <div
-                        class="fieldDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('probeCache')}"
-                    >${translateToHTML('WebGPUClearProbeCacheHelp')}</div>
-                </section>
+/** The audio window: the output, the speaker layout and its renderings, and the downmix. */
+function createAudioContentHTML(): string {
+    return `
+        ${createSelectControlHTML('audioOutput', getControlText('WebGPUAudioOutput', 'WebGPUAudioOutputDescription', 'WebGPUSettingNameAudioOutput'), '', {
+            selectAttributes: 'data-audio-output-select'
+        })}
+        <div class="webgpuButtonRow">
+            ${createButtonHTML({
+                attributes: `data-audio-output-redetect title="${translateToHTML('WebGPURedetectAudioOutputHelp')}"`,
+                className: 'webgpuSettingsRedetectAudioOutput',
+                icon: 'refresh',
+                label: globalize.translate('WebGPURedetectAudioOutput')
+            })}
+            ${createButtonHTML({
+                attributes: 'data-audio-output-picker',
+                className: 'webgpuSettingsChooseAudioOutput',
+                icon: 'speaker',
+                label: globalize.translate('WebGPUChooseAudioOutput')
+            })}
+        </div>
+        <div aria-live="polite" class="webgpuStatus" data-audio-output-status role="status"></div>
+        ${createSelectControlHTML(
+            'speakerLayout',
+            getControlText('WebGPUSpeakerLayout', 'WebGPUSpeakerLayoutHelp', 'WebGPUSettingNameSpeakerLayout'),
+            createSettingOptionsHTML(AUDIO_SPEAKER_LAYOUT_OPTIONS),
+            { reset: true }
+        )}
+        ${createCheckboxControlHTML('binauralHeadphones', getControlText('WebGPUBinauralHeadphones', 'WebGPUBinauralHeadphonesHelp', 'WebGPUSettingNameBinauralHeadphones'), { reset: true })}
+        ${createSelectControlHTML(
+            'audioDownmixAlgorithm',
+            getControlText('WebGPUDownmixAlgorithm', 'WebGPUAudioDownmixAlgorithmHelp', 'WebGPUSettingNameDownmixAlgorithm'),
+            createSettingOptionsHTML(AUDIO_DOWNMIX_ALGORITHM_OPTIONS),
+            { reset: true }
+        )}
+        ${createCheckboxControlHTML('forceStereoDownmix', getControlText('WebGPUForceStereo', 'WebGPUForceStereoHelp', 'WebGPUSettingNameForceStereo'), { reset: true })}
+        ${createNumericControlsHTML('audio')}
+        <div class="webgpuStatus webgpuSettingsSafetyDescription">${translateToHTML('WebGPUDownmixGainsHelp')}</div>
+        <div aria-live="polite" class="webgpuStatus" data-audio-status role="status">${translateToHTML('WebGPUAudioSettingsApplyHelp')}</div>`;
+}
 
-                <section class="webgpuSettingsSection" aria-labelledby="webgpu-tone-mapping-title">
-                    <h3 class="webgpuSettingsSectionTitle" id="webgpu-tone-mapping-title">
-                        ${translateToHTML('WebGPUToneMappingAndDisplay')}
-                    </h3>
-                    <div class="webgpuSettingsSelectRow">
-                        <div class="selectContainer webgpuSettingsSelectContainer">
-                            <select
-                                data-setting-select="operator"
-                                id="webgpu-tone-map-operator"
-                                is="emby-select"
-                                label="${translateToHTML('WebGPUToneMapOperator')}"
-                            >${createSettingOptionsHTML(TONE_MAP_OPERATOR_OPTIONS)}</select>
-                        </div>
-                        ${createDefaultButtonHTML('operator', globalize.translate('WebGPUSettingNameToneMapOperator'))}
-                    </div>
-                    <div class="webgpuSettingsCheckboxRow">
-                        <label class="checkboxContainer">
-                            <input
-                                aria-describedby="${getSettingDescriptionId('automaticInputPeakNits')}"
-                                data-setting-checkbox="automaticInputPeakNits"
-                                is="emby-checkbox"
-                                type="checkbox"
-                            />
-                            <span>${translateToHTML('WebGPUTrackSourcePeakMetadata')}</span>
-                        </label>
-                        ${createDescribedSettingButtonsHTML('automaticInputPeakNits', globalize.translate('WebGPUSettingNameSourcePeakTracking'))}
-                    </div>
-                    <div
-                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('automaticInputPeakNits')}"
-                    >${translateToHTML('WebGPUTrackSourcePeakMetadataHelp')}</div>
-                    ${createSectionControlsHTML('render')}
-                    <div class="webgpuSettingsStatus" data-render-status role="status"></div>
-                    <button
-                        class="raised webgpuSettingsResetRender"
-                        is="emby-button"
-                        type="button"
-                    >${translateToHTML('WebGPUResetToneMappingAndDisplay')}</button>
-                </section>
+/** The interface window: where the player offers these settings, and the warning when WebGPU fails, with its last report. */
+function createInterfaceContentHTML(): string {
+    return `
+        ${createSelectControlHTML(
+            'settingsButtonPlacement',
+            getControlText('WebGPUSettingsButtonPlacement', 'WebGPUSettingsButtonPlacementHelp', 'WebGPUSettingNameSettingsButtonPlacement'),
+            createSettingOptionsHTML(SETTINGS_BUTTON_PLACEMENT_OPTIONS),
+            { reset: true }
+        )}
+        ${createCheckboxControlHTML('webGPUFailureWarning', getControlText('WebGPUFailureWarningSetting', 'WebGPUFailureWarningSettingHelp', 'WebGPUSettingNameFailureWarning'), { reset: true })}
+        ${createActionControlHTML(
+            'failureReport',
+            getControlText('WebGPUShowFailureReport', 'WebGPUShowFailureReportHelp', 'WebGPUSettingNameFailureReport'),
+            createButtonHTML({ className: 'webgpuSettingsShowFailureReport', icon: 'warning_amber', label: globalize.translate('WebGPUShowFailureReport') })
+        )}`;
+}
 
-                ${createPresentationSectionHTML()}
-
-                <section class="webgpuSettingsSection" aria-labelledby="webgpu-audio-title">
-                    <h3 class="webgpuSettingsSectionTitle" id="webgpu-audio-title">
-                        ${translateToHTML('WebGPUAudioOutputAndDownmix')}
-                    </h3>
-                    <div class="webgpuSettingsSelectRow">
-                        <div class="selectContainer webgpuSettingsSelectContainer">
-                            <select
-                                aria-describedby="webgpu-audio-output-description"
-                                data-audio-output-select
-                                id="webgpu-audio-output"
-                                is="emby-select"
-                                label="${translateToHTML('WebGPUAudioOutput')}"
-                            ></select>
-                        </div>
-                        <button
-                            class="raised webgpuSettingsRedetectAudioOutput"
-                            data-audio-output-redetect
-                            is="emby-button"
-                            title="${translateToHTML('WebGPURedetectAudioOutputHelp')}"
-                            type="button"
-                        >${translateToHTML('WebGPURedetectAudioOutput')}</button>
-                        <button
-                            class="raised webgpuSettingsChooseAudioOutput"
-                            data-audio-output-picker
-                            is="emby-button"
-                            type="button"
-                        >${translateToHTML('WebGPUChooseAudioOutput')}</button>
-                    </div>
-                    <div
-                        class="fieldDescription"
-                        id="webgpu-audio-output-description"
-                    >${translateToHTML('WebGPUAudioOutputDescription')}</div>
-                    <div
-                        aria-live="polite"
-                        class="webgpuSettingsStatus"
-                        data-audio-output-status
-                        role="status"
-                    ></div>
-                    <div class="webgpuSettingsSelectRow">
-                        <div class="selectContainer webgpuSettingsSelectContainer">
-                            <select
-                                aria-describedby="${getSettingDescriptionId('speakerLayout')}"
-                                data-setting-select="speakerLayout"
-                                id="webgpu-audio-speaker-layout"
-                                is="emby-select"
-                                label="${translateToHTML('WebGPUSpeakerLayout')}"
-                            >${createSettingOptionsHTML(AUDIO_SPEAKER_LAYOUT_OPTIONS)}</select>
-                        </div>
-                        ${createDescribedSettingButtonsHTML('speakerLayout', globalize.translate('WebGPUSettingNameSpeakerLayout'))}
-                    </div>
-                    <div
-                        class="fieldDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('speakerLayout')}"
-                    >${translateToHTML('WebGPUSpeakerLayoutHelp')}</div>
-                    <div class="webgpuSettingsCheckboxRow">
-                        <label class="checkboxContainer">
-                            <input
-                                aria-describedby="${getSettingDescriptionId('binauralHeadphones')}"
-                                data-setting-checkbox="binauralHeadphones"
-                                is="emby-checkbox"
-                                type="checkbox"
-                            />
-                            <span>${translateToHTML('WebGPUBinauralHeadphones')}</span>
-                        </label>
-                        ${createDescribedSettingButtonsHTML('binauralHeadphones', globalize.translate('WebGPUSettingNameBinauralHeadphones'))}
-                    </div>
-                    <div
-                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('binauralHeadphones')}"
-                    >${translateToHTML('WebGPUBinauralHeadphonesHelp')}</div>
-                    <div class="webgpuSettingsSelectRow">
-                        <div class="selectContainer webgpuSettingsSelectContainer">
-                            <select
-                                aria-describedby="${getSettingDescriptionId('audioDownmixAlgorithm')}"
-                                data-setting-select="audioDownmixAlgorithm"
-                                id="webgpu-audio-downmix-algorithm"
-                                is="emby-select"
-                                label="${translateToHTML('WebGPUDownmixAlgorithm')}"
-                            >${createSettingOptionsHTML(AUDIO_DOWNMIX_ALGORITHM_OPTIONS)}</select>
-                        </div>
-                        ${createDescribedSettingButtonsHTML('audioDownmixAlgorithm', globalize.translate('WebGPUSettingNameDownmixAlgorithm'))}
-                    </div>
-                    <div
-                        class="fieldDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('audioDownmixAlgorithm')}"
-                    >${translateToHTML('WebGPUAudioDownmixAlgorithmHelp')}</div>
-                    <div class="webgpuSettingsCheckboxRow">
-                        <label class="checkboxContainer">
-                            <input
-                                aria-describedby="${getSettingDescriptionId('forceStereoDownmix')}"
-                                data-setting-checkbox="forceStereoDownmix"
-                                is="emby-checkbox"
-                                type="checkbox"
-                            />
-                            <span>${translateToHTML('WebGPUForceStereo')}</span>
-                        </label>
-                        ${createDescribedSettingButtonsHTML('forceStereoDownmix', globalize.translate('WebGPUSettingNameForceStereo'))}
-                    </div>
-                    <div
-                        class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                        id="${getSettingDescriptionId('forceStereoDownmix')}"
-                    >${translateToHTML('WebGPUForceStereoHelp')}</div>
-                    ${createSectionControlsHTML('audio')}
-                    <div class="fieldDescription webgpuSettingsSafetyDescription">
-                        ${translateToHTML('WebGPUDownmixGainsHelp')}
-                    </div>
-                    <div class="webgpuSettingsStatus" data-audio-status role="status">
-                        ${translateToHTML('WebGPUAudioSettingsApplyHelp')}
-                    </div>
-                    <button
-                        class="raised webgpuSettingsResetAudio"
-                        is="emby-button"
-                        type="button"
-                    >${translateToHTML('WebGPUResetAudio')}</button>
-                </section>
-
-                ${createDecoderPackageSectionHTML()}
-
-                <div class="webgpuSettingsFooter">
-                    <button
-                        class="raised webgpuSettingsResetAll"
-                        is="emby-button"
-                        type="button"
-                    >${translateToHTML('WebGPUResetAll')}</button>
-                </div>
-        </div>`;
+function createWindowDefinitions(): SettingsWindowDefinition[] {
+    const section = (
+        id: string,
+        titleKey: AddonStringKey,
+        contentHTML: string,
+        actionsHTML: string,
+        widths: Readonly<{ minimumWidthEm: number; widthEm: number }>
+    ): SettingsWindowDefinition => ({
+        actionsHTML,
+        contentHTML,
+        defaultVisible: true,
+        id,
+        role: 'section',
+        title: globalize.translate(titleKey),
+        ...widths
+    });
+    return [
+        {
+            actionsHTML: createWindowResetHTML(MASTER_WINDOW_ID, 'webgpuSettingsResetPlayback', globalize.translate('WebGPUResetPlayback')),
+            contentHTML: createMasterContentHTML(),
+            defaultVisible: true,
+            id: MASTER_WINDOW_ID,
+            minimumWidthEm: 16,
+            role: 'master',
+            title: globalize.translate('WebGPUSettings'),
+            widthEm: 21
+        },
+        section(PICTURE_WINDOW_ID, 'WebGPUWindowPicture', createPictureContentHTML(),
+            createWindowResetHTML(PICTURE_WINDOW_ID, 'webgpuSettingsResetRender', globalize.translate('WebGPUResetToneMappingAndDisplay')),
+            { minimumWidthEm: 18, widthEm: 26 }),
+        section(PIPELINE_WINDOW_ID, 'WebGPUWindowPipeline', createPipelineContentHTML(),
+            createWindowResetHTML(PIPELINE_WINDOW_ID, 'webgpuSettingsResetPipeline', globalize.translate('WebGPUResetPipeline')),
+            { minimumWidthEm: 20, widthEm: 34 }),
+        section(AUDIO_WINDOW_ID, 'WebGPUWindowAudio', createAudioContentHTML(),
+            createWindowResetHTML(AUDIO_WINDOW_ID, 'webgpuSettingsResetAudio', globalize.translate('WebGPUResetAudio')),
+            { minimumWidthEm: 18, widthEm: 26 }),
+        section(INTERFACE_WINDOW_ID, 'WebGPUWindowInterface', createInterfaceContentHTML(),
+            createWindowResetHTML(INTERFACE_WINDOW_ID, 'webgpuSettingsResetInterface', globalize.translate('WebGPUResetInterface')),
+            { minimumWidthEm: 17, widthEm: 23 })
+    ];
 }
 
 function requireElement<ElementType extends Element>(parent: ParentNode, selector: string): ElementType {
     const element = parent.querySelector<ElementType>(selector);
     if (!element) {
-        throw new Error(`WebGPU settings panel is missing ${selector}`);
+        throw new Error(`WebGPU settings windows are missing ${selector}`);
     }
     return element;
 }
@@ -625,8 +447,7 @@ function getMissingSelectedOutputLabel(snapshot: WebGPUAudioOutputSnapshot): str
 
 /** Returns the host's playback info overlay while it shows, else null. */
 function findShownPlaybackInfo(): HTMLElement | null {
-    const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
-    for (const playbackInfoElement of playbackInfoElements) {
+    for (const playbackInfoElement of document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR)) {
         if (!playbackInfoElement.classList.contains(HIDDEN_CLASS)) {
             return playbackInfoElement;
         }
@@ -636,8 +457,7 @@ function findShownPlaybackInfo(): HTMLElement | null {
 
 /** Returns the video OSD page that shows, else null. */
 function findShownVideoOsdPage(): HTMLElement | null {
-    const pages = document.querySelectorAll<HTMLElement>(VIDEO_OSD_PAGE_SELECTOR);
-    for (const page of pages) {
+    for (const page of document.querySelectorAll<HTMLElement>(VIDEO_OSD_PAGE_SELECTOR)) {
         if (!page.classList.contains(HIDDEN_CLASS)) {
             return page;
         }
@@ -645,90 +465,102 @@ function findShownVideoOsdPage(): HTMLElement | null {
     return null;
 }
 
-/** Returns playback info to the host's position. */
-function restorePlaybackInfoPosition(playbackInfoElement: HTMLElement): void {
-    // A forced toggle writes the class attribute only on a change, so the panel's class observer settles
-    playbackInfoElement.classList.toggle(PLAYBACK_INFO_BESIDE_CLASS, false);
-    playbackInfoElement.style.removeProperty(PLAYBACK_INFO_OFFSET_PROPERTY);
-}
-
-/** Places playback info beside the panel when the viewport has room there, else the panel below playback info. */
-function positionPanelAndPlaybackInfo(panel: HTMLElement): void {
-    const shownPlaybackInfo: HTMLElement | null = findShownPlaybackInfo();
-    const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
-    for (const playbackInfoElement of playbackInfoElements) {
-        if (playbackInfoElement !== shownPlaybackInfo) {
-            restorePlaybackInfoPosition(playbackInfoElement);
-        }
-    }
-    if (!shownPlaybackInfo) {
-        panel.style.removeProperty(PANEL_TOP_PROPERTY);
-        return;
-    }
-
-    const panelBounds: DOMRect = panel.getBoundingClientRect();
-    const panelStyle: CSSStyleDeclaration = getComputedStyle(panel);
-    const viewportWidth: number = document.documentElement.clientWidth;
-    const isRightToLeft: boolean = panelStyle.direction === 'rtl';
-    // The panel sits at the start edge, so the space beside it reaches the end edge
-    const spaceBesidePanel: number = isRightToLeft ?
-        panelBounds.left :
-        viewportWidth - panelBounds.right;
-    const minimumSpace: number = PLAYBACK_INFO_MINIMUM_SPACE_EM * parseFloat(panelStyle.fontSize);
-    if (spaceBesidePanel >= minimumSpace) {
-        const panelEndOffset: number = isRightToLeft ?
-            viewportWidth - panelBounds.left :
-            panelBounds.right;
-        shownPlaybackInfo.style.setProperty(PLAYBACK_INFO_OFFSET_PROPERTY, `${Math.ceil(panelEndOffset + PLAYBACK_INFO_GAP_PX)}px`);
-        shownPlaybackInfo.classList.toggle(PLAYBACK_INFO_BESIDE_CLASS, true);
-        panel.style.removeProperty(PANEL_TOP_PROPERTY);
-        return;
-    }
-
-    // Without room beside the panel, playback info keeps the host's position and the panel moves below it
-    restorePlaybackInfoPosition(shownPlaybackInfo);
-    const playbackInfoBounds: DOMRect = shownPlaybackInfo.getBoundingClientRect();
-    if (playbackInfoBounds.width <= 0 || playbackInfoBounds.height <= 0) {
-        panel.style.removeProperty(PANEL_TOP_PROPERTY);
-        return;
-    }
-    panel.style.setProperty(PANEL_TOP_PROPERTY, `${Math.ceil(playbackInfoBounds.bottom + PLAYBACK_INFO_GAP_PX)}px`);
-}
-
-/** Keeps the panel's bottom edge above the video OSD controls, given their top edge in viewport coordinates. */
-function limitPanelHeight(panel: HTMLElement, OSDControlsTop: number): void {
-    const panelTop: number = panel.getBoundingClientRect().top;
-    const maximumHeight: number = Math.max(0, Math.floor(OSDControlsTop - OSD_CONTROLS_GAP_PX - panelTop));
-    panel.style.setProperty(PANEL_MAXIMUM_HEIGHT_PROPERTY, `${maximumHeight}px`);
-}
-
-/** Hides the playback info the panel asked the host to show, unless the user already closed it. */
-function hideRequestedPlaybackInfo(playbackInfoRequest: PlaybackInfoRequest): void {
-    switch (playbackInfoRequest) {
-        case 'none':
-            return;
-        case 'pending':
-            // The host toggles in request order once its overlay module loads, so this toggle undoes the pending one
-            handleCommand(TOGGLE_PLAYBACK_INFO_COMMAND);
-            return;
-        case 'shown':
-            if (findShownPlaybackInfo()) {
+/**
+ * The host's playback info as a window of the settings: the host adds it to the body on its first toggle, then shows and hides it by class.
+ * The host toggles in request order once its overlay module loads, so a request remembers where it leads until the host gets there.
+ */
+function createPlaybackInfoWindow(): HostedSettingsWindow {
+    let expectedShown: boolean | null = null;
+    return {
+        defaultVisible: true,
+        findShown: findShownPlaybackInfo,
+        id: PLAYBACK_INFO_WINDOW_ID,
+        setShown: (shown: boolean): void => {
+            if ((expectedShown ?? findShownPlaybackInfo() !== null) !== shown) {
+                expectedShown = shown;
                 handleCommand(TOGGLE_PLAYBACK_INFO_COMMAND);
             }
-            return;
-    }
+        },
+        subscribe: (listener: () => void): (() => void) => {
+            const notify = (): void => {
+                if (expectedShown !== null && (findShownPlaybackInfo() !== null) === expectedShown) {
+                    expectedShown = null;
+                }
+                listener();
+            };
+            let resizeObserver: ResizeObserver | null = null;
+            if (typeof ResizeObserver === 'function') {
+                resizeObserver = new ResizeObserver(notify);
+            }
+            const mutationObserver = new MutationObserver((mutations: MutationRecord[]): void => {
+                for (const mutation of mutations) {
+                    for (const addedNode of mutation.addedNodes) {
+                        if (addedNode instanceof HTMLElement && addedNode.classList.contains(PLAYBACK_INFO_CLASS)) {
+                            observe(addedNode);
+                        }
+                    }
+                }
+                notify();
+            });
+            function observe(playbackInfoElement: HTMLElement): void {
+                mutationObserver.observe(playbackInfoElement, { attributeFilter: [ 'class' ], attributes: true });
+                resizeObserver?.observe(playbackInfoElement);
+            }
+            mutationObserver.observe(document.body, { childList: true });
+            for (const playbackInfoElement of document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR)) {
+                observe(playbackInfoElement);
+            }
+            return (): void => {
+                mutationObserver.disconnect();
+                resizeObserver?.disconnect();
+            };
+        },
+        title: globalize.translate('PlaybackData')
+    };
 }
 
 function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElement | null): ActivePanel {
-    const panel = document.createElement('aside');
-    panel.classList.add('webgpuSettingsPanel');
-    if (layoutManager.tv) {
-        panel.classList.add('webgpuSettingsPanel-tv');
-    }
-    panel.setAttribute('aria-labelledby', 'webgpu-settings-title');
-    panel.innerHTML = createPanelHTML();
-
     const cleanupCallbacks: Array<() => void> = [];
+    let panelActive = true;
+    // The pipeline graph follows the player only while its window shows it
+    let stopGraphUpdates: (() => void) | null = null;
+    const graphView = createPipelineGraphView();
+    const updateGraphFollowing = (): void => {
+        const following = panelActive && manager.isExpanded(PIPELINE_WINDOW_ID);
+        if (following && stopGraphUpdates === null) {
+            stopGraphUpdates = startPipelineGraphUpdates(player, graphView);
+        } else if (!following && stopGraphUpdates !== null) {
+            stopGraphUpdates();
+            stopGraphUpdates = null;
+        }
+    };
+
+    const playbackPage = findShownVideoOsdPage();
+    const OSDControls = playbackPage?.querySelector<HTMLElement>(OSD_CONTROLS_SELECTOR) ?? null;
+    // The OSD controls hide while the pointer idles, anchored to the viewport's bottom edge, so the windows keep the height they take there, measured while they showed;
+    // otherwise the windows would move each time the controls show and hide
+    let OSDControlsReservedHeight: number | null = null;
+    const manager: SettingsWindowManager = createSettingsWindowManager({
+        definitions: createWindowDefinitions(),
+        direction: getComputedStyle(document.documentElement).direction === 'rtl' ? 'rtl' : 'ltr',
+        findReservedBottom: (): number | null => {
+            const viewportHeight = document.documentElement.clientHeight;
+            const bounds = OSDControls?.getBoundingClientRect();
+            if (bounds && bounds.height > 0) {
+                OSDControlsReservedHeight = viewportHeight - bounds.top;
+            }
+            return OSDControlsReservedHeight === null ? null : viewportHeight - OSDControlsReservedHeight;
+        },
+        hosted: createPlaybackInfoWindow(),
+        onClose: (): void => {
+            closePanel();
+        },
+        onWindowsChange: updateGraphFollowing,
+        tv: layoutManager.tv
+    });
+    const panel = manager.element;
+    requireElement<HTMLElement>(panel, '[data-pipeline-graph]').appendChild(graphView.element);
+
     const renderStatus = requireElement<HTMLElement>(panel, '[data-render-status]');
     const audioStatus = requireElement<HTMLElement>(panel, '[data-audio-status]');
     const audioOutputStatus = requireElement<HTMLElement>(panel, '[data-audio-output-status]');
@@ -741,6 +573,8 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const customDecodeCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
     const HDRToneMappingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableHDRToneMapping"]');
     const GPUDecodeSlicingCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableGPUDecodeSlicing"]');
+    const failureWarningCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="webGPUFailureWarning"]');
+    const failureReportButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsShowFailureReport');
     const playbackStatus = requireElement<HTMLElement>(panel, '[data-playback-status]');
     const operatorSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="operator"]');
     const audioDownmixAlgorithmSelect = requireElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
@@ -752,9 +586,13 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     let audioDownmixAlgorithm: CustomAudioDownmixAlgorithm = webGPUAudioDownmixAlgorithm();
     let renderFrameRequest: number | null = null;
     let audioOutputSelectionRevision = 0;
-    let panelActive = true;
     // Bound once persistSettings exists, which its saves go through
     let presentationSection: PresentationSectionController | null = null;
+    const numericControls = new Map<NumericSettingKey, NumericControlBinding>();
+
+    bindControlInfo(panel, cleanupCallbacks);
+    bindSelectTitles(panel, cleanupCallbacks);
+    bindControlKeys(panel, cleanupCallbacks);
 
     const invalidatePendingAudioOutputSelection = (): void => {
         audioOutputSelectionRevision += 1;
@@ -791,6 +629,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             audioOutputSelect.appendChild(selectedOption);
         }
         audioOutputSelect.value = snapshot.selectedDeviceId ?? '';
+        refreshSelectTitles(audioOutputSelect.parentElement ?? panel);
         audioOutputPicker.disabled = !snapshot.pickerAvailable;
         audioOutputPicker.title = snapshot.pickerAvailable ?
             globalize.translate('WebGPUAuthorizeAudioOutput') :
@@ -805,13 +644,13 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             ));
     };
 
+    const synchronizeFailureReport = (): void => {
+        failureReportButton.disabled = getLastWebGPUFailureReport() === null;
+    };
+
     const synchronizeControls = (): void => {
-        for (const configuration of NUMERIC_CONTROL_CONFIGURATIONS) {
-            const value = getNumericSetting(settings, configuration.key).toString();
-            const slider = requireElement<HTMLInputElement>(panel, `[data-setting-slider="${configuration.key}"]`);
-            const numberInput = requireElement<HTMLInputElement>(panel, `[data-setting-number="${configuration.key}"]`);
-            slider.value = value;
-            numberInput.value = value;
+        for (const binding of numericControls.values()) {
+            binding.synchronize();
         }
         automaticInputPeakCheckbox.checked = settings.render.automaticInputPeakNits;
         forceStereoCheckbox.checked = settings.audio.forceStereoDownmix;
@@ -819,6 +658,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         customDecodeCheckbox.checked = settings.playback.enableCustomDecode;
         HDRToneMappingCheckbox.checked = settings.playback.enableHDRToneMapping;
         GPUDecodeSlicingCheckbox.checked = settings.playback.enableGPUDecodeSlicing;
+        failureWarningCheckbox.checked = settings.osd.webGPUFailureWarning;
         // HDR tone mapping and GPU decode run only on the custom decode path
         HDRToneMappingCheckbox.disabled = !settings.playback.enableCustomDecode;
         GPUDecodeSlicingCheckbox.disabled = !settings.playback.enableCustomDecode;
@@ -827,11 +667,10 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         speakerLayoutSelect.value = settings.audio.speakerLayout;
         operatorSelect.value = settings.render.settings.toneMapping.operator;
         settingsButtonPlacementSelect.value = settings.osd.settingsButtonPlacement;
-        const inputPeakSlider = requireElement<HTMLInputElement>(panel, '[data-setting-slider="inputPeakNits"]');
-        const inputPeakNumber = requireElement<HTMLInputElement>(panel, '[data-setting-number="inputPeakNits"]');
-        inputPeakSlider.disabled = settings.render.automaticInputPeakNits;
-        inputPeakNumber.disabled = settings.render.automaticInputPeakNits;
+        numericControls.get('inputPeakNits')?.setDisabled(settings.render.automaticInputPeakNits);
         presentationSection?.synchronize();
+        synchronizeFailureReport();
+        refreshSelectTitles(panel);
     };
 
     const applyRenderSettings = (): void => {
@@ -880,7 +719,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         return failure;
     };
 
-    // Both sections show what the server offers, read once as the panel opens; each section reports a failed read itself
+    // The pipeline window shows what the server offers, read once as the windows open; each part reports a failed read itself
     const serverCatalog = loadServerModuleCatalog(null, true);
     serverCatalog.catch((): void => undefined);
     presentationSection = bindPresentationSection({
@@ -902,6 +741,13 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         serverCatalog
     });
 
+    const listen = <EventType extends Event>(target: EventTarget, type: string, listener: (event: EventType) => void): void => {
+        target.addEventListener(type, listener as EventListener);
+        cleanupCallbacks.push((): void => {
+            target.removeEventListener(type, listener as EventListener);
+        });
+    };
+
     const commitAudioOutputDevice = (deviceId: string | null): void => {
         settings = normalizeWebGPUUserSettings({
             ...settings,
@@ -915,16 +761,12 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         synchronizeAudioOutputControls(audioOutputManager.getSnapshot());
     };
 
-    const onAudioOutputChange = (): void => {
+    listen(audioOutputSelect, 'change', (): void => {
         invalidatePendingAudioOutputSelection();
         commitAudioOutputDevice(audioOutputSelect.value || null);
-    };
-    audioOutputSelect.addEventListener('change', onAudioOutputChange);
-    cleanupCallbacks.push((): void => {
-        audioOutputSelect.removeEventListener('change', onAudioOutputChange);
     });
 
-    const onChooseAudioOutput = (): void => {
+    listen(audioOutputPicker, 'click', (): void => {
         const selectionRevision = audioOutputSelectionRevision + 1;
         audioOutputSelectionRevision = selectionRevision;
         const selectionPromise = audioOutputManager.requestAudioOutputSelection();
@@ -934,23 +776,14 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             }
             commitAudioOutputDevice(selectedDeviceId);
         });
-    };
-    audioOutputPicker.addEventListener('click', onChooseAudioOutput);
-    cleanupCallbacks.push((): void => {
-        audioOutputPicker.removeEventListener('click', onChooseAudioOutput);
     });
 
     // Rebuilding the sink re-reads the device; a new speaker layout then switches live audio
-    const onRedetectAudioOutput = (): void => {
+    listen(audioOutputRedetect, 'click', (): void => {
         void audioOutputManager.redetectAudioOutputs();
-    };
-    audioOutputRedetect.addEventListener('click', onRedetectAudioOutput);
-    cleanupCallbacks.push((): void => {
-        audioOutputRedetect.removeEventListener('click', onRedetectAudioOutput);
     });
 
-    const unsubscribeAudioOutput = audioOutputManager.subscribe(synchronizeAudioOutputControls);
-    cleanupCallbacks.push(unsubscribeAudioOutput);
+    cleanupCallbacks.push(audioOutputManager.subscribe(synchronizeAudioOutputControls));
     if (audioOutputManager.getSnapshot().selectedDeviceId !== settings.audio.outputDeviceId) {
         void audioOutputManager.setSelectedDeviceId(settings.audio.outputDeviceId);
     }
@@ -1009,49 +842,17 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     };
 
     const bindDefaultButton = (settingKey: DefaultSettingKey, onClick: () => void): void => {
-        const button = requireElement<HTMLButtonElement>(panel, `[data-default-setting="${settingKey}"]`);
-        button.addEventListener('click', onClick);
-        cleanupCallbacks.push((): void => {
-            button.removeEventListener('click', onClick);
-        });
+        listen(requireElement<HTMLButtonElement>(panel, `[data-default-setting="${settingKey}"]`), 'click', onClick);
     };
 
-    // Each info button shows or hides its setting's description, which starts hidden
-    for (const infoButton of panel.querySelectorAll<HTMLButtonElement>('.webgpuSettingsInfoButton')) {
-        const description = requireElement<HTMLElement>(panel, `#${infoButton.getAttribute('aria-controls')}`);
-        const onInfoClick = (): void => {
-            const hidden = description.classList.toggle(HIDDEN_CLASS);
-            infoButton.setAttribute('aria-expanded', String(!hidden));
-        };
-        infoButton.addEventListener('click', onInfoClick);
-        cleanupCallbacks.push((): void => {
-            infoButton.removeEventListener('click', onInfoClick);
-        });
-    }
-
     for (const configuration of NUMERIC_CONTROL_CONFIGURATIONS) {
-        const slider = requireElement<HTMLInputElement>(panel, `[data-setting-slider="${configuration.key}"]`);
-        const numberInput = requireElement<HTMLInputElement>(panel, `[data-setting-number="${configuration.key}"]`);
-        const onSliderInput = (): void => {
-            settings = updateNumericSetting(settings, configuration.key, Number(slider.value));
-            commitSectionSettings(configuration.section);
-        };
-        const onNumberChange = (): void => {
-            // An emptied or unparsable field keeps the setting, which the field shows again; Number('') is 0, which would mute the audio or blacken the picture
-            const value = numberInput.valueAsNumber;
-            if (!Number.isFinite(value)) {
-                synchronizeControls();
-                return;
-            }
-            settings = updateNumericSetting(settings, configuration.key, value);
-            commitSectionSettings(configuration.section);
-        };
-        slider.addEventListener('input', onSliderInput);
-        numberInput.addEventListener('change', onNumberChange);
-        cleanupCallbacks.push((): void => {
-            slider.removeEventListener('input', onSliderInput);
-            numberInput.removeEventListener('change', onNumberChange);
-        });
+        numericControls.set(configuration.key, bindNumericControl(panel, configuration, {
+            commit: (value: number): void => {
+                settings = updateNumericSetting(settings, configuration.key, value);
+                commitSectionSettings(configuration.section);
+            },
+            getValue: (): number => getNumericSetting(settings, configuration.key)
+        }, cleanupCallbacks));
         bindDefaultButton(configuration.key, (): void => {
             const defaults = createDefaultWebGPUUserSettings();
             settings = updateNumericSetting(settings, configuration.key, getNumericSetting(defaults, configuration.key));
@@ -1072,14 +873,9 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         persistSettings();
         setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
     };
-    customDecodeCheckbox.addEventListener('change', onPlaybackPreferenceChange);
-    HDRToneMappingCheckbox.addEventListener('change', onPlaybackPreferenceChange);
-    GPUDecodeSlicingCheckbox.addEventListener('change', onPlaybackPreferenceChange);
-    cleanupCallbacks.push((): void => {
-        customDecodeCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
-        HDRToneMappingCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
-        GPUDecodeSlicingCheckbox.removeEventListener('change', onPlaybackPreferenceChange);
-    });
+    for (const checkbox of [ customDecodeCheckbox, HDRToneMappingCheckbox, GPUDecodeSlicingCheckbox ]) {
+        listen(checkbox, 'change', onPlaybackPreferenceChange);
+    }
     bindDefaultButton('enableCustomDecode', (): void => {
         customDecodeCheckbox.checked = createDefaultWebGPUUserSettings().playback.enableCustomDecode;
         onPlaybackPreferenceChange();
@@ -1105,10 +901,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         persistSettings();
         setStatus(playbackStatus, globalize.translate('WebGPUDecoderTestTimingSavedStatus'));
     };
-    decoderTestTimingSelect.addEventListener('change', onDecoderTestTimingChange);
-    cleanupCallbacks.push((): void => {
-        decoderTestTimingSelect.removeEventListener('change', onDecoderTestTimingChange);
-    });
+    listen(decoderTestTimingSelect, 'change', onDecoderTestTimingChange);
     bindDefaultButton('decoderTestTiming', (): void => {
         decoderTestTimingSelect.value = createDefaultWebGPUUserSettings().playback.decoderTestTiming;
         onDecoderTestTimingChange();
@@ -1124,10 +917,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         });
         commitSectionSettings('render');
     };
-    automaticInputPeakCheckbox.addEventListener('change', onAutomaticInputPeakChange);
-    cleanupCallbacks.push((): void => {
-        automaticInputPeakCheckbox.removeEventListener('change', onAutomaticInputPeakChange);
-    });
+    listen(automaticInputPeakCheckbox, 'change', onAutomaticInputPeakChange);
     bindDefaultButton('automaticInputPeakNits', (): void => {
         automaticInputPeakCheckbox.checked = createDefaultWebGPUUserSettings().render.automaticInputPeakNits;
         onAutomaticInputPeakChange();
@@ -1144,10 +934,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         persistSettings();
         applyAudioOutputLayout(formatLayoutChangeStatus);
     };
-    forceStereoCheckbox.addEventListener('change', onForceStereoChange);
-    cleanupCallbacks.push((): void => {
-        forceStereoCheckbox.removeEventListener('change', onForceStereoChange);
-    });
+    listen(forceStereoCheckbox, 'change', onForceStereoChange);
     bindDefaultButton('forceStereoDownmix', (): void => {
         forceStereoCheckbox.checked = createDefaultWebGPUUserSettings().audio.forceStereoDownmix;
         onForceStereoChange();
@@ -1164,10 +951,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         persistSettings();
         applyAudioOutputLayout(formatLayoutChangeStatus);
     };
-    speakerLayoutSelect.addEventListener('change', onSpeakerLayoutChange);
-    cleanupCallbacks.push((): void => {
-        speakerLayoutSelect.removeEventListener('change', onSpeakerLayoutChange);
-    });
+    listen(speakerLayoutSelect, 'change', onSpeakerLayoutChange);
     bindDefaultButton('speakerLayout', (): void => {
         speakerLayoutSelect.value = createDefaultWebGPUUserSettings().audio.speakerLayout;
         onSpeakerLayoutChange();
@@ -1184,10 +968,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         persistSettings();
         applyAudioOutputLayout(formatLayoutChangeStatus);
     };
-    binauralHeadphonesCheckbox.addEventListener('change', onBinauralHeadphonesChange);
-    cleanupCallbacks.push((): void => {
-        binauralHeadphonesCheckbox.removeEventListener('change', onBinauralHeadphonesChange);
-    });
+    listen(binauralHeadphonesCheckbox, 'change', onBinauralHeadphonesChange);
     bindDefaultButton('binauralHeadphones', (): void => {
         binauralHeadphonesCheckbox.checked = createDefaultWebGPUUserSettings().audio.binauralHeadphones;
         onBinauralHeadphonesChange();
@@ -1197,14 +978,11 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         audioDownmixAlgorithm = normalizeCustomAudioDownmixAlgorithm(value);
         webGPUAudioDownmixAlgorithm(audioDownmixAlgorithm);
         audioDownmixAlgorithmSelect.value = audioDownmixAlgorithm;
+        refreshSelectTitles(audioDownmixAlgorithmSelect.parentElement ?? panel);
         applyAudioOutputLayout(formatLayoutChangeStatus);
     };
-    const onAudioDownmixAlgorithmChange = (): void => {
+    listen(audioDownmixAlgorithmSelect, 'change', (): void => {
         persistAudioDownmixAlgorithm(audioDownmixAlgorithmSelect.value);
-    };
-    audioDownmixAlgorithmSelect.addEventListener('change', onAudioDownmixAlgorithmChange);
-    cleanupCallbacks.push((): void => {
-        audioDownmixAlgorithmSelect.removeEventListener('change', onAudioDownmixAlgorithmChange);
     });
     bindDefaultButton('audioDownmixAlgorithm', (): void => {
         persistAudioDownmixAlgorithm(getDefaultAudioDownmixAlgorithm());
@@ -1226,41 +1004,44 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         });
         commitSectionSettings('render');
     };
-    operatorSelect.addEventListener('change', onOperatorChange);
-    cleanupCallbacks.push((): void => {
-        operatorSelect.removeEventListener('change', onOperatorChange);
-    });
+    listen(operatorSelect, 'change', onOperatorChange);
     bindDefaultButton('operator', (): void => {
         operatorSelect.value = createDefaultWebGPUUserSettings().render.settings.toneMapping.operator;
         onOperatorChange();
     });
 
-    // The video OSD places its entry to this panel anew at once
+    // The video OSD places its entry to these settings anew at once
     const onSettingsButtonPlacementChange = (): void => {
         settings = normalizeWebGPUUserSettings({
             ...settings,
-            osd: { settingsButtonPlacement: settingsButtonPlacementSelect.value }
+            osd: { ...settings.osd, settingsButtonPlacement: settingsButtonPlacementSelect.value }
         });
         persistSettings();
         applySettingsButtonPlacement();
     };
-    settingsButtonPlacementSelect.addEventListener('change', onSettingsButtonPlacementChange);
-    cleanupCallbacks.push((): void => {
-        settingsButtonPlacementSelect.removeEventListener('change', onSettingsButtonPlacementChange);
-    });
+    listen(settingsButtonPlacementSelect, 'change', onSettingsButtonPlacementChange);
     bindDefaultButton('settingsButtonPlacement', (): void => {
         settingsButtonPlacementSelect.value = createDefaultWebGPUUserSettings().osd.settingsButtonPlacement;
         onSettingsButtonPlacementChange();
     });
 
-    const resetRenderButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetRender');
-    const onResetRender = (): void => {
-        settings = resetWebGPURenderSettings(settings);
-        commitSectionSettings('render');
+    const onFailureWarningChange = (): void => {
+        settings = normalizeWebGPUUserSettings({
+            ...settings,
+            osd: { ...settings.osd, webGPUFailureWarning: failureWarningCheckbox.checked }
+        });
+        persistSettings();
     };
-    resetRenderButton.addEventListener('click', onResetRender);
-    cleanupCallbacks.push((): void => {
-        resetRenderButton.removeEventListener('click', onResetRender);
+    listen(failureWarningCheckbox, 'change', onFailureWarningChange);
+    bindDefaultButton('webGPUFailureWarning', (): void => {
+        failureWarningCheckbox.checked = createDefaultWebGPUUserSettings().osd.webGPUFailureWarning;
+        onFailureWarningChange();
+    });
+    listen(failureReportButton, 'click', (): void => {
+        const report = getLastWebGPUFailureReport();
+        if (report) {
+            void showWebGPUFailureReport(report);
+        }
     });
 
     const crashedProbesElement = requireElement<HTMLElement>(panel, '[data-crashed-probes]');
@@ -1276,19 +1057,14 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         crashedProbesElement.classList.toggle(HIDDEN_CLASS, probeTexts.length === 0);
     };
     showCrashedProbes();
-    const clearProbeCacheButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache');
-    const onClearProbeCache = (): void => {
+    listen(requireElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache'), 'click', (): void => {
         clearStoredCapabilityProbeVerdicts();
         showCrashedProbes();
         setStatus(playbackStatus, globalize.translate('WebGPUProbeCacheClearedStatus'));
-    };
-    clearProbeCacheButton.addEventListener('click', onClearProbeCache);
-    cleanupCallbacks.push((): void => {
-        clearProbeCacheButton.removeEventListener('click', onClearProbeCache);
     });
 
-    const resetAudioButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAudio');
-    const onResetAudio = (): void => {
+    // Each window's reset in its title bar restores the window's settings
+    const resetAudio = (): void => {
         invalidatePendingAudioOutputSelection();
         settings = resetWebGPUAudioSettings(settings);
         audioDownmixAlgorithm = getDefaultAudioDownmixAlgorithm();
@@ -1298,13 +1074,35 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         synchronizeAudioOutputControls(audioOutputManager.getSnapshot());
         applyAudioDownmixSettings(true);
     };
-    resetAudioButton.addEventListener('click', onResetAudio);
-    cleanupCallbacks.push((): void => {
-        resetAudioButton.removeEventListener('click', onResetAudio);
+    const windowResets: Readonly<Record<string, () => void>> = {
+        [AUDIO_WINDOW_ID]: resetAudio,
+        [INTERFACE_WINDOW_ID]: (): void => {
+            settings = normalizeWebGPUUserSettings({ ...settings, osd: createDefaultWebGPUUserSettings().osd });
+            persistSettings();
+            applySettingsButtonPlacement();
+        },
+        [MASTER_WINDOW_ID]: (): void => {
+            settings = normalizeWebGPUUserSettings({ ...settings, playback: createDefaultWebGPUUserSettings().playback });
+            persistSettings();
+            setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
+        },
+        [PICTURE_WINDOW_ID]: (): void => {
+            settings = resetWebGPURenderSettings(settings);
+            commitSectionSettings('render');
+            // HDR output saves and applies through its own restore, which reports in its status line
+            requireElement<HTMLButtonElement>(panel, '[data-default-setting="hdrOutput"]').click();
+        },
+        [PIPELINE_WINDOW_ID]: (): void => {
+            presentationSection?.restorePipelineDefaults();
+        }
+    };
+    listen(panel, 'click', (event: MouseEvent): void => {
+        const resetButton = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-reset-window]') : null;
+        const reset = resetButton ? windowResets[resetButton.dataset.resetWindow ?? ''] : undefined;
+        reset?.();
     });
 
-    const resetAllButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll');
-    const onResetAll = (): void => {
+    listen(requireElement<HTMLButtonElement>(panel, '.webgpuSettingsResetAll'), 'click', (): void => {
         invalidatePendingAudioOutputSelection();
         settings = createDefaultWebGPUUserSettings();
         audioDownmixAlgorithm = getDefaultAudioDownmixAlgorithm();
@@ -1317,10 +1115,6 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         presentationSection?.apply();
         applySettingsButtonPlacement();
         setStatus(playbackStatus, globalize.translate('WebGPUPlaybackChangesSavedStatus'));
-    };
-    resetAllButton.addEventListener('click', onResetAll);
-    cleanupCallbacks.push((): void => {
-        resetAllButton.removeEventListener('click', onResetAll);
     });
 
     synchronizeControls();
@@ -1342,9 +1136,12 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             cancelAnimationFrame(renderFrameRequest);
             applyRenderSettings();
         }
+        updateGraphFollowing();
+        graphView.destroy();
         for (const cleanupCallback of cleanupCallbacks) {
             cleanupCallback();
         }
+        manager.destroy();
         if (invokingElement?.isConnected) {
             invokingElement.focus();
         }
@@ -1356,125 +1153,28 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
         panel.remove();
         finish();
     };
-    const closeButton = requireElement<HTMLButtonElement>(panel, '.webgpuSettingsClose');
-    closeButton.addEventListener('click', closePanel);
-    cleanupCallbacks.push((): void => {
-        closeButton.removeEventListener('click', closePanel);
-    });
 
-    const onPanelKeyDown = (event: KeyboardEvent): void => {
-        if (event.key !== 'Escape') {
-            return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        closePanel();
-    };
-    panel.addEventListener('keydown', onPanelKeyDown);
-    cleanupCallbacks.push((): void => {
-        panel.removeEventListener('keydown', onPanelKeyDown);
-    });
-
-    // The video OSD changes the volume on wheel events that reach the document.
-    // Stopping them at the panel keeps its native scrolling and leaves the volume alone
-    const onPanelWheel = (event: WheelEvent): void => {
-        event.stopPropagation();
-    };
-    panel.addEventListener('wheel', onPanelWheel, { passive: true });
-    cleanupCallbacks.push((): void => {
-        panel.removeEventListener('wheel', onPanelWheel);
-    });
-
-    const playbackPage = findShownVideoOsdPage();
-    const OSDControls = playbackPage?.querySelector<HTMLElement>(OSD_CONTROLS_SELECTOR) ?? null;
-    // The OSD controls hide when the pointer idles.
-    // They stay anchored to the viewport's bottom edge, so the panel keeps the height they reserve there, measured while they showed
-    let OSDControlsReservedHeight: number | null = null;
-    let playbackInfoRequest: PlaybackInfoRequest = 'none';
-
-    const updatePanelLayout = (): void => {
-        positionPanelAndPlaybackInfo(panel);
-        const viewportHeight: number = document.documentElement.clientHeight;
-        const OSDControlsBounds: DOMRect | undefined = OSDControls?.getBoundingClientRect();
-        if (OSDControlsBounds && OSDControlsBounds.height > 0) {
-            OSDControlsReservedHeight = viewportHeight - OSDControlsBounds.top;
-        }
-        if (OSDControlsReservedHeight !== null) {
-            limitPanelHeight(panel, viewportHeight - OSDControlsReservedHeight);
-        }
-        if (playbackInfoRequest === 'pending' && findShownPlaybackInfo()) {
-            playbackInfoRequest = 'shown';
-        }
-    };
-    window.addEventListener('resize', updatePanelLayout);
-    cleanupCallbacks.push((): void => {
-        window.removeEventListener('resize', updatePanelLayout);
-    });
-
-    // Playback info resizes as its stats update, and the OSD controls as they wrap, hide, and show
-    let layoutResizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver === 'function') {
-        layoutResizeObserver = new ResizeObserver(updatePanelLayout);
-        if (OSDControls) {
-            layoutResizeObserver.observe(OSDControls);
-        }
-    }
-    const observePlaybackInfo = (observer: MutationObserver, playbackInfoElement: HTMLElement): void => {
-        observer.observe(playbackInfoElement, {
-            attributeFilter: [ 'class' ],
-            attributes: true
-        });
-        layoutResizeObserver?.observe(playbackInfoElement);
-    };
-    // The host adds playback info to the body on its first toggle, then shows and hides it by class
-    const playbackInfoObserver = new MutationObserver((mutations: MutationRecord[], observer: MutationObserver): void => {
-        for (const mutation of mutations) {
-            for (const addedNode of mutation.addedNodes) {
-                if (addedNode instanceof HTMLElement && addedNode.classList.contains(PLAYBACK_INFO_CLASS)) {
-                    observePlaybackInfo(observer, addedNode);
-                }
-            }
-        }
-        updatePanelLayout();
-    });
-    playbackInfoObserver.observe(document.body, { childList: true });
-    const playbackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
-    for (const playbackInfoElement of playbackInfoElements) {
-        observePlaybackInfo(playbackInfoObserver, playbackInfoElement);
-    }
-    cleanupCallbacks.push((): void => {
-        // Disconnected first, so restoring playback info does not lay the closed panel out again
-        playbackInfoObserver.disconnect();
-        layoutResizeObserver?.disconnect();
-        layoutResizeObserver = null;
-        const currentPlaybackInfoElements = document.querySelectorAll<HTMLElement>(PLAYBACK_INFO_SELECTOR);
-        for (const playbackInfoElement of currentPlaybackInfoElements) {
-            restorePlaybackInfoPosition(playbackInfoElement);
-        }
-        hideRequestedPlaybackInfo(playbackInfoRequest);
-    });
-
-    if (playbackPage) {
-        playbackPage.addEventListener('viewbeforehide', closePanel);
+    // The OSD controls resize as they wrap; the windows keep above them
+    if (OSDControls && typeof ResizeObserver === 'function') {
+        const controlsObserver = new ResizeObserver(manager.requestLayout);
+        controlsObserver.observe(OSDControls);
         cleanupCallbacks.push((): void => {
-            playbackPage.removeEventListener('viewbeforehide', closePanel);
+            controlsObserver.disconnect();
         });
+    }
+    if (playbackPage) {
+        listen(playbackPage, 'viewbeforehide', closePanel);
     }
 
     document.body.appendChild(panel);
-    scheduleSelectLabelFallback(panel);
-    updatePanelLayout();
-    closeButton.focus();
-    // Playback info opens beside the panel and closes with it, unless it was already showing
-    if (!findShownPlaybackInfo()) {
-        playbackInfoRequest = 'pending';
-        handleCommand(TOGGLE_PLAYBACK_INFO_COMMAND);
-    }
+    manager.requestLayout();
+    updateGraphFollowing();
+    requireElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').focus();
 
     return { close: closePanel, element: panel, promise };
 }
 
-/** Opens or focuses the one active plugin-owned playback settings panel, with the host's playback info beside it. */
+/** Opens or focuses the one active set of plugin-owned settings windows, with the host's playback info among them. */
 export function showWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<void> {
     if (activePanel) {
         const focusTarget = activePanel.element.querySelector<HTMLElement>('.webgpuSettingsClose');
@@ -1498,7 +1198,7 @@ export function showWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<v
     return promise;
 }
 
-/** Closes the active playback settings panel, or opens one when none is active. */
+/** Closes the active settings windows, or opens them when none are active. */
 export function toggleWebGPUPlaybackSettingsPanel(player: WebGPUPlayer): Promise<void> {
     if (!activePanel) {
         return showWebGPUPlaybackSettingsPanel(player);

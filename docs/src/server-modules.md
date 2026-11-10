@@ -53,7 +53,7 @@ A client downloads a decoder package only when a playback needs it, and a pass f
 ## In the client
 
 - `ServerModules.ts` reads the catalog of the item's server, signed in with the page's token (`Authorization: MediaBrowser Token="..."`).
-  A negotiation and its playback's eligibility share one read: a catalog read in the last 60 seconds is reused, and the settings panel reads it again when it opens.
+  A negotiation and its playback's eligibility share one read: a catalog read in the last 60 seconds is reused, and the settings windows read it again when they open.
 - Negotiation advertises what the user's packages and the server's decode before any of them is downloaded (see [Negotiation](negotiation.md#decoder-packages)).
   The engine's `parseGPUDecoderHeader` reads each video package's catalog header, whose `accepts` conditions, `monochrome`, and buffer sizes bound the sizes the routes advertise on the presenter's device; a package whose header the engine refuses is logged and left out, since its load would fail too.
 - Eligibility downloads only what the playback needs:
@@ -62,9 +62,9 @@ A client downloads a decoder package only when a playback needs it, and a pass f
 - A downloaded package stays in IndexedDB, in the `webGPUPlayerServerDecoders` database, under its id.
   A later playback loads the stored version when its SHA-256 is the catalog's, and downloads the newer version in its place otherwise.
 - The user's own packages, in the `webGPUPlayerDecoders` database, come first, and the server's package of an id the user stores is left out.
-- The settings panel's shader pass section lists the server's pass files the preset does not hold.
+- The pipeline window's WebGPU Passes list the server's pass files the preset does not hold.
   Adding one downloads it and stores its source like a file of the user's own, with its origin, the file name and SHA-256, in the settings.
-- When the server offers a newer version of a file the user's own preset holds, the settings panel, or the first play of a page that presents through WebGPU, replaces its source under its key, so the file keeps its place and its parameter values.
+- When the server offers a newer version of a file the user's own preset holds, the settings windows, or the first play of a page that presents through WebGPU, replace its source under its key, so the file keeps its place and its parameter values.
   A file the server no longer offers stays in the preset, and its entry says so.
 - A user who follows the server's [default shader preset](client-defaults.md#the-default-shader-preset-on-clients) plays its files, which `DefaultPresentationFiles.ts` downloads with `addServerPassFile` and downloads again for a new version under new keys.
 

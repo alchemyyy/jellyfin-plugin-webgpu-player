@@ -477,6 +477,52 @@ describe('WebGPUUserSettings', () => {
         }
     });
 
+    it('shows the WebGPU failure warning unless this browser stored a boolean choice, following the server\'s default meanwhile', () => {
+        const storage = createStorage();
+        const defaults = createDefaultWebGPUUserSettings();
+        const normalizeWarning = (webGPUFailureWarning: unknown): unknown => normalizeWebGPUUserSettings({
+            ...defaults,
+            osd: { ...defaults.osd, webGPUFailureWarning }
+        }).osd.webGPUFailureWarning;
+
+        expect(defaults.osd.webGPUFailureWarning).toBe(true);
+        expect([ true, false ].map(normalizeWarning)).toEqual([ true, false ]);
+        // Saved before the choice existed, or a value that is not a boolean
+        expect(normalizeWebGPUUserSettings({ ...defaults, osd: { settingsButtonPlacement: 'controls-end' } }).osd)
+            .toEqual({ settingsButtonPlacement: 'controls-end', webGPUFailureWarning: true });
+        for (const invalidValue of [ 'false', 0, null, {} ]) {
+            expect(normalizeWarning(invalidValue)).toBe(true);
+        }
+
+        saveWebGPUUserSettings({ ...defaults, osd: { ...defaults.osd, webGPUFailureWarning: false } }, storage);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({
+            osd: { webGPUFailureWarning: false },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        expect(loadWebGPUUserSettings(storage).osd.webGPUFailureWarning).toBe(false);
+
+        setClientDefaults({ webGPUFailureWarning: false });
+        expect(createDefaultWebGPUUserSettings().osd.webGPUFailureWarning).toBe(false);
+        expect(loadWebGPUUserSettings(createStorage()).osd.webGPUFailureWarning).toBe(false);
+        // A server default clients refuse leaves the built-in default
+        setClientDefaults({ webGPUFailureWarning: 'no' });
+        expect(createDefaultWebGPUUserSettings().osd.webGPUFailureWarning).toBe(true);
+    });
+
+    it('drops the user\'s own WebGPU failure warning choice when the administrator applies its default, keeping their other choices', () => {
+        const storage = createStorage(JSON.stringify({
+            osd: { settingsButtonPlacement: 'controls-end', webGPUFailureWarning: false },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        }));
+
+        clearWebGPUUserSettingChoices([ 'webGPUFailureWarning' ], storage);
+
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? 'null')).toEqual({
+            osd: { settingsButtonPlacement: 'controls-end' },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+    });
+
     it('enables custom decode and HDR tone mapping, and leaves GPU decode slicing off, unless this browser stored a boolean choice', () => {
         const defaults = createDefaultWebGPUUserSettings();
         // Saved before the playback preferences existed

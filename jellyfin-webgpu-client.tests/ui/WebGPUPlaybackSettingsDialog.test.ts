@@ -7,6 +7,7 @@ import type WebGPUPlayer from 'addons/webGPUPlayer/WebGPUPlayer';
 import { setClientDefaults } from 'addons/webGPUPlayer/ClientDefaults';
 import { ensureDefaultPresentationFiles } from 'addons/webGPUPlayer/DefaultPresentationFiles';
 import { applySettingsButtonPlacement } from 'addons/webGPUPlayer/compat/SettingsEntryPoints';
+import type { WebGPUFailureReport } from 'addons/webGPUPlayer/WebGPUFailureDiagnosis';
 import {
     createDefaultWebGPUUserSettings,
     loadWebGPUUserSettings,
@@ -61,6 +62,11 @@ const storageMockState = vi.hoisted(() => ({
 const hostCommandMockState = vi.hoisted(() => ({
     // Playback info toggles the video OSD runs once its dynamic import of the overlay module resolves
     pendingPlaybackInfoToggles: [] as Array<() => void>
+}));
+
+// The last WebGPU failure report of the page, which the interface window offers to show
+const failureWarningMockState = vi.hoisted(() => ({
+    report: null as object | null
 }));
 
 const audioOutputManagerMockState = vi.hoisted(() => {
@@ -182,6 +188,13 @@ vi.mock('addons/webGPUPlayer/compat/SettingsEntryPoints', () => ({
     applySettingsButtonPlacement: vi.fn()
 }));
 
+// The failure warning diagnoses failures in a chunk of its own; the interface window only reads the last report and opens its dialog
+vi.mock('addons/webGPUPlayer/WebGPUFailureWarning', () => ({
+    getLastWebGPUFailureReport: vi.fn((): object | null => failureWarningMockState.report),
+    noteWebGPUFailure: vi.fn(),
+    showWebGPUFailureReport: vi.fn((): Promise<void> => Promise.resolve())
+}));
+
 vi.mock('elements/emby-button/emby-button', () => ({}));
 vi.mock('elements/emby-button/paper-icon-button-light', () => ({}));
 vi.mock('elements/emby-checkbox/emby-checkbox', () => ({}));
@@ -280,6 +293,7 @@ import {
     showWebGPUPlaybackSettingsPanel,
     toggleWebGPUPlaybackSettingsPanel
 } from 'addons/webGPUPlayer/ui/WebGPUPlaybackSettingsDialog';
+import { showWebGPUFailureReport } from 'addons/webGPUPlayer/WebGPUFailureWarning';
 import {
     configureCapabilityProbeStore,
     getDefaultCapabilityProbeStore,
@@ -293,20 +307,42 @@ type AnimationFrameHarness = {
     nextIdentifier: number
 };
 
-// The viewport size and the bounds the placement tests report for the panel, playback info, and the OSD controls
-type PlacementHarness = {
+// The viewport size, the bounds of the OSD controls and playback info, and each window's content height by window id, which the layout tests report
+type LayoutHarness = {
+    contentHeights: Record<string, number>
     OSDControlsBounds: DOMRect
-    panelLeft: number
     playbackInfoBounds: DOMRect
     viewportHeight: number
     viewportWidth: number
 };
 
-// The panel's size and default top at a 16px font
-const PLACEMENT_PANEL_DEFAULT_TOP = 80;
-const PLACEMENT_PANEL_HEIGHT = 600;
-const PLACEMENT_PANEL_WIDTH = 672;
-const PLACEMENT_STYLE_ATTRIBUTE = 'data-placement-harness';
+/** A window's stored arrangement, as the windows save it. */
+type StoredWindowState = Readonly<{
+    collapsed: boolean
+    position: unknown
+    visible: boolean
+}>;
+
+const SETTINGS_WINDOWS_SELECTOR = '[data-settings-windows]';
+// Where the windows keep their arrangement through the host's user settings
+const WINDOW_STATE_STORAGE_KEY = 'webGPUSettingsWindows';
+const MASTER_WINDOW_ID = 'playback';
+// The section windows, in the order the master lists them, then the host's playback info
+const SECTION_WINDOW_IDS = [ 'picture', 'pipeline', 'audio', 'interface' ] as const;
+const PLAYBACK_INFO_WINDOW_ID = 'playbackInfo';
+// The height of a window's title bar, the windows' font size, and the master window's width at that font, 21em
+const WINDOW_CHROME_HEIGHT = 40;
+const LAYOUT_FONT_SIZE = 16;
+const MASTER_WINDOW_WIDTH = 21 * LAYOUT_FONT_SIZE;
+// The room's start corner at a 16px font: a 0.75em margin, and the OSD's top bar, 5em, above it
+const ROOM_LEFT = 12;
+const ROOM_TOP = 80;
+const WINDOW_GAP = 8;
+// Master content taller than any room, so the master always shrinks to the room's height
+const TALL_MASTER_CONTENT_HEIGHT = 2_000;
+const LAYOUT_STYLE_ATTRIBUTE = 'data-layout-harness';
+
+let animationFrames: AnimationFrameHarness = { callbacks: new Map<number, FrameRequestCallback>(), nextIdentifier: 1 };
 
 function requirePanelElement<ElementType extends Element>(
     panel: HTMLElement,
@@ -366,23 +402,37 @@ function createBounds(left: number, top: number, width: number, height: number):
 }
 
 /**
- * Adds the video OSD page with its bottom controls, sets the panel's font size, and reports the harness's viewport size and bounds, with the panel's top following its --webgpu-settings-top property.
+ * Adds the video OSD page with its bottom controls, sets the windows' font size, and reports the harness's viewport size and bounds;
+ * a window's title bar is its whole offset height, and its body's scroll height is the window's content height while it shows.
  */
-function installPlacementHarness(harness: PlacementHarness): void {
+function installLayoutHarness(harness: LayoutHarness): void {
     const playbackPage = document.createElement('div');
     playbackPage.id = 'videoOsdPage';
     playbackPage.innerHTML = '<div class="videoOsdBottom videoOsdBottom-maincontrols">'
         + '<div class="osdControls"></div></div>';
     document.body.appendChild(playbackPage);
-    const panelFontStyle = document.createElement('style');
-    panelFontStyle.setAttribute(PLACEMENT_STYLE_ATTRIBUTE, '');
-    panelFontStyle.textContent = '.webgpuSettingsPanel { font-size: 16px; }';
-    document.head.appendChild(panelFontStyle);
+    const windowsFontStyle = document.createElement('style');
+    windowsFontStyle.setAttribute(LAYOUT_STYLE_ATTRIBUTE, '');
+    windowsFontStyle.textContent = `${SETTINGS_WINDOWS_SELECTOR} { font-size: ${LAYOUT_FONT_SIZE}px; }`;
+    document.head.appendChild(windowsFontStyle);
     vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(
         (): number => harness.viewportHeight
     );
     vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(
         (): number => harness.viewportWidth
+    );
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(
+        function (this: HTMLElement): number {
+            return this.matches('[data-window]') ? WINDOW_CHROME_HEIGHT : 0;
+        }
+    );
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(
+        function (this: Element): number {
+            if (!(this instanceof HTMLElement) || !this.matches('[data-window-body]') || this.hidden) {
+                return 0;
+            }
+            return harness.contentHeights[this.closest<HTMLElement>('[data-window]')?.dataset.window ?? ''] ?? 0;
+        }
     );
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
         function (this: Element): DOMRect {
@@ -396,29 +446,85 @@ function installPlacementHarness(harness: PlacementHarness): void {
             if (this.classList.contains('playerStats')) {
                 return harness.playbackInfoBounds;
             }
-            if (this instanceof HTMLElement && this.classList.contains('webgpuSettingsPanel')) {
-                const panelTop = parseFloat(this.style.getPropertyValue('--webgpu-settings-top'));
-                return createBounds(
-                    harness.panelLeft,
-                    Number.isNaN(panelTop) ? PLACEMENT_PANEL_DEFAULT_TOP : panelTop,
-                    PLACEMENT_PANEL_WIDTH,
-                    PLACEMENT_PANEL_HEIGHT
-                );
-            }
             return createBounds(0, 0, 0, 0);
         }
     );
 }
 
-// One default button per setting the panel offers, the settings button placement, the decoder test timing, HDR output, black bar crop,
-// deinterlacing, GPU decode slicing, the speaker layout, and binaural rendering included
-const DEFAULT_SETTING_BUTTON_COUNT = 25;
+/** A full HD viewport with the OSD controls along its bottom from 900px, playback info of 400 by 300 pixels, and a master window taller than the room. */
+function createFullHDLayoutHarness(): LayoutHarness {
+    return {
+        contentHeights: { [MASTER_WINDOW_ID]: TALL_MASTER_CONTENT_HEIGHT },
+        OSDControlsBounds: createBounds(0, 900, 1920, 150),
+        playbackInfoBounds: createBounds(0, 0, 400, 300),
+        viewportHeight: 1080,
+        viewportWidth: 1920
+    };
+}
+
+/** Runs the pending animation frame callbacks, such as the windows' layout and the render settings' application. */
+function runAnimationFrames(): void {
+    const callbacks = Array.from(animationFrames.callbacks.values());
+    animationFrames.callbacks.clear();
+    for (const callback of callbacks) {
+        callback(0);
+    }
+}
+
+/** Returns the open settings windows' root. */
+function requireSettingsWindows(): HTMLElement {
+    return requirePanelElement<HTMLElement>(document.body, SETTINGS_WINDOWS_SELECTOR);
+}
+
+/** Returns one settings window by its id. */
+function requireWindow(panel: HTMLElement, id: string): HTMLElement {
+    return requirePanelElement<HTMLElement>(panel, `[data-window="${id}"]`);
+}
+
+/** Returns the master window's list entry that shows or hides a window. */
+function requireWindowToggle(panel: HTMLElement, id: string): HTMLButtonElement {
+    return requirePanelElement<HTMLButtonElement>(panel, `[data-window-toggle="${id}"]`);
+}
+
+/** Reads each window's stored arrangement, by window id. */
+function readStoredWindowState(): Readonly<Record<string, StoredWindowState>> {
+    const stored = storageMockState.otherValues.get(WINDOW_STATE_STORAGE_KEY);
+    if (stored === undefined) {
+        return {};
+    }
+    // The windows wrote this value themselves in this test
+    const storedState = JSON.parse(stored) as Readonly<{ windows: Record<string, StoredWindowState> }>;
+    return storedState.windows;
+}
+
+/** Presses a key on an element, as the keyboard would. */
+function pressKey(target: Element, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...init });
+    target.dispatchEvent(event);
+    return event;
+}
+
+/** Types text into a number field, which applies it only on Enter. */
+function typeNumber(field: HTMLInputElement, text: string): void {
+    field.value = text;
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Types text into a number field and applies it with Enter. */
+function commitNumber(field: HTMLInputElement, text: string): void {
+    typeNumber(field, text);
+    pressKey(field, 'Enter');
+}
+
+// One default button per setting the windows offer, the settings button placement, the decoder test timing, HDR output, black bar crop,
+// deinterlacing, GPU decode slicing, the speaker layout, binaural rendering, and the failure warning included
+const DEFAULT_SETTING_BUTTON_COUNT = 26;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
 
-// The step of an f32 parameter's input
-const FLOAT_PARAMETER_STEP = 'any';
+// The step of the saturation parameter's field: a hundredth of its range, 0 to 2
+const SATURATION_PARAMETER_STEP = 0.01;
 // A saturation the user types, inside the declared range
 const CHANGED_SATURATION = 1.5;
 // Rejection details and failures the presentation tests report, and the states the panel shows for them
@@ -460,7 +566,14 @@ const SERVER_UNAVAILABLE_FAILURE = 'server-request-failed: WebGPUPlayer/Catalog 
 
 type PresentationPlayerMethods = Pick<
     WebGPUPlayer,
-    'getPresentationPlanReport' | 'setBlackBarCropEnabled' | 'setDeinterlaceMode' | 'setHDROutputEnabled' | 'setPresentationParameter' | 'setPresentationPreset'
+    | 'getActivePresentationPlan'
+    | 'getPresentationPlanReport'
+    | 'getPresentationRoute'
+    | 'setBlackBarCropEnabled'
+    | 'setDeinterlaceMode'
+    | 'setHDROutputEnabled'
+    | 'setPresentationParameter'
+    | 'setPresentationPreset'
 >;
 
 /** A file the panel lists, as its title and the state text of each of its passes. */
@@ -469,10 +582,12 @@ type PassRow = Readonly<{
     states: readonly string[]
 }>;
 
-/** Builds the presentation calls the panel makes when it opens, which succeed without passes. */
+/** Builds the presentation calls the windows make when they open, which succeed without passes, and the pipeline graph's getters. */
 function createPresentationPlayerMethods(): PresentationPlayerMethods {
     return {
+        getActivePresentationPlan: vi.fn(() => null),
         getPresentationPlanReport: vi.fn((): PlanReport => EMPTY_PLAN_REPORT),
+        getPresentationRoute: vi.fn(() => null),
         setBlackBarCropEnabled: vi.fn((): Promise<void> => Promise.resolve()),
         setDeinterlaceMode: vi.fn((): Promise<void> => Promise.resolve()),
         setHDROutputEnabled: vi.fn((): Promise<void> => Promise.resolve()),
@@ -493,8 +608,8 @@ function createPresentationTestPlayer(presentationMethods: PresentationPlayerMet
     } as unknown as WebGPUPlayer;
 }
 
-/** Builds a player whose render and audio calls succeed, for the placement tests. */
-function createPlacementTestPlayer(): WebGPUPlayer {
+/** Builds a player whose render, audio, and presentation calls succeed. */
+function createTestPlayer(): WebGPUPlayer {
     return createPresentationTestPlayer(createPresentationPlayerMethods());
 }
 
@@ -516,7 +631,7 @@ function readSavedPresentation(): WebGPUUserSettings['presentation'] {
     return readSavedSettings().presentation;
 }
 
-/** Reads each file the panel lists, in order. */
+/** Reads each file the windows list, in order. */
 function readPassRows(panel: HTMLElement): PassRow[] {
     const rows: PassRow[] = [];
     for (const passElement of panel.querySelectorAll<HTMLElement>('.webgpuSettingsPass')) {
@@ -550,10 +665,10 @@ function setDefaultSaturationPreset(): void {
     setClientDefaults({ presentationFiles: [ { fileName: SATURATION_PASS_FILE_NAME, parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION } } ] });
 }
 
-/** Opens the panel and lets it read the shader sources, which its pass list waits for. */
+/** Opens the windows and lets them read the shader sources, which their pass list waits for. */
 async function openPanelWithSources(player: WebGPUPlayer): Promise<Readonly<{ panel: HTMLElement, panelPromise: Promise<void> }>> {
     const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-    const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+    const panel = requireSettingsWindows();
     await flushMicrotasks();
     return { panel, panelPromise };
 }
@@ -564,12 +679,16 @@ function choosePassFiles(passFileInput: HTMLInputElement, files: readonly File[]
     passFileInput.dispatchEvent(new Event('change'));
 }
 
-describe('WebGPUPlaybackSettingsPanel', () => {
-    let animationFrames: AnimationFrameHarness;
+/** Returns a parameter value as its field shows it, at the step's two decimals. */
+function formatSaturation(value: number): string {
+    return value.toFixed(2);
+}
 
+describe('WebGPUPlaybackSettingsPanel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         hostCommandMockState.pendingPlaybackInfoToggles.length = 0;
+        failureWarningMockState.report = null;
         audioOutputManagerMockState.cancelCount = 0;
         audioOutputManagerMockState.pickerRevision = 0;
         audioOutputManagerMockState.redetectCount = 0;
@@ -626,18 +745,18 @@ describe('WebGPUPlaybackSettingsPanel', () => {
     });
 
     afterEach(async () => {
-        // A test that fails with its panel open would leave it the module's one active panel, which every later open reuses
-        document.querySelector<HTMLButtonElement>('.webgpuSettingsPanel .webgpuSettingsClose')?.click();
+        // A test that fails with its windows open would leave them the module's one active set, which every later open reuses
+        document.querySelector<HTMLButtonElement>(`${SETTINGS_WINDOWS_SELECTOR} .webgpuSettingsClose`)?.click();
         await flushMicrotasks();
         vi.unstubAllGlobals();
         setClientDefaults({});
         document.documentElement.removeAttribute('dir');
-        for (const placementStyle of document.head.querySelectorAll(`[${PLACEMENT_STYLE_ATTRIBUTE}]`)) {
-            placementStyle.remove();
+        for (const layoutStyle of document.head.querySelectorAll(`[${LAYOUT_STYLE_ATTRIBUTE}]`)) {
+            layoutStyle.remove();
         }
     });
 
-    it('reuses one non-modal panel below playback info and restores individual defaults', async () => {
+    it('reuses one non-modal set of windows and restores individual defaults', async () => {
         const playbackInfo = document.createElement('div');
         playbackInfo.classList.add('playerStats');
         playbackInfo.getBoundingClientRect = vi.fn(() => ({
@@ -667,11 +786,21 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const firstOpenPromise = showWebGPUPlaybackSettingsPanel(player);
         const secondOpenPromise = showWebGPUPlaybackSettingsPanel(player);
         expect(secondOpenPromise).toBe(firstOpenPromise);
-        const panels = document.querySelectorAll<HTMLElement>('.webgpuSettingsPanel');
-        expect(panels).toHaveLength(1);
-        const panel = panels[0];
-        expect(panel.tagName).toBe('ASIDE');
-        expect(panel.style.getPropertyValue('--webgpu-settings-top')).toBe('328px');
+        const roots = document.querySelectorAll<HTMLElement>(SETTINGS_WINDOWS_SELECTOR);
+        expect(roots).toHaveLength(1);
+        const panel = roots[0];
+        expect(panel.classList.contains('webgpuUi')).toBe(true);
+        // The pinned master window, then the section windows, which show expanded by default
+        expect(Array.from(panel.querySelectorAll<HTMLElement>('[data-window]'), (frame: HTMLElement): string => frame.dataset.window ?? ''))
+            .toEqual([ MASTER_WINDOW_ID, ...SECTION_WINDOW_IDS ]);
+        expect(requireWindow(panel, MASTER_WINDOW_ID).hidden).toBe(false);
+        expect(requireWindow(panel, MASTER_WINDOW_ID).querySelector('[data-window-collapse]')).toBeNull();
+        for (const id of SECTION_WINDOW_IDS) {
+            const frame = requireWindow(panel, id);
+            expect(frame.hidden).toBe(false);
+            expect(frame.classList.contains('webgpuWindow-collapsed')).toBe(false);
+            expect(requirePanelElement<HTMLElement>(frame, '[data-window-body]').hidden).toBe(false);
+        }
         expect(document.querySelector('.dialogBackdrop')).toBeNull();
         expect(document.querySelector('.dialogContainer')).toBeNull();
         const defaultButtons = Array.from(
@@ -691,14 +820,15 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             panel,
             '[data-setting-slider="surroundLevel"]'
         ).max).toBe('2');
+        // The slider spans the gains worth sweeping through; the typed field reaches the engine's hard range
         expect(requirePanelElement<HTMLInputElement>(
             panel,
             '[data-setting-slider="outputGain"]'
-        ).max).toBe('10');
+        ).max).toBe('3');
         expect(requirePanelElement<HTMLInputElement>(
             panel,
             '[data-setting-number="outputGain"]'
-        ).max).toBe('10');
+        ).dataset.numberMaximum).toBe('10');
         expect(player.updateRenderSettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 toneMapping: expect.objectContaining({ inputPeakNits: 900 })
@@ -710,12 +840,20 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             panel,
             '[data-setting-number="brightness"]'
         );
-        brightnessInput.value = '0.25';
-        brightnessInput.dispatchEvent(new Event('change'));
+        commitNumber(brightnessInput, '0.25');
         // An emptied field keeps the setting rather than taking 0, and shows it again
-        brightnessInput.value = '';
-        brightnessInput.dispatchEvent(new Event('change'));
+        commitNumber(brightnessInput, '');
         expect(brightnessInput.value).toBe('0.25');
+        // Typed text applies only on Enter: Escape and leaving the field show the applied value again
+        typeNumber(brightnessInput, '0.4');
+        expect(brightnessInput.classList.contains('webgpuUncommitted')).toBe(true);
+        pressKey(brightnessInput, 'Escape');
+        expect(brightnessInput.value).toBe('0.25');
+        expect(panel.isConnected).toBe(true);
+        typeNumber(brightnessInput, '0.4');
+        brightnessInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+        expect(brightnessInput.value).toBe('0.25');
+        expect(readSavedSettings().render.settings.display.brightness).toBe(0.25);
 
         const automaticInputPeakCheckbox = requirePanelElement<HTMLInputElement>(
             panel,
@@ -731,11 +869,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         forceStereoCheckbox.checked = true;
         forceStereoCheckbox.dispatchEvent(new Event('change'));
 
-        const pendingCallbacks = Array.from(animationFrames.callbacks.values());
-        animationFrames.callbacks.clear();
-        for (const callback of pendingCallbacks) {
-            callback(0);
-        }
+        runAnimationFrames();
         expect(player.updateRenderSettings).toHaveBeenLastCalledWith(
             expect.objectContaining({
                 display: expect.objectContaining({ brightness: 0.25 }),
@@ -791,10 +925,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(panel.isConnected).toBe(false);
 
         const thirdOpenPromise = showWebGPUPlaybackSettingsPanel(player);
-        const reopenedPanel = requirePanelElement<HTMLElement>(
-            document.body,
-            '.webgpuSettingsPanel'
-        );
+        const reopenedPanel = requireSettingsWindows();
         expect(reopenedPanel).not.toBe(panel);
         requirePanelElement<HTMLButtonElement>(
             reopenedPanel,
@@ -815,7 +946,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const readSavedPlayback = (): WebGPUUserSettings['playback'] => readSavedSettings().playback;
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const customDecodeCheckbox = requirePanelElement<HTMLInputElement>(
             panel,
             '[data-setting-checkbox="enableCustomDecode"]'
@@ -896,7 +1027,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
     it('saves this browser\'s decoder test timing for the next page load, keeps it through the other playback preferences, and restores the server\'s default', async () => {
         storageMockState.value = JSON.stringify({ playback: { decoderTestTiming: 'playback' }, version: WEBGPU_USER_SETTINGS_VERSION });
         setClientDefaults({ decoderTestTiming: 'background' });
-        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const { panel, panelPromise } = await openPanelWithSources(createTestPlayer());
         const timingSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="decoderTestTiming"]');
         const playbackStatus = requirePanelElement<HTMLElement>(panel, '[data-playback-status]');
         expect(Array.from(timingSelect.options, (option: HTMLOptionElement): string => option.value))
@@ -950,7 +1081,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(readStoredCapabilityProbeVerdictState()?.probes).toEqual([ 'native-sdr:hevc' ]);
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         // No probe stopped a page, so the panel names none
         expect(requirePanelElement<HTMLElement>(panel, '[data-crashed-probes]').classList.contains('hide')).toBe(true);
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClearProbeCache').click();
@@ -984,7 +1115,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         ];
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const crashedProbes = requirePanelElement<HTMLElement>(panel, '[data-crashed-probes]');
 
         expect(crashedProbes.classList.contains('hide')).toBe(false);
@@ -1019,7 +1150,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         } as unknown as WebGPUPlayer;
 
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const closeButton = requirePanelElement<HTMLButtonElement>(
             panel,
             '.webgpuSettingsClose'
@@ -1048,7 +1179,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         } as unknown as WebGPUPlayer;
 
         const openPromise = toggleWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
 
         const closePromise = toggleWebGPUPlaybackSettingsPanel(player);
         expect(closePromise).toBe(openPromise);
@@ -1058,9 +1189,9 @@ describe('WebGPUPlaybackSettingsPanel', () => {
 
         // A toggle right after closing opens a new panel instead of closing the old one again
         const reopenPromise = toggleWebGPUPlaybackSettingsPanel(player);
-        const reopenedPanel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const reopenedPanel = requireSettingsWindows();
         expect(reopenedPanel).not.toBe(panel);
-        expect(document.querySelectorAll('.webgpuSettingsPanel')).toHaveLength(1);
+        expect(document.querySelectorAll(SETTINGS_WINDOWS_SELECTOR)).toHaveLength(1);
         await expect(toggleWebGPUPlaybackSettingsPanel(player)).resolves.toBeUndefined();
         await reopenPromise;
         expect(reopenedPanel.isConnected).toBe(false);
@@ -1080,7 +1211,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         document.addEventListener('wheel', documentWheelListener);
         try {
             const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-            const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+            const panel = requireSettingsWindows();
             const panelWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
             requirePanelElement<HTMLElement>(panel, '[data-setting-slider="brightness"]').dispatchEvent(panelWheel);
 
@@ -1097,49 +1228,37 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         }
     });
 
-    it('ends above the OSD controls and opens playback info beside it until the panel closes', async () => {
-        const harness: PlacementHarness = {
-            OSDControlsBounds: createBounds(0, 900, 1920, 150),
-            panelLeft: 24,
-            playbackInfoBounds: createBounds(704, 80, 400, 300),
-            viewportHeight: 1080,
-            viewportWidth: 1920
-        };
-        installPlacementHarness(harness);
-        const player = createPlacementTestPlayer();
+    it('keeps the windows above the OSD controls, and keeps their room while the controls hide', async () => {
+        const harness = createFullHDLayoutHarness();
+        installLayoutHarness(harness);
 
-        const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
-        expect(handleCommand).toHaveBeenCalledTimes(1);
-        expect(handleCommand).toHaveBeenLastCalledWith('togglestats');
-        // 900 - 8 - 80
-        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('812px');
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+        const panel = requireSettingsWindows();
+        const master = requireWindow(panel, MASTER_WINDOW_ID);
+        const masterBody = requirePanelElement<HTMLElement>(master, '[data-window-body]');
+        runAnimationFrames();
+        // The master is pinned to the room's start corner, below the OSD's top bar
+        expect(master.style.left).toBe(`${ROOM_LEFT}px`);
+        expect(master.style.top).toBe(`${ROOM_TOP}px`);
+        expect(master.style.width).toBe(`${MASTER_WINDOW_WIDTH}px`);
+        // 900 - 8 - 80, less the title bar
+        expect(masterBody.style.maxHeight).toBe('772px');
 
-        await runHostPlaybackInfoToggles();
-        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(true);
-        // The panel's right edge, 24 + 672, plus the gap
-        expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('704px');
-        expect(panel.style.getPropertyValue('--webgpu-settings-top')).toBe('');
-
-        // Hidden OSD controls measure empty, so the panel keeps the 180px they reserve at the bottom edge
+        // Hidden OSD controls measure empty, so the windows keep the 180px they reserve at the bottom edge
         harness.OSDControlsBounds = createBounds(0, 0, 0, 0);
         harness.viewportHeight = 900;
         window.dispatchEvent(new Event('resize'));
-        // 900 - 180 - 8 - 80
-        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('632px');
+        runAnimationFrames();
+        // 900 - 180 - 8 - 80 - 40
+        expect(masterBody.style.maxHeight).toBe('592px');
         harness.OSDControlsBounds = createBounds(0, 700, 1920, 200);
         window.dispatchEvent(new Event('resize'));
-        // 700 - 8 - 80
-        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('612px');
+        runAnimationFrames();
+        // 700 - 8 - 80 - 40
+        expect(masterBody.style.maxHeight).toBe('572px');
 
-        await toggleWebGPUPlaybackSettingsPanel(player);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
-        expect(handleCommand).toHaveBeenCalledTimes(2);
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
-        expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('');
-        await runHostPlaybackInfoToggles();
-        expect(playbackInfo.classList.contains('hide')).toBe(true);
     });
 
     it('ends above the controls of the OSD page that shows, not those of an earlier page the host keeps hidden', async () => {
@@ -1150,18 +1269,13 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         earlierPage.innerHTML = '<div class="videoOsdBottom videoOsdBottom-maincontrols"><div class="osdControls"></div></div>';
         document.body.prepend(earlierPage);
         try {
-            installPlacementHarness({
-                OSDControlsBounds: createBounds(0, 900, 1920, 150),
-                panelLeft: 24,
-                playbackInfoBounds: createBounds(704, 80, 400, 300),
-                viewportHeight: 1080,
-                viewportWidth: 1920
-            });
+            installLayoutHarness(createFullHDLayoutHarness());
 
-            const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
-            const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
-            // 900 - 8 - 80
-            expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('812px');
+            const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+            const panel = requireSettingsWindows();
+            runAnimationFrames();
+            // 900 - 8 - 80 - 40
+            expect(requirePanelElement<HTMLElement>(requireWindow(panel, MASTER_WINDOW_ID), '[data-window-body]').style.maxHeight).toBe('772px');
 
             requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
             await panelPromise;
@@ -1170,107 +1284,78 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         }
     });
 
-    it('places playback info beside the panel from the right edge in a right-to-left layout', async () => {
+    it('pins the master window to the right corner in a right-to-left layout', async () => {
         document.documentElement.setAttribute('dir', 'rtl');
-        installPlacementHarness({
-            OSDControlsBounds: createBounds(0, 900, 1920, 150),
-            panelLeft: 1920 - 24 - PLACEMENT_PANEL_WIDTH,
-            playbackInfoBounds: createBounds(816, 80, 400, 300),
-            viewportHeight: 1080,
-            viewportWidth: 1920
-        });
+        installLayoutHarness(createFullHDLayoutHarness());
 
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
-        await runHostPlaybackInfoToggles();
-        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(true);
-        // The panel's left edge is 24 + 672 from the right edge, plus the gap
-        expect(playbackInfo.style.getPropertyValue('--webgpu-playback-info-offset')).toBe('704px');
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+        const panel = requireSettingsWindows();
+        runAnimationFrames();
+        expect(requireWindow(panel, MASTER_WINDOW_ID).style.left).toBe(`${1920 - ROOM_LEFT - MASTER_WINDOW_WIDTH}px`);
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
     });
 
-    it('moves the panel below playback info when the viewport has no room beside it', async () => {
-        // 900 - (24 + 672) leaves 204px beside the panel, short of 22em at 16px
-        installPlacementHarness({
-            OSDControlsBounds: createBounds(0, 700, 900, 150),
-            panelLeft: 24,
-            playbackInfoBounds: createBounds(24, 80, 400, 300),
-            viewportHeight: 850,
-            viewportWidth: 900
-        });
+    it('shows playback info as a window beside the master while the windows are open, and hides it when they close', async () => {
+        installLayoutHarness(createFullHDLayoutHarness());
+        const player = createTestPlayer();
 
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
+        const panel = requireSettingsWindows();
+        expect(handleCommand).toHaveBeenCalledTimes(1);
+        expect(handleCommand).toHaveBeenLastCalledWith('togglestats');
+
         await runHostPlaybackInfoToggles();
         const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
-        // 80 + 300 + 8, then 700 - 8 - 388
-        expect(panel.style.getPropertyValue('--webgpu-settings-top')).toBe('388px');
-        expect(panel.style.getPropertyValue('--webgpu-settings-max-height')).toBe('304px');
+        expect(requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).getAttribute('aria-pressed')).toBe('true');
+        runAnimationFrames();
+        expect(playbackInfo.classList.contains('webgpuSettingsHostedWindow')).toBe(true);
+        expect(playbackInfo.style.position).toBe('fixed');
+        expect(playbackInfo.style.left).toMatch(/^\d+px$/);
+        expect(playbackInfo.style.top).toMatch(/^\d+px$/);
+        // Beside the master window, which takes the room's whole height, past the gap
+        expect(parseFloat(playbackInfo.style.left)).toBeGreaterThanOrEqual(ROOM_LEFT + MASTER_WINDOW_WIDTH + WINDOW_GAP);
+        expect(parseFloat(playbackInfo.style.top)).toBeGreaterThanOrEqual(ROOM_TOP);
 
-        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await toggleWebGPUPlaybackSettingsPanel(player);
         await panelPromise;
+        expect(handleCommand).toHaveBeenCalledTimes(2);
+        // The host's element gets its own placement back
+        expect(playbackInfo.classList.contains('webgpuSettingsHostedWindow')).toBe(false);
+        expect(playbackInfo.style.position).toBe('');
+        expect(playbackInfo.style.left).toBe('');
+        expect(playbackInfo.style.top).toBe('');
+        await runHostPlaybackInfoToggles();
+        expect(playbackInfo.classList.contains('hide')).toBe(true);
     });
 
-    it('leaves playback info that was already showing open after the panel closes', async () => {
-        installPlacementHarness({
-            OSDControlsBounds: createBounds(0, 900, 1920, 150),
-            panelLeft: 24,
-            playbackInfoBounds: createBounds(704, 80, 400, 300),
-            viewportHeight: 1080,
-            viewportWidth: 1920
-        });
+    it('leaves playback info that was already showing open after the windows close, with its own inline placement back', async () => {
+        installLayoutHarness(createFullHDLayoutHarness());
         const playbackInfo = document.createElement('div');
         playbackInfo.classList.add('playerStats');
+        playbackInfo.style.left = '5px';
         document.body.appendChild(playbackInfo);
 
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+        const panel = requireSettingsWindows();
         expect(handleCommand).not.toHaveBeenCalled();
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(true);
+        expect(requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).getAttribute('aria-pressed')).toBe('true');
+        runAnimationFrames();
+        expect(playbackInfo.style.position).toBe('fixed');
+        expect(playbackInfo.style.left).not.toBe('5px');
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
         expect(handleCommand).not.toHaveBeenCalled();
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
         expect(playbackInfo.classList.contains('hide')).toBe(false);
+        expect(playbackInfo.classList.contains('webgpuSettingsHostedWindow')).toBe(false);
+        expect(playbackInfo.style.left).toBe('5px');
+        expect(playbackInfo.style.position).toBe('');
     });
 
-    it('keeps playback info closed after the user closes it while the panel is open', async () => {
-        installPlacementHarness({
-            OSDControlsBounds: createBounds(0, 900, 1920, 150),
-            panelLeft: 24,
-            playbackInfoBounds: createBounds(704, 80, 400, 300),
-            viewportHeight: 1080,
-            viewportWidth: 1920
-        });
-
-        const panelPromise = showWebGPUPlaybackSettingsPanel(createPlacementTestPlayer());
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
-        await runHostPlaybackInfoToggles();
-        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
-        // The overlay's close button hides it without a command
-        playbackInfo.classList.add('hide');
-        await flushMicrotasks();
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
-
-        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
-        await panelPromise;
-        expect(handleCommand).toHaveBeenCalledTimes(1);
-    });
-
-    it('undoes its playback info request when the panel closes before the host shows it', async () => {
-        installPlacementHarness({
-            OSDControlsBounds: createBounds(0, 900, 1920, 150),
-            panelLeft: 24,
-            playbackInfoBounds: createBounds(704, 80, 400, 300),
-            viewportHeight: 1080,
-            viewportWidth: 1920
-        });
-        const player = createPlacementTestPlayer();
+    it('undoes its playback info request when the windows close before the host shows it', async () => {
+        const player = createTestPlayer();
 
         const panelPromise = toggleWebGPUPlaybackSettingsPanel(player);
         await toggleWebGPUPlaybackSettingsPanel(player);
@@ -1281,7 +1366,206 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         await runHostPlaybackInfoToggles();
         const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
         expect(playbackInfo.classList.contains('hide')).toBe(true);
-        expect(playbackInfo.classList.contains('webgpuSettingsPlaybackInfo')).toBe(false);
+        expect(playbackInfo.classList.contains('webgpuSettingsHostedWindow')).toBe(false);
+    });
+
+    it('keeps playback info hidden on the next open after the user closes it with its own button, but not after the host hides it by itself', async () => {
+        const player = createTestPlayer();
+
+        let panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        let panel = requireSettingsWindows();
+        await runHostPlaybackInfoToggles();
+        const playbackInfo = requirePanelElement<HTMLElement>(document.body, '.playerStats');
+        // The overlay's close button hides it without a command
+        playbackInfo.innerHTML = '<button type="button">x</button>';
+        requirePanelElement<HTMLButtonElement>(playbackInfo, 'button').click();
+        playbackInfo.classList.add('hide');
+        await flushMicrotasks();
+        expect(requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).getAttribute('aria-pressed')).toBe('false');
+        expect(readStoredWindowState()[PLAYBACK_INFO_WINDOW_ID].visible).toBe(false);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+        expect(handleCommand).toHaveBeenCalledTimes(1);
+
+        // The next open leaves it hidden, and the user shows it from the master's list
+        panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        panel = requireSettingsWindows();
+        expect(handleCommand).toHaveBeenCalledTimes(1);
+        requireWindowToggle(panel, PLAYBACK_INFO_WINDOW_ID).click();
+        expect(handleCommand).toHaveBeenCalledTimes(2);
+        expect(readStoredWindowState()[PLAYBACK_INFO_WINDOW_ID].visible).toBe(true);
+        await runHostPlaybackInfoToggles();
+        expect(playbackInfo.classList.contains('hide')).toBe(false);
+
+        // The host hiding it by itself, as when the playback ends, changes nothing the user chose
+        playbackInfo.classList.add('hide');
+        await flushMicrotasks();
+        expect(readStoredWindowState()[PLAYBACK_INFO_WINDOW_ID].visible).toBe(true);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+        expect(handleCommand).toHaveBeenCalledTimes(2);
+
+        panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        panel = requireSettingsWindows();
+        expect(handleCommand).toHaveBeenCalledTimes(3);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('shows and hides the section windows from the master\'s list and their own hide buttons, keeps that for the next open, and resets the layout', async () => {
+        const player = createTestPlayer();
+
+        let panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        let panel = requireSettingsWindows();
+        const windowList = requirePanelElement<HTMLElement>(requireWindow(panel, MASTER_WINDOW_ID), '[data-settings-window-list]');
+        expect(Array.from(windowList.querySelectorAll<HTMLElement>('[data-window-toggle]'), (toggle: HTMLElement): string => toggle.dataset.windowToggle ?? ''))
+            .toEqual([ ...SECTION_WINDOW_IDS, PLAYBACK_INFO_WINDOW_ID ]);
+        const audioToggle = requireWindowToggle(panel, 'audio');
+        expect(audioToggle.getAttribute('aria-pressed')).toBe('true');
+
+        // A window shown again opens expanded, though the user had collapsed it
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'audio'), '[data-window-collapse]').click();
+        expect(readStoredWindowState().audio.collapsed).toBe(true);
+        audioToggle.click();
+        expect(requireWindow(panel, 'audio').hidden).toBe(true);
+        expect(audioToggle.getAttribute('aria-pressed')).toBe('false');
+        expect(readStoredWindowState().audio.visible).toBe(false);
+        audioToggle.click();
+        expect(requireWindow(panel, 'audio').hidden).toBe(false);
+        expect(requireWindow(panel, 'audio').classList.contains('webgpuWindow-collapsed')).toBe(false);
+        expect(audioToggle.getAttribute('aria-pressed')).toBe('true');
+        expect(readStoredWindowState().audio).toEqual({ collapsed: false, position: null, visible: true });
+
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'interface'), '[data-window-hide]').click();
+        expect(requireWindow(panel, 'interface').hidden).toBe(true);
+        expect(requireWindowToggle(panel, 'interface').getAttribute('aria-pressed')).toBe('false');
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+
+        panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        panel = requireSettingsWindows();
+        expect(requireWindow(panel, 'interface').hidden).toBe(true);
+        expect(requireWindow(panel, 'audio').hidden).toBe(false);
+
+        // The layout reset returns every window to its default: shown and expanded, the collapsed ones too
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'audio'), '[data-window-collapse]').click();
+        requirePanelElement<HTMLButtonElement>(panel, '[data-reset-layout]').click();
+        expect(requireWindow(panel, 'interface').hidden).toBe(false);
+        expect(readStoredWindowState().interface).toEqual({ collapsed: false, position: null, visible: true });
+        expect(readStoredWindowState().audio).toEqual({ collapsed: false, position: null, visible: true });
+        expect(requireWindow(panel, 'audio').classList.contains('webgpuWindow-collapsed')).toBe(false);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('expands and collapses a section window from its square and its title, and keeps that for the next open', async () => {
+        const player = createTestPlayer();
+
+        let panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        let panel = requireSettingsWindows();
+        let picture = requireWindow(panel, 'picture');
+        const collapseButton = requirePanelElement<HTMLButtonElement>(picture, '[data-window-collapse]');
+        expect(collapseButton.getAttribute('aria-expanded')).toBe('true');
+
+        collapseButton.click();
+        expect(picture.classList.contains('webgpuWindow-collapsed')).toBe(true);
+        expect(requirePanelElement<HTMLElement>(picture, '[data-window-body]').hidden).toBe(true);
+        expect(collapseButton.getAttribute('aria-expanded')).toBe('false');
+        expect(requirePanelElement<HTMLElement>(picture, '[data-window-title]').getAttribute('aria-expanded')).toBe('false');
+        expect(readStoredWindowState().picture.collapsed).toBe(true);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+
+        panelPromise = showWebGPUPlaybackSettingsPanel(player);
+        panel = requireSettingsWindows();
+        picture = requireWindow(panel, 'picture');
+        expect(picture.classList.contains('webgpuWindow-collapsed')).toBe(true);
+        // Enter on the title expands it again
+        pressKey(requirePanelElement<HTMLElement>(picture, '[data-window-title]'), 'Enter');
+        expect(picture.classList.contains('webgpuWindow-collapsed')).toBe(false);
+        expect(requirePanelElement<HTMLElement>(picture, '[data-window-body]').hidden).toBe(false);
+        expect(readStoredWindowState().picture.collapsed).toBe(false);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('closes on Escape from anywhere in the windows', async () => {
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+        const panel = requireSettingsWindows();
+
+        const escape = pressKey(requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]'), 'Escape');
+        expect(escape.defaultPrevented).toBe(true);
+        await panelPromise;
+        expect(panel.isConnected).toBe(false);
+    });
+
+    it('shows and hides a listed window with its digit, except while a field takes the typing', async () => {
+        const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+        const panel = requireSettingsWindows();
+        const closeButton = requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose');
+
+        pressKey(closeButton, '1', { code: 'Digit1' });
+        expect(requireWindow(panel, 'picture').hidden).toBe(true);
+        expect(readStoredWindowState().picture.visible).toBe(false);
+        pressKey(closeButton, '1', { code: 'Numpad1' });
+        expect(requireWindow(panel, 'picture').hidden).toBe(false);
+        // Shown again, it takes the focus on its title
+        expect(document.activeElement).toBe(requirePanelElement<HTMLElement>(requireWindow(panel, 'picture'), '[data-window-title]'));
+
+        // A select takes its digits to choose an option
+        pressKey(requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="decoderTestTiming"]'), '4', { code: 'Digit4' });
+        expect(requireWindow(panel, 'interface').hidden).toBe(false);
+        pressKey(closeButton, '4', { code: 'Digit4' });
+        expect(requireWindow(panel, 'interface').hidden).toBe(true);
+
+        closeButton.click();
+        await panelPromise;
+    });
+
+    it('keeps key presses in the windows from reaching the OSD key handler', async () => {
+        // The host's video OSD listens for keys on the document: Space pauses, the arrows seek and change the volume
+        const documentKeyListener = vi.fn();
+        document.addEventListener('keydown', documentKeyListener);
+        try {
+            const panelPromise = showWebGPUPlaybackSettingsPanel(createTestPlayer());
+            const panel = requireSettingsWindows();
+            pressKey(requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]'), ' ');
+            pressKey(requirePanelElement<HTMLInputElement>(panel, '[data-setting-slider="brightness"]'), 'ArrowUp');
+            pressKey(requirePanelElement<HTMLInputElement>(panel, '[data-setting-number="exposure"]'), 'ArrowLeft');
+            pressKey(requirePanelElement<HTMLInputElement>(panel, '[data-setting-number="exposure"]'), 'ArrowUp');
+            expect(documentKeyListener).not.toHaveBeenCalled();
+
+            requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+            await panelPromise;
+            pressKey(document.body, ' ');
+            expect(documentKeyListener).toHaveBeenCalledOnce();
+        } finally {
+            document.removeEventListener('keydown', documentKeyListener);
+        }
+    });
+
+    it('follows the player in the pipeline graph only while the pipeline window is expanded', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const pipeline = requireWindow(panel, 'pipeline');
+        // Expanded from the start, the window follows the player at once
+        expect(presentationMethods.getActivePresentationPlan).toHaveBeenCalledTimes(1);
+        expect(presentationMethods.getPresentationRoute).toHaveBeenCalledTimes(1);
+        expect(requirePanelElement<HTMLElement>(pipeline, '[data-pipeline-graph]').childElementCount).toBe(1);
+
+        // Collapsed, it stops following; expanded again, it follows anew
+        requirePanelElement<HTMLButtonElement>(pipeline, '[data-window-collapse]').click();
+        expect(presentationMethods.getActivePresentationPlan).toHaveBeenCalledTimes(1);
+        requirePanelElement<HTMLButtonElement>(pipeline, '[data-window-collapse]').click();
+        expect(presentationMethods.getActivePresentationPlan).toHaveBeenCalledTimes(2);
+
+        // Hidden, it stops following; shown again, expanded, it follows anew
+        requirePanelElement<HTMLButtonElement>(pipeline, '[data-window-hide]').click();
+        requireWindowToggle(panel, 'pipeline').click();
+        expect(presentationMethods.getActivePresentationPlan).toHaveBeenCalledTimes(3);
+
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
     });
 
     it('applies gains, force stereo, and the downmix algorithm live', async () => {
@@ -1297,7 +1581,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const audioStatus = requirePanelElement<HTMLElement>(panel, '[data-audio-status]');
 
         const gainEdits = [
@@ -1310,13 +1594,24 @@ describe('WebGPUPlaybackSettingsPanel', () => {
                 panel,
                 `[data-setting-number="${gainEdit.key}"]`
             );
-            numberInput.value = gainEdit.value;
-            numberInput.dispatchEvent(new Event('change'));
+            commitNumber(numberInput, gainEdit.value);
             expect(updateAudioDownmixSettings).toHaveBeenLastCalledWith(
                 expect.objectContaining({ [gainEdit.key]: Number(gainEdit.value) })
             );
             expect(audioStatus.textContent).toBe(AUDIO_DOWNMIX_LIVE_STATUS);
         }
+        // ArrowUp steps the shown value and applies it; a typed gain may pass the slider's span up to the engine's limit
+        const outputGainInput = requirePanelElement<HTMLInputElement>(panel, '[data-setting-number="outputGain"]');
+        pressKey(outputGainInput, 'ArrowUp');
+        expect(updateAudioDownmixSettings).toHaveBeenLastCalledWith(expect.objectContaining({ outputGain: 0.81 }));
+        expect(outputGainInput.value).toBe('0.81');
+        commitNumber(outputGainInput, '5');
+        expect(updateAudioDownmixSettings).toHaveBeenLastCalledWith(expect.objectContaining({ outputGain: 5 }));
+        expect(requirePanelElement<HTMLInputElement>(panel, '[data-setting-slider="outputGain"]').value).toBe('3');
+        expect(requirePanelElement<HTMLElement>(panel, '[data-control="outputGain"]').classList.contains('webgpuBeyondSlider')).toBe(true);
+        commitNumber(outputGainInput, '20');
+        expect(updateAudioDownmixSettings).toHaveBeenLastCalledWith(expect.objectContaining({ outputGain: 10 }));
+        expect(outputGainInput.value).toBe('10.00');
         // Gains alone never switch the output layout
         expect(applyAudioOutputSettings).not.toHaveBeenCalled();
 
@@ -1458,7 +1753,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const audioStatus = requirePanelElement<HTMLElement>(panel, '[data-audio-status]');
         const speakerLayoutSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="speakerLayout"]');
         const binauralCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="binauralHeadphones"]');
@@ -1509,7 +1804,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const audioStatus = requirePanelElement<HTMLElement>(panel, '[data-audio-status]');
         const forceStereoCheckbox = requirePanelElement<HTMLInputElement>(
             panel,
@@ -1589,7 +1884,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const audioStatus = requirePanelElement<HTMLElement>(panel, '[data-audio-status]');
         const forceStereoCheckbox = requirePanelElement<HTMLInputElement>(
             panel,
@@ -1624,8 +1919,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         // A gain status written while a switch is pending also wins
         forceStereoCheckbox.checked = false;
         forceStereoCheckbox.dispatchEvent(new Event('change'));
-        outputGainInput.value = '0.5';
-        outputGainInput.dispatchEvent(new Event('change'));
+        commitNumber(outputGainInput, '0.5');
         expect(audioStatus.textContent).toBe(AUDIO_DOWNMIX_LIVE_STATUS);
         layoutResults[2](true);
         await flushMicrotasks();
@@ -1655,7 +1949,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         } as unknown as WebGPUPlayer;
         const savedSettings = storageMockState.value;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const redetectButton = requirePanelElement<HTMLButtonElement>(
             panel,
             '[data-audio-output-redetect]'
@@ -1691,7 +1985,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const outputGain = requirePanelElement<HTMLInputElement>(
             panel,
             '[data-setting-slider="outputGain"]'
@@ -1738,7 +2032,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const outputSelect = requirePanelElement<HTMLSelectElement>(
             panel,
             '[data-audio-output-select]'
@@ -1819,7 +2113,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const outputSelect = requirePanelElement<HTMLSelectElement>(
             panel,
             '[data-audio-output-select]'
@@ -1902,7 +2196,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const pickerButton = requirePanelElement<HTMLButtonElement>(
             panel,
             '[data-audio-output-picker]'
@@ -1967,7 +2261,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             ...createPresentationPlayerMethods()
         } as unknown as WebGPUPlayer;
         const panelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const panel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const panel = requireSettingsWindows();
         const outputSelect = requirePanelElement<HTMLSelectElement>(
             panel,
             '[data-audio-output-select]'
@@ -2019,14 +2313,14 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         } as unknown as WebGPUPlayer;
 
         const firstPanelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const firstPanel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const firstPanel = requireSettingsWindows();
         requirePanelElement<HTMLButtonElement>(firstPanel, '[data-audio-output-picker]').click();
         requirePanelElement<HTMLButtonElement>(firstPanel, '.webgpuSettingsClose').click();
         await firstPanelPromise;
 
         audioOutputManagerMockState.requestPromise = null;
         const secondPanelPromise = showWebGPUPlaybackSettingsPanel(player);
-        const secondPanel = requirePanelElement<HTMLElement>(document.body, '.webgpuSettingsPanel');
+        const secondPanel = requireSettingsWindows();
         resolvePicker('late-output');
         await Promise.resolve();
         await Promise.resolve();
@@ -2072,15 +2366,14 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         ]);
         const parameterSelector = `[data-parameter-name="${SATURATION_PARAMETER_NAME}"]`;
         const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-file-index="0"]${parameterSelector}`);
-        expect(parameterInput.min).toBe(String(SATURATION_PARAMETER_MINIMUM));
-        expect(parameterInput.max).toBe(String(SATURATION_PARAMETER_MAXIMUM));
-        expect(parameterInput.step).toBe(FLOAT_PARAMETER_STEP);
-        expect(parameterInput.value).toBe(String(STORED_SATURATION));
+        expect(parameterInput.dataset.numberMinimum).toBe(String(SATURATION_PARAMETER_MINIMUM));
+        expect(parameterInput.dataset.numberMaximum).toBe(String(SATURATION_PARAMETER_MAXIMUM));
+        expect(parameterInput.dataset.numberStep).toBe(String(SATURATION_PARAMETER_STEP));
+        expect(parameterInput.value).toBe(formatSaturation(STORED_SATURATION));
         expect(requirePanelElement<HTMLInputElement>(panel, `[data-file-index="2"]${parameterSelector}`).value)
-            .toBe(String(SATURATION_PARAMETER_DEFAULT));
+            .toBe(formatSaturation(SATURATION_PARAMETER_DEFAULT));
 
-        parameterInput.value = String(CHANGED_SATURATION);
-        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        commitNumber(parameterInput, String(CHANGED_SATURATION));
         expect(presentationMethods.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
         expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
@@ -2092,11 +2385,18 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         vi.mocked(presentationMethods.setPresentationParameter).mockImplementationOnce((): void => {
             throw new RangeError(PARAMETER_PENDING_ERROR);
         });
-        parameterInput.value = String(SATURATION_PARAMETER_MAXIMUM);
-        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        commitNumber(parameterInput, String(SATURATION_PARAMETER_MAXIMUM));
         expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: SATURATION_PARAMETER_MAXIMUM });
         expect(presentationStatus.textContent)
             .toBe(translateSourceString('WebGPUShaderPassParameterPending', PARAMETER_PENDING_ERROR));
+
+        // ArrowDown steps from the shown value and applies it
+        pressKey(parameterInput, 'ArrowDown');
+        const steppedSaturation = SATURATION_PARAMETER_MAXIMUM - SATURATION_PARAMETER_STEP;
+        expect(presentationMethods.setPresentationParameter)
+            .toHaveBeenLastCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, steppedSaturation);
+        expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: steppedSaturation });
+        expect(parameterInput.value).toBe(formatSaturation(steppedSaturation));
 
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
@@ -2120,17 +2420,15 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         } ]);
 
         const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-file-index="0"][data-parameter-name="${SATURATION_PARAMETER_NAME}"]`);
-        parameterInput.value = String(CHANGED_SATURATION);
-        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        commitNumber(parameterInput, String(CHANGED_SATURATION));
         // Only the pass that declares the parameter takes it
         expect(presentationMethods.setPresentationParameter).toHaveBeenCalledTimes(1);
         expect(presentationMethods.setPresentationParameter)
             .toHaveBeenCalledWith(SATURATION_PASS_NAME, SATURATION_PARAMETER_NAME, CHANGED_SATURATION);
         expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
         // An emptied field keeps the parameter rather than taking 0, and shows it again
-        parameterInput.value = '';
-        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
-        expect(parameterInput.value).toBe(String(CHANGED_SATURATION));
+        commitNumber(parameterInput, '');
+        expect(parameterInput.value).toBe(formatSaturation(CHANGED_SATURATION));
         expect(presentationMethods.setPresentationParameter).toHaveBeenCalledTimes(1);
         expect(readSavedPresentation().files?.[0].parameters).toEqual({ [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION });
 
@@ -2241,7 +2539,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
     it('offers the settings button placements, places the button anew on a change, and restores the server\'s default placement', async () => {
         storageMockState.value = JSON.stringify({ osd: { settingsButtonPlacement: 'after-settings' }, version: WEBGPU_USER_SETTINGS_VERSION });
         setClientDefaults({ settingsButtonPlacement: 'settings-menu' });
-        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const { panel, panelPromise } = await openPanelWithSources(createTestPlayer());
         const placementSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="settingsButtonPlacement"]');
         expect(Array.from(placementSelect.options, (option: HTMLOptionElement): string => option.value))
             .toEqual([ 'before-settings', 'after-settings', 'controls-end', 'settings-menu' ]);
@@ -2274,7 +2572,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
     it('restores the server\'s default downmix algorithm alone, on an audio reset, and on a full reset', async () => {
         storageMockState.defaultAudioDownmixAlgorithm = CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.Dave750;
         storageMockState.audioDownmixAlgorithm = CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4;
-        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const { panel, panelPromise } = await openPanelWithSources(createTestPlayer());
         const algorithmSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="audioDownmixAlgorithm"]');
         expect(algorithmSelect.value).toBe(CUSTOM_AUDIO_DOWNMIX_ALGORITHMS.AC4);
 
@@ -2446,11 +2744,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
         const parameterInput = requirePanelElement<HTMLInputElement>(panel, `[data-file-index="0"][data-parameter-name="${SATURATION_PARAMETER_NAME}"]`);
         expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ SATURATION_PASS_NAME ]);
-        expect(parameterInput.value).toBe(String(STORED_SATURATION));
+        expect(parameterInput.value).toBe(formatSaturation(STORED_SATURATION));
         expect(getRestoreDefaultPassesButton(panel).disabled).toBe(true);
 
-        parameterInput.value = String(CHANGED_SATURATION);
-        parameterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        commitNumber(parameterInput, String(CHANGED_SATURATION));
         expect(readSavedPresentation().files).toEqual([ { ...defaultFile, parameters: { [SATURATION_PARAMETER_NAME]: CHANGED_SATURATION } } ]);
         expect(getRestoreDefaultPassesButton(panel).disabled).toBe(false);
 
@@ -2460,7 +2757,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([
             { parameters: { [SATURATION_PARAMETER_NAME]: STORED_SATURATION }, source: SATURATION_PASS_SOURCE }
         ]);
-        expect(requirePanelElement<HTMLInputElement>(panel, `[data-parameter-name="${SATURATION_PARAMETER_NAME}"]`).value).toBe(String(STORED_SATURATION));
+        expect(requirePanelElement<HTMLInputElement>(panel, `[data-parameter-name="${SATURATION_PARAMETER_NAME}"]`).value).toBe(formatSaturation(STORED_SATURATION));
         expect(getRestoreDefaultPassesButton(panel).disabled).toBe(true);
 
         // Removing the default file stores an empty preset of the user's own, and the default file keeps its source
@@ -2611,7 +2908,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
     it('names the decoders the server offers', async () => {
         serverModuleMockState.catalog = { decoderPackages: [ SERVER_HEVC_PACKAGE, SERVER_TRUEHD_PACKAGE ], passes: [] };
 
-        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const { panel, panelPromise } = await openPanelWithSources(createTestPlayer());
 
         expect(requirePanelElement<HTMLElement>(panel, '[data-server-decoders]').textContent)
             .toBe(translateSourceString('WebGPUServerDecoders', `${SERVER_HEVC_PACKAGE.name}, ${SERVER_TRUEHD_PACKAGE.name}`));
@@ -2622,7 +2919,7 @@ describe('WebGPUPlaybackSettingsPanel', () => {
     it('says why the server offers nothing when it cannot be reached', async () => {
         serverModuleMockState.catalogFailure = SERVER_UNAVAILABLE_FAILURE;
 
-        const { panel, panelPromise } = await openPanelWithSources(createPlacementTestPlayer());
+        const { panel, panelPromise } = await openPanelWithSources(createTestPlayer());
         await flushMicrotasks();
         const serverPassSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-server-passes]');
 
@@ -2630,6 +2927,143 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             .toBe(translateSourceString('WebGPUServerDecodersUnavailable', SERVER_UNAVAILABLE_FAILURE));
         expect(serverPassSelect.options[0].textContent).toBe(translateSourceString('WebGPUServerPassesUnavailable', SERVER_UNAVAILABLE_FAILURE));
         expect(serverPassSelect.disabled).toBe(true);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('moves a shader pass file up and down, saving the new order and applying the reordered preset', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        const saturationSourceKey = await addPassSource(SATURATION_PASS_SOURCE);
+        const invertSourceKey = await addPassSource(INVERT_PASS_SOURCE);
+        storePresentation({
+            files: [ { parameters: {}, sourceKey: saturationSourceKey }, { parameters: {}, sourceKey: invertSourceKey } ],
+            hdrOutput: false
+        });
+
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ SATURATION_PASS_NAME, INVERT_PASS_NAME ]);
+        // The first file cannot move up, nor the last down
+        expect(requirePanelElement<HTMLButtonElement>(panel, '[data-move-file="0"][data-move-direction="-1"]').disabled).toBe(true);
+        expect(requirePanelElement<HTMLButtonElement>(panel, '[data-move-file="1"][data-move-direction="1"]').disabled).toBe(true);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-move-file="0"][data-move-direction="1"]').click();
+        await flushMicrotasks();
+        expect(readSavedSourceKeys()).toEqual([ invertSourceKey, saturationSourceKey ]);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([
+            { parameters: {}, source: INVERT_PASS_SOURCE },
+            { parameters: {}, source: SATURATION_PASS_SOURCE }
+        ]);
+        expect(readPassRows(panel).map((row: PassRow): string => row.name)).toEqual([ INVERT_PASS_NAME, SATURATION_PASS_NAME ]);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-move-file="1"][data-move-direction="-1"]').click();
+        await flushMicrotasks();
+        expect(readSavedSourceKeys()).toEqual([ saturationSourceKey, invertSourceKey ]);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([
+            { parameters: {}, source: SATURATION_PASS_SOURCE },
+            { parameters: {}, source: INVERT_PASS_SOURCE }
+        ]);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('saves the WebGPU failure warning switch and restores its default', async () => {
+        const defaultWarning = createDefaultWebGPUUserSettings().osd.webGPUFailureWarning;
+        const { panel, panelPromise } = await openPanelWithSources(createTestPlayer());
+        const warningCheckbox = requirePanelElement<HTMLInputElement>(requireWindow(panel, 'interface'), '[data-setting-checkbox="webGPUFailureWarning"]');
+        expect(warningCheckbox.checked).toBe(defaultWarning);
+
+        warningCheckbox.checked = !defaultWarning;
+        warningCheckbox.dispatchEvent(new Event('change'));
+        expect(readSavedSettings().osd.webGPUFailureWarning).toBe(!defaultWarning);
+
+        requirePanelElement<HTMLButtonElement>(panel, '[data-default-setting="webGPUFailureWarning"]').click();
+        expect(warningCheckbox.checked).toBe(defaultWarning);
+        expect(readSavedSettings().osd.webGPUFailureWarning).toBe(defaultWarning);
+        requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
+        await panelPromise;
+    });
+
+    it('offers the last WebGPU failure report only when the page has one, and opens it', async () => {
+        const firstOpen = await openPanelWithSources(createTestPlayer());
+        expect(requirePanelElement<HTMLButtonElement>(firstOpen.panel, '.webgpuSettingsShowFailureReport').disabled).toBe(true);
+        requirePanelElement<HTMLButtonElement>(firstOpen.panel, '.webgpuSettingsClose').click();
+        await firstOpen.panelPromise;
+
+        const report = { diagnosis: { cause: 'gpu-blocklisted' }, facts: {} } as unknown as WebGPUFailureReport;
+        failureWarningMockState.report = report;
+        const secondOpen = await openPanelWithSources(createTestPlayer());
+        const reportButton = requirePanelElement<HTMLButtonElement>(secondOpen.panel, '.webgpuSettingsShowFailureReport');
+        expect(reportButton.disabled).toBe(false);
+        reportButton.click();
+        expect(showWebGPUFailureReport).toHaveBeenCalledOnce();
+        expect(showWebGPUFailureReport).toHaveBeenCalledWith(report);
+        requirePanelElement<HTMLButtonElement>(secondOpen.panel, '.webgpuSettingsClose').click();
+        await secondOpen.panelPromise;
+    });
+
+    it('restores each window\'s settings from its title bar reset, leaving the other windows\' settings', async () => {
+        const presentationMethods = createPresentationPlayerMethods();
+        storePresentation({
+            blackBarCrop: true,
+            deinterlaceMode: 'single-rate',
+            files: [ { parameters: {}, sourceKey: await addPassSource(INVERT_PASS_SOURCE) } ],
+            hdrOutput: true
+        });
+        const defaults = createDefaultWebGPUUserSettings();
+        const { panel, panelPromise } = await openPanelWithSources(createPresentationTestPlayer(presentationMethods));
+        const forceStereoCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="forceStereoDownmix"]');
+        forceStereoCheckbox.checked = true;
+        forceStereoCheckbox.dispatchEvent(new Event('change'));
+
+        // Pipeline: black bar crop, deinterlacing, and the shader passes, back to the server's default preset; HDR output belongs to the picture window
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'pipeline'), '.webgpuSettingsResetPipeline[data-reset-window="pipeline"]').click();
+        await flushMicrotasks();
+        expect(readSavedPresentation()).toEqual({ ...defaults.presentation, hdrOutput: true });
+        expect(presentationMethods.setBlackBarCropEnabled).toHaveBeenLastCalledWith(defaults.presentation.blackBarCrop);
+        expect(presentationMethods.setDeinterlaceMode).toHaveBeenLastCalledWith(defaults.presentation.deinterlaceMode);
+        expect(presentationMethods.setPresentationPreset).toHaveBeenLastCalledWith([]);
+        expect(presentationMethods.setHDROutputEnabled).not.toHaveBeenCalled();
+        expect(readPassRows(panel)).toEqual([]);
+
+        // Picture: tone mapping, the display, and HDR output
+        commitNumber(requirePanelElement<HTMLInputElement>(panel, '[data-setting-number="brightness"]'), '0.3');
+        const operatorSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="operator"]');
+        operatorSelect.value = 'aces';
+        operatorSelect.dispatchEvent(new Event('change'));
+        expect(readSavedSettings().render.settings.display.brightness).toBe(0.3);
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'picture'), '.webgpuSettingsResetRender[data-reset-window="picture"]').click();
+        await flushMicrotasks();
+        expect(readSavedSettings().render.settings.display.brightness).toBe(defaults.render.settings.display.brightness);
+        expect(readSavedSettings().render.settings.toneMapping.operator).toBe(defaults.render.settings.toneMapping.operator);
+        expect(operatorSelect.value).toBe(defaults.render.settings.toneMapping.operator);
+        expect(readSavedPresentation().hdrOutput).toBe(defaults.presentation.hdrOutput);
+        expect(presentationMethods.setHDROutputEnabled).toHaveBeenLastCalledWith(defaults.presentation.hdrOutput);
+
+        // Interface: the settings button placement and the failure warning
+        const placementSelect = requirePanelElement<HTMLSelectElement>(panel, '[data-setting-select="settingsButtonPlacement"]');
+        placementSelect.value = 'controls-end';
+        placementSelect.dispatchEvent(new Event('change'));
+        const warningCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="webGPUFailureWarning"]');
+        warningCheckbox.checked = !defaults.osd.webGPUFailureWarning;
+        warningCheckbox.dispatchEvent(new Event('change'));
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, 'interface'), '.webgpuSettingsResetInterface[data-reset-window="interface"]').click();
+        expect(readSavedSettings().osd).toEqual(defaults.osd);
+        expect(placementSelect.value).toBe(defaults.osd.settingsButtonPlacement);
+        expect(warningCheckbox.checked).toBe(defaults.osd.webGPUFailureWarning);
+        // Once for the change, once for the reset
+        expect(applySettingsButtonPlacement).toHaveBeenCalledTimes(2);
+
+        // Playback, in the master's title bar
+        const customDecodeCheckbox = requirePanelElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
+        customDecodeCheckbox.checked = false;
+        customDecodeCheckbox.dispatchEvent(new Event('change'));
+        requirePanelElement<HTMLButtonElement>(requireWindow(panel, MASTER_WINDOW_ID), '.webgpuSettingsResetPlayback[data-reset-window="playback"]').click();
+        expect(readSavedSettings().playback).toEqual(defaults.playback);
+        expect(customDecodeCheckbox.checked).toBe(defaults.playback.enableCustomDecode);
+        expect(requirePanelElement<HTMLElement>(panel, '[data-playback-status]').textContent).toBe(translateSourceString('WebGPUPlaybackChangesSavedStatus'));
+
+        // The audio window's settings stayed through every other window's reset
+        expect(readSavedSettings().audio.forceStereoDownmix).toBe(true);
         requirePanelElement<HTMLButtonElement>(panel, '.webgpuSettingsClose').click();
         await panelPromise;
     });

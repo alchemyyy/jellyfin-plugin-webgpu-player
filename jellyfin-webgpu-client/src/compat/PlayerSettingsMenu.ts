@@ -20,7 +20,7 @@ import {
 // A click on the OSD's settings button arms an observer for the action sheet the host then opens, and the add-on appends its items to that sheet.
 // The host closes the sheet on any item click and rejects its menu promise for ids it does not know, as for a cancel, so the add-on runs its item once the sheet has closed
 
-/** The player the menu enables and disables, and whose settings panel it opens */
+/** The player the menu enables and disables, and whose settings windows it opens */
 export type PlayerSettingsMenuPlayer = SettingsEntryPlayer & {
     canPlayItem: (item: unknown, playOptions?: unknown) => boolean
 };

@@ -49,7 +49,7 @@ An open tab keeps the add-on build it loaded, its decode workers included, until
   - when the wait ends, it reloads only if no request is open and `playbackManager.isPlaying()` is false; a check that throws counts as playing.
 - It never reloads where a reload could lose the user's input.
   The page must be a library page, by the first segment of the hash route: `home`, `details`, `list`, `movies`, `tv`, `music`, `livetv`, `homevideos`, `musicvideos`, `books`, or `boxsets`.
-  No dialog may be open (`.dialogContainer`, `dialog[open]`), which covers action sheets and the settings panel, and no input, select, text area, or editable element may have focus.
+  No dialog may be open (`.dialogContainer`, `dialog[open]`), which covers action sheets, and no input, select, text area, or editable element may have focus; the settings windows open only over the player page, which never reloads.
   The dashboard, the plugin and user settings pages, search, the queue, and the player page never reload; a page that fails the check waits another 10 seconds and checks again, until a playback starts.
 - It reloads at most once per server entry in a tab: `sessionStorage` key `webGPUPlayerReloadedForEntry` holds the entry it last reloaded for, and a catalog naming that entry is ignored, so a stale `index.html` cannot loop.
   A guard that cannot be stored leaves the page as it is.
@@ -75,7 +75,7 @@ A capability probe's browser call can crash the browser's page process, as WebKi
 The engine records each browser call (a step) in flight, so the next page of that browser finds the crash and blocks the exact call, not the whole test, for that build and browser.
 When several calls were in flight, the next round retries them one at a time, and the engine may then keep a ceiling on the calls a playback's tests run at once.
 The engine's [Probes that stop the page](https://alchemyyy.github.io/WebGPU-Player/routes.html#probes-that-stop-the-page) and its [decisions](https://alchemyyy.github.io/WebGPU-Player/decisions.html) have the rules.
-The settings panel lists the blocked and suspect steps grouped by test, from the engine's `crashedProbes`.
+The settings' master window lists the blocked and suspect steps grouped by test, from the engine's `crashedProbes`.
 `ProbeCrashReports.ts` sends each crash to the server, so an administrator can read it without the browser's developer tools.
 
 - `index.ts` starts it once the host's ServerConnections is bound and before the warm-up, whose first read of the probe store finds a crash of an earlier page.
@@ -86,7 +86,7 @@ The settings panel lists the blocked and suspect steps grouped by test, from the
 - The route accepts 1 to 16 crashes, a probe name of 1 to 64 characters, and 0 to 16 steps of 1 to 96 characters each, every string printable ASCII, and refuses anything else whole with 400.
   The add-on keeps what fits: it leaves out a crash whose name the route refuses and the steps it refuses, and sends at most the first 16 crashes and 16 steps of each.
 - A finding while no user is signed in waits for the next `localusersignedin` and is sent then, with any other waiting crashes, up to the same 16.
-- A failed post logs one console warning and is not tried again; the crash stays in the browser's stored verdicts and in the settings panel.
+- A failed post logs one console warning and is not tried again; the crash stays in the browser's stored verdicts and in the settings' master window.
   Nothing it does throws into the engine or holds a probe or a playback.
 - The server answers 204 and writes one warning per crash to its log, naming the probe, its steps, the browser's User-Agent, and the Jellyfin client, device, and client version from the authorization header, `unknown` where it names none.
   An administrator reads them under Dashboard > Logs.
@@ -109,6 +109,24 @@ A playback that leaves the WebGPU route says why only in the browser's console, 
 - The server answers 204 and logs each fallback with its reason, its detail (`no detail` when empty), and the client, as it logs a probe crash.
   `presentation`, `device-lost`, and `custom-playback-fallback` are warnings; `custom-playback-declined` is information, since a declined source is the route working as designed, as when the server transcodes.
   The lines start with `WebGPU Player: WebGPU presentation fell back`, `WebGPU Player: the WebGPU device was lost`, `WebGPU Player: custom playback fell back`, and `WebGPU Player: custom playback declined a source`.
+
+## WebGPU failure warning
+
+When WebGPU itself fails, the video still plays, through the browser's own video player, so without a word the user would only see HDR tone mapping, the WebGPU passes, and the decoders that need WebGPU stop working.
+`WebGPUFailureWarning.ts` tells the user once per page load, in a window at the center of the screen, what failed, the likely cause, and how to fix it in their browser.
+
+- `WebGPUPlayer.ts` passes it every presenter fallback, every lost device, and every source custom playback declined because the runtime lacks something.
+  A presenter fallback of `insecure-context`, `gpu-unavailable`, `adapter-unavailable`, `device-request-failed`, `device-recovery-failed`, `canvas-context-unavailable`, `canvas-configuration-failed`, or `pipeline-creation-failed`, and a runtime without a secure context or `navigator.gpu`, are failures of WebGPU itself; every other reason is about the content or the route, and shows nothing.
+  A lost device alone shows nothing, since the presenter may recover; it becomes a fact of the next failure's report.
+- Each failure is diagnosed, in a chunk of its own (`webgpu-failure-warning`) that a page whose WebGPU works never loads, and the console logs one line, `WebGPU failed (<kind>: <reason>); diagnosis: <cause> (<confidence>)`.
+  The first failure of a page opens the window when the user setting `osd.webGPUFailureWarning` (client default `webGPUFailureWarning`) is on, the default; the Interface window's "Show the WebGPU failure report" opens the last report on request, also while the warning is off.
+- `WebGPUFailureDiagnosis.ts` gathers the facts, each read bounded by a timeout: the engine's reason and detail, the secure context, `navigator.gpu`, what `requestAdapter()` returns, and without an adapter what `requestAdapter({ forceFallbackAdapter: true })` returns, the adapter's `info`, the CPU architecture, the WebGL renderer (`WEBGL_debug_renderer_info`; not on the Firefox family, where LibreWolf puts WebGL behind a permission prompt), and the browser.
+  From them it names the likely cause, how sure that is (`certain`, `likely`, or `possible`), and the steps to try in order: `insecure-context`, `webgpu-not-shipped` (the browser has no WebGPU on this system or version yet), `webgpu-missing` (turned off), `hardware-acceleration-off`, `software-renderer` (SwiftShader, WARP, llvmpipe: Remote Desktop, a virtual machine, a missing driver, or a flag such as D3D11 WARP), `gpu-blocked` (no adapter for a hardware renderer: a blocked GPU or driver), `gpu-crashed`, `device-lost`, `device-failed`, `rendering-failed`, or `unknown`.
+- `BrowserIdentity.ts` reads the browser from the user agent, its brands, and `navigator.brave`, and holds each browser's guide: Chrome, Edge, Brave, Opera, and Vivaldi (their `<browser>://gpu` and `<browser>://flags` pages, and the graphics acceleration setting), Firefox, Zen, and LibreWolf (`about:support`, `about:preferences`, and the `about:config` preferences `dom.webgpu.enabled` and `gfx.webgpu.ignore-blocklist`, and LibreWolf's `librewolf.overrides.cfg`), and Safari (its WebGPU feature flag on macOS and iOS, and Lockdown Mode).
+  Zen and LibreWolf look like Firefox and Vivaldi like Chrome to a page, so the window's browser select starts at the detected browser and rewrites the steps for the one the user picks; on iOS and iPadOS every browser is Safari's engine, so the steps are Safari's.
+- The window (`ui/WebGPUFailureDialog.ts`) closes with its X, its Close button, or Escape, and gives the focus back; addresses and preferences show as chips with a copy button, since a page cannot open a browser's own pages.
+  Its Details list the real facts, and Copy report copies them with the diagnosis as plain text, for whoever runs the server.
+  Unchecking "Show this warning when WebGPU fails" saves the setting off.
 
 ## Decoder test timing
 
@@ -179,7 +197,7 @@ The add-on supplies each one itself:
 | A listener for source renegotiation | None: the player raises `PlayerEvent.Error`, and PlaybackManager's error retry ladder asks for a transcode |
 
 The OSD button sits before the host's settings button (`before-settings`, the default), after it (`after-settings`), at the end of the control bar (`controls-end`), or not in the bar (`settings-menu`).
-`applySettingsButtonPlacement()` places it anew on every OSD page; the settings panel calls it on a change, and a change of the server defaults runs it too.
+`applySettingsButtonPlacement()` places it anew on every OSD page; the settings windows call it on a change, and a change of the server defaults runs it too.
 The button shows only while the WebGPU player is PlaybackManager's current player.
 
 The host's player settings menu has no seam for other items, so a click on the OSD's settings button arms an observer of `document.body`.
@@ -205,13 +223,14 @@ Every setting is the user's own in the browser profile, else the default an admi
 - `ServerClientDefaults.ts` reads the server's defaults from `GET WebGPUPlayer/ClientDefaults` once a user is signed in, at plugin load and on each `localusersignedin`, and keeps the last read per server in localStorage under `webGPUPlayerClientDefaults-<serverId>`, bound to no user.
   The plugin applies that cached read first, so the page's first settings already follow the server's defaults, and a server with none cached starts from none, so another server's defaults never carry over; a failed read keeps the defaults it has.
   `ClientDefaults.ts` holds them as one flat map, a key per setting, and each setting reads its key's value as it reads a stored value of its own, so a value it refuses leaves the built-in default.
-  The settings panel opens, and a new playback negotiates, once a read in progress settles.
-- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the speaker layout, binaural rendering, the output device, the playback preferences, the presentation settings, and the settings button placement in localStorage under `<userId>-webGPUPlaybackSettings` (version 5).
+  The settings windows open, and a new playback negotiates, once a read in progress settles.
+- `WebGPUUserSettings.ts` stores render controls, the automatic peak, downmix, the speaker layout, binaural rendering, the output device, the playback preferences, the presentation settings, the settings button placement, and the WebGPU failure warning in localStorage under `<userId>-webGPUPlaybackSettings` (version 5).
   A save stores only the values that differ from the defaults at that moment, arrays whole, so every other setting follows the defaults, and a later default the server sets reaches it.
   Restoring a setting's default drops it from storage; a value set equal to its default also follows the default from then on.
 - Not defaultable: the audio output device, whose id belongs to the browser, the user's own decoder packages, and the decoder test results, which are a cache.
-- The settings button placement says where the video OSD offers the settings panel: before the host's settings button, the default, after it, at the end of the OSD's controls, or as an item of the host's player settings menu.
+- The settings button placement says where the video OSD offers the settings windows: before the host's settings button, the default, after it, at the end of the OSD's controls, or as an item of the host's player settings menu.
   A change applies at once through `applySettingsButtonPlacement` of `compat/SettingsEntryPoints.ts`.
+- The WebGPU failure warning (`osd.webGPUFailureWarning`, client default key `webGPUFailureWarning`), on by default, says whether a failure of WebGPU itself opens the [WebGPU failure warning](#webgpu-failure-warning).
 - The speaker layout is the layout client-decoded audio plays to: `auto`, the default, or `stereo`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`, or `7.1.4`, and a stored value outside them loads as `auto`.
   Auto follows the output's channel count: 12 channels or more take 7.1.4, 10 or 11 take 7.1.2, 8 or 9 take 7.1, 6 or 7 take 5.1, and fewer take stereo, so 5.1.2 and 5.1.4 apply only when chosen.
   A chosen layout wider than the output resolves as auto, and force stereo makes it stereo.
@@ -226,36 +245,79 @@ Every setting is the user's own in the browser profile, else the default an admi
 - The presentation settings are HDR output, off by default, black bar crop, off by default, deinterlacing, double rate by default, and the user's WGSL shader files in order, each with its parameter values and its source's key.
   Deinterlacing takes the engine's modes, `double-rate`, `single-rate`, and `off`, and a stored value outside them loads as double rate.
   A file holds one or more passes, as an mpv user shader does, and its passes run in file order and share its parameter values.
-  The panel offers a field for each parameter and each constant the file's passes declare, since the engine takes values for both; a constant's change plans the passes again, as a DEFINE's does in mpv.
+  The pipeline window offers a number field for each parameter and each constant the file's passes declare, since the engine takes values for both; a constant's change plans the passes again, as a DEFINE's does in mpv.
   A file added from the server's passes also keeps its origin, the server's file name and SHA-256, so a newer version on the server replaces its source.
   A preset holds at most 16 files of at most 16,777,216 characters each; the limit only keeps a mistaken pick, such as a media file, out of storage.
   Stored files of `null` follow the server's [default shader preset](client-defaults.md#the-default-shader-preset-on-clients), which is also the built-in default; any stored list, even an empty one, is the user's own preset.
 - The sources live in IndexedDB, in the `passSources` store of the `webGPUPlayerPresentation` database (`PresentationPassStore.ts`), since localStorage holds about 5 MB for everything on the origin.
-  Each added file's source gets a key that counts up from 1, and a source goes once neither the panel's settings, the stored settings, nor the default shader files hold its key.
+  Each added file's source gets a key that counts up from 1, and a source goes once neither the open windows' settings, the stored settings, nor the default shader files hold its key.
 - Version 4 stored every setting; it loads with its values equal to the built-in defaults following the defaults, and the rest as the user's; its empty shader file list was the default then, so it follows the server's default preset.
   Settings of any other version are not read, so they load as the defaults.
 - HDR output, black bar crop, and deinterlacing apply when `WebGPUPlayer` is constructed, at plugin load, through the presenter's `setHDROutputEnabled`, `setBlackBarCropEnabled`, and `setDeinterlaceMode`, so every playback starts with them; the stored files, or the default shader files for a user who follows them, load at the first play that presents through WebGPU, since reading IndexedDB is work that waits for a play request.
-  Every change in the settings panel applies live, and the presenter keeps the preset, HDR output, black bar crop, and deinterlacing across sessions; a stored preset that loads after a panel change yields to it.
+  Every change in the settings windows applies live, and the presenter keeps the preset, HDR output, black bar crop, and deinterlacing across sessions; a stored preset that loads after a change in the windows yields to it.
   When the server's defaults change, the player applies HDR output, black bar crop, and deinterlacing again, and loads the default shader files again when the default shader preset changed.
-- The settings panel's sections are player controls (the settings button placement), playback, tone mapping and display, presentation (HDR output, black bar crop, and deinterlacing), shader passes, audio, and decoders.
-  Each setting restores its default, the server's when it sets one, from an icon button beside it, and the audio and full resets restore the defaults the same way.
-  A checkbox or select setting with a description has an info button before its restore button, which shows or hides the description, hidden at first; a numeric setting shows its description as its tooltip.
-  The "Clear decoder test results" button and the decoders section's title each have such an info button beside them for their descriptions.
-  The controls render from `ui/SettingDefinitions.ts`, which holds each numeric setting's label, description, range, and unit, and each select's options.
-- The playback section's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again, a probe that once stopped the page included.
+- The master window's "Clear decoder test results" button calls the engine's `clearStoredCapabilityProbeVerdicts`, so the next negotiation probes this browser again, a probe that once stopped the page included.
   The engine keeps those verdicts in localStorage under its own key, apart from these settings.
-- Below that button, the panel names the probes that stopped a page of this browser, from the engine's `readStoredCapabilityProbeVerdictState()`, each with its steps in parentheses, such as `native-audio (decode aac)`.
-  Probe names and step labels show as the engine records them, untranslated; the line is hidden when there are none, and the panel reads it when it opens and again after the button clears the results.
-- The shader pass section adds files from this device, or from the passes the server offers, which download when added.
-  It shows the default shader files while the user follows them; any change stores the list as the user's own, and "Restore default shader passes" follows the default again.
-  The panel opens once `ensureDefaultPresentationFiles()` settles, and only the user's own preset takes the server's newer file versions in place.
-  The decoder section lists the user's own packages and names the server's.
-- The settings panel shows each file with the state of each of its passes from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
+- Below that button, the master window names the probes that stopped a page of this browser, from the engine's `readStoredCapabilityProbeVerdictState()`, each with its steps in parentheses, such as `native-audio (decode aac)`.
+  Probe names and step labels show as the engine records them, untranslated; the line is hidden when there are none, and the window reads it when it opens and again after the button clears the results.
+- The pipeline window's WebGPU Passes add files from this device, or from the passes the server offers, which download when added; each file moves up or down the list, which is the order its passes run in, and goes with its remove button.
+  The list shows the default shader files while the user follows them; any change stores the list as the user's own, and "Restore default WebGPU passes" follows the default again.
+  The windows open once `ensureDefaultPresentationFiles()` settles, and only the user's own preset takes the server's newer file versions in place.
+  Its decoders list the user's own packages, which the user adds there as `.wasm` files, and name the server's.
+- Each file shows the state of each of its passes from the presenter's plan report: active, waiting for the next playback, or the failed check and its detail.
   A file whose source the store does not hold shows `source-missing` with its key, stays out of the preset, and can be removed.
-  A source the store refuses, or a settings save the browser refuses, is reported in the section's status with the browser's error.
+  A source the store refuses, or a settings save the browser refuses, is reported in the window's status with the browser's error.
 - The player preference (Auto, WebGPU, or HTML) is the user setting `preferredVideoPlayer`, stored as `<userId>-preferredVideoPlayer`, and the WebGPU downmix algorithm is `<userId>-webGPUAudioDownmixAlgorithm`.
   Both are read through the `userSettings` shim: the stored value, else the server's default, else Auto and AC-4; a value equal to the default is stored empty, so it follows the default.
   Earlier versions stored the built-in value itself on a restore, a reset, or a save of the Playback page, so the shim's first read or write for a user empties a stored Auto or built-in algorithm, as version 4 settings migrate, and marks the user with `<userId>-webGPULegacyChoicesMigrated`.
+
+### The settings windows
+
+The OSD's WebGPU Settings button opens the settings as windows over the player, in the style of a game client's GUI (`ui/WebGPUPlaybackSettingsDialog.ts` over `ui/windows/`).
+
+| Window | Holds |
+| --- | --- |
+| WebGPU Settings, the master | The list of the other windows, the playback settings (custom decode, HDR tone mapping, GPU decode slicing, decoder tests), the decoder test results, the keyboard shortcuts, and Reset all |
+| Picture | Tone mapping and the display controls, and HDR output |
+| Pipeline | Deinterlacing and black bar crop, the graph of the active presentation plan, the WebGPU Passes, and the decoders |
+| Audio | The output, the speaker layout, binaural rendering, the downmix algorithm, force stereo, and the downmix levels |
+| Interface | The settings button placement, the WebGPU failure warning, and the last failure's report |
+| Playback Info | The host's own playback info overlay, which the windows place and move like one of theirs |
+
+- The master window is pinned to the room's start corner and can neither move, collapse, nor hide; its title bar resets the window layout and closes the settings.
+  Its list shows or hides every other window, and the digits 1 to 9 do the same; each section window's title bar has its reset, a button's width of space, its collapse square, and its hide button.
+  A window shows expanded whenever it appears: at the first opening, after the layout reset, which also expands the windows that show, and when the list or a digit shows it; only the user collapses a window, which stays collapsed while it shows, the next opening included.
+  A window's reset restores the defaults of its settings; Reset all restores every setting's.
+- A section window moves by dragging its title bar, or by the arrow keys on its title (Shift moves further); Enter on the title collapses or expands it, Home returns it to its slot, and Delete hides it.
+  The playback info moves by a press anywhere on it but its close button.
+  A drag measures the windows once, as it starts moving, and then reads nothing from the page: each frame, the dragged window follows the pointer by a CSS transform on a layer of its own, and the others make room by the layout over the sizes measured at the start, which writes only the styles that changed.
+  Any other layout sets every window's width first and then reads every size, so the page lays itself out once per layout, however many windows show.
+- The room the windows share is the viewport within a margin, below the OSD's top bar and above its bottom controls, whose height the windows keep while the controls hide; a room shorter than 12 ems above them extends to the viewport's bottom.
+- `ui/windows/SettingsWindowLayout.ts` places the shown windows, in order: the master, the windows the user placed, the one the user drags or works in first, then the most recent placement, then the rest in list order.
+  A window keeps where the user put it while it fits inside the room without overlapping a window placed before it.
+  Otherwise it moves to the nearest free place at its full size; without one it shrinks into the free place with the most room, at least its title bar and 6 ems of content, which then scrolls; and without that it stacks where it covers the least of the others, covering the master least of all.
+  Windows the user never placed take slots in reading order, from the master along the top row, then below, each slot as tall as the window's title bar, so a window keeps its column and its order as windows expand and collapse.
+  A window in its slot sits below the windows above it in its column, so one that expands pushes those below it down; one its column no longer holds moves to the free place nearest its slot.
+  A dropped window takes the place it was dropped on, and the windows it covers make room; once the room grows again, every window returns to where the user put it.
+- Where the user put a window is stored as its distance from the room's nearer side on each axis, so a window near the right or the bottom edge follows that edge as the player resizes; vertically the distance is to the window's title bar, so expanding a window grows it downward.
+- `ui/windows/SettingsWindowState.ts` stores which windows show, which are collapsed, and where the user put each in localStorage under `<userId>-webGPUSettingsWindows` (version 1), apart from the settings: the layout belongs to this browser and its screen, has no server default, and the settings' resets leave it.
+- The playback info shows when the windows open, and hides when they close if they showed it; playback info that showed before they opened stays.
+  Closing it with its own button hides it at every later opening until the master's list shows it again; the host hiding it by itself, as when the playback ends, changes nothing.
+- The pipeline graph, `ui/pipeline/`, is the engine sandbox's turned to run top to bottom, so it fits a window's width: the source with its route, one node per planned pass that leads to the canvas, and the canvas, with each texture's edges from its writer to its readers.
+  A pass the canvas cannot be reached from, such as the black bar analysis, whose result the CPU reads, is a side pass: it gets no node, so the chain stays straight, and a list below the graph names it with what it reads, before the passes the plan left out.
+  A node shows the pass's label without the engine's `Presentation` prefix, and a pass of the user's shader files in the accent color.
+  Edges between neighbours run straight down; an edge that skips nodes arcs on the right, and a history read arcs back up on the left, dashed and labelled with its offset; each arrowhead points along its curve's last stretch, from a base one arrowhead's length back on the curve.
+  The nodes take the window's width, and a new width lays the graph out again.
+  It reads `WebGPUPlayer.getActivePresentationPlan()`, `getPresentationPlanReport()`, and `getPresentationRoute()` every 500 ms while the pipeline window shows its content, and draws again only when one of them changed.
+- Keys pressed in the windows never reach the video OSD, which would pause on Space, seek on digits and arrows, and change the volume on ArrowUp; Escape closes the settings, and F6 and Shift+F6 move between the windows.
+
+Every control has a hover and a focus indicator, a reset button that restores its default, the server's when it sets one, and an info button that shows or hides its description; Alt+R and Alt+I do the same for the control holding focus.
+The controls render from `ui/SettingDefinitions.ts` through `ui/controls/SettingControls.ts`:
+
+- A numeric setting has a slider over a reasonable span (`sliderRange`) and a number field over the engine's whole range (`range`), so a typed value may go past the slider, which then rests at its end, dimmed, with a tooltip saying so.
+- A number field applies a value only when its decrease or increase button is pressed, held to repeat, when ArrowUp, ArrowDown, Page Up, or Page Down steps it, or when Enter commits a typed value, clamped into the range; Escape, or leaving the field, drops typed text that was not committed.
+- A select row puts its label and its info and reset buttons on a line above the select, which takes the row's width; a window wider than 36 ems puts them on one line, with an 18 em select.
+  Every text too long for its place, a select's choice included, ends in an ellipsis, with the whole text as its tooltip.
 
 ## Build and check
 

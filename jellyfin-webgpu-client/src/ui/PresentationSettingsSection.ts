@@ -34,16 +34,22 @@ import {
     type StoredPresentationFile,
     type WebGPUUserSettings
 } from '../WebGPUUserSettings';
-import { createSettingOptionsHTML, DEINTERLACE_MODE_OPTIONS } from './SettingDefinitions';
 import {
-    createDescribedSettingButtonsHTML,
-    getSettingDescriptionId,
-    HIDDEN_CLASS,
-    setStatus,
-    translateToHTML
-} from './SettingsPanelHTML';
+    bindNumberFields,
+    createActionControlHTML,
+    createButtonHTML,
+    createCheckboxControlHTML,
+    createIconButtonHTML,
+    createNumberFieldHTML,
+    createSelectControlHTML,
+    setNumberFieldValue
+} from './controls/SettingControls';
+import type { NumericBounds } from './controls/NumericEntry';
+import { createSettingOptionsHTML, DEINTERLACE_MODE_OPTIONS } from './SettingDefinitions';
+import { HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
-// The presentation and shader pass sections of the playback settings panel: HDR output, black bar crop, deinterlacing, and the user's WGSL shader files in this browser.
+// The presentation settings of the settings windows: HDR output in the picture window, and in the pipeline window black bar crop, deinterlacing,
+// and the user's WGSL shader files in this browser, which run in the order listed and can be moved up and down the list.
 // A file comes from this device or from the passes the server offers, which download when the user adds one.
 // Until the user edits the list, it shows the server's default preset, and any edit makes the list the user's own; restoring the default follows the server's preset again.
 // The files' sources live in the pass source store in IndexedDB, and the settings hold each file's key
@@ -51,11 +57,14 @@ import {
 const HDR_OUTPUT_SETTING_KEY = 'hdrOutput';
 const BLACK_BAR_CROP_SETTING_KEY = 'blackBarCrop';
 const DEINTERLACE_MODE_SETTING_KEY = 'deinterlaceMode';
+const SHADER_PASSES_KEY = 'shaderPasses';
+const SERVER_PASSES_KEY = 'serverPasses';
 // The pass files the picker offers: WGSL sources, which are plain text
 const PASS_FILE_TYPES = `${PASS_FILE_EXTENSION},text/plain`;
-// A float parameter steps freely; integer parameters step by whole numbers
-const FLOAT_PARAMETER_STEP = 'any';
-const INTEGER_PARAMETER_STEP = '1';
+// An integer parameter steps by whole numbers; a float one by a power of ten near a hundredth of its range
+const INTEGER_PARAMETER_STEP = 1;
+const FLOAT_PARAMETER_STEP_SHARE = 100;
+const FALLBACK_FLOAT_PARAMETER_STEP = 0.01;
 const DUPLICATE_NAME_REASON = 'duplicate-name';
 const LIST_SEPARATOR = ', ';
 
@@ -63,22 +72,25 @@ export type PresentationSectionContext = Readonly<{
     cleanupCallbacks: Array<() => void>
     getSettings: () => WebGPUUserSettings
     isActive: () => boolean
+    /** Holds every window, so the controls of each are found from it */
     panel: HTMLElement
     player: WebGPUPlayer
-    /** Persists settings and synchronizes every control of the panel; returns what failed when the browser refused the write, else null */
+    /** Persists settings and synchronizes every control of the windows; returns what failed when the browser refused the write, else null */
     saveSettings: (settings: WebGPUUserSettings) => string | null
-    /** What the server offers, read once as the panel opens; it rejects when the server cannot be reached */
+    /** What the server offers, read once as the windows open; it rejects when the server cannot be reached */
     serverCatalog: Promise<ServerModuleCatalog>
 }>;
 
 export type PresentationSectionController = Readonly<{
     /** Hands the settings' HDR output, black bar crop, deinterlacing, and shader files to the player */
     apply: () => void
+    /** Restores the pipeline window's defaults: black bar crop, deinterlacing, and the server's default shader preset */
+    restorePipelineDefaults: () => void
     /** Shows the settings' HDR output, black bar crop, deinterlacing, and shader files, and deletes the sources of files the settings no longer hold */
     synchronize: () => void
 }>;
 
-/** One pass of a stored file as the panel shows it: its manifest when its header parses, else what failed. */
+/** One pass of a stored file as the windows show it: its manifest when its header parses, else what failed. */
 type PassView = Readonly<{
     headerFailure: string | null
     manifest: PassManifest | null
@@ -114,7 +126,7 @@ function describeStorageFailure(error: unknown): string {
 function requireSectionElement<ElementType extends Element>(panel: ParentNode, selector: string): ElementType {
     const element = panel.querySelector<ElementType>(selector);
     if (!element) {
-        throw new Error(`WebGPU settings panel is missing ${selector}`);
+        throw new Error(`WebGPU settings windows are missing ${selector}`);
     }
     return element;
 }
@@ -161,6 +173,18 @@ function getPassFileParameters(views: readonly PassView[]): PassParameter[] {
     return parameters;
 }
 
+/** Returns the bounds a parameter's field keeps its value in: its declared range, stepped by whole numbers for integers. */
+function getParameterBounds(parameter: PassParameter): NumericBounds {
+    if (parameter.type !== 'f32') {
+        return { maximum: parameter.maximum, minimum: parameter.minimum, step: INTEGER_PARAMETER_STEP };
+    }
+    const range = parameter.maximum - parameter.minimum;
+    const step = Number.isFinite(range) && range > 0 ?
+        10 ** Math.floor(Math.log10(range / FLOAT_PARAMETER_STEP_SHARE)) :
+        FALLBACK_FLOAT_PARAMETER_STEP;
+    return { maximum: parameter.maximum, minimum: parameter.minimum, step };
+}
+
 /** Returns what the report says about a pass; a later pass with an earlier pass's name is its duplicate. */
 function getPassState(view: PassView, report: PlanReport, duplicate: boolean): string {
     if (view.headerFailure !== null) {
@@ -180,46 +204,52 @@ function getPassState(view: PassView, report: PlanReport, duplicate: boolean): s
 
 function createParameterHTML(file: StoredPresentationFile, fileTitle: string, parameter: PassParameter, fileIndex: number): string {
     const value = file.parameters[parameter.name] ?? parameter.defaultValue;
-    const step = parameter.type === 'f32' ? FLOAT_PARAMETER_STEP : INTEGER_PARAMETER_STEP;
+    const bounds = getParameterBounds(parameter);
+    const rangeText = globalize.translate('WebGPUClientDefaultsParameterRange', parameter.defaultValue, parameter.minimum, parameter.maximum);
     return `
-        <label class="webgpuSettingsPassParameter">
-            <span>${escapeHtml(parameter.name)}</span>
-            <input
-                aria-label="${translateToHTML('WebGPUShaderPassParameter', fileTitle, parameter.name)}"
-                class="webgpuSettingsNumber"
-                data-parameter-name="${escapeHtml(parameter.name)}"
-                data-file-index="${fileIndex}"
-                is="emby-input"
-                max="${parameter.maximum}"
-                min="${parameter.minimum}"
-                step="${step}"
-                type="number"
-                value="${value}"
-            />
-        </label>`;
+        <div class="webgpuSettingsPassParameter">
+            <span class="webgpuSettingsPassParameterName" title="${escapeHtml(`${parameter.name} (${parameter.type}). ${rangeText}`)}">${escapeHtml(parameter.name)}</span>
+            ${createNumberFieldHTML({
+                attributes: `data-file-index="${fileIndex}" data-parameter-name="${escapeHtml(parameter.name)}"`,
+                bounds,
+                label: globalize.translate('WebGPUShaderPassParameter', fileTitle, parameter.name),
+                value
+            })}
+        </div>`;
 }
 
 function createPassStateHTML(text: string): string {
-    return `<div class="fieldDescription webgpuSettingsPassState">${escapeHtml(text)}</div>`;
+    return `<div class="webgpuSettingsPassState" title="${escapeHtml(text)}">${escapeHtml(text)}</div>`;
 }
 
-/** Returns a file's entry: its title with its remove button, then its state lines and its parameters. */
-function createFileEntryHTML(title: string, index: number, contentHTML: string): string {
+/** Returns a file's entry: its title with its move and remove buttons, then its state lines and its parameters. */
+function createFileEntryHTML(title: string, index: number, count: number, contentHTML: string): string {
     return `
-        <div class="webgpuSettingsPass">
+        <li class="webgpuSettingsPass">
             <div class="webgpuSettingsPassHeader">
-                <span class="webgpuSettingsPassName">${escapeHtml(title)}</span>
-                <button
-                    aria-label="${translateToHTML('WebGPURemoveShaderPass', title)}"
-                    class="webgpuSettingsRemovePass"
-                    data-remove-file="${index}"
-                    is="paper-icon-button-light"
-                    title="${translateToHTML('WebGPURemoveShaderPass', title)}"
-                    type="button"
-                ><span class="material-icons delete" aria-hidden="true"></span></button>
+                <span class="webgpuSettingsPassOrder" aria-hidden="true">${index + 1}</span>
+                <span class="webgpuSettingsPassName" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+                ${createIconButtonHTML({
+                    attributes: `data-move-file="${index}" data-move-direction="-1"${index === 0 ? ' disabled' : ''}`,
+                    className: 'webgpuSettingsMovePass',
+                    icon: 'arrow_upward',
+                    label: globalize.translate('WebGPUMoveShaderPassUp', title)
+                })}
+                ${createIconButtonHTML({
+                    attributes: `data-move-file="${index}" data-move-direction="1"${index === count - 1 ? ' disabled' : ''}`,
+                    className: 'webgpuSettingsMovePass',
+                    icon: 'arrow_downward',
+                    label: globalize.translate('WebGPUMoveShaderPassDown', title)
+                })}
+                ${createIconButtonHTML({
+                    attributes: `data-remove-file="${index}"`,
+                    className: 'webgpuSettingsRemovePass',
+                    icon: 'delete',
+                    label: globalize.translate('WebGPURemoveShaderPass', title)
+                })}
             </div>
             ${contentHTML}
-        </div>`;
+        </li>`;
 }
 
 /** Returns a file's entry: its passes' states, where it came from when that was the server, and its parameters. */
@@ -227,18 +257,18 @@ function createFileHTML(
     file: StoredPresentationFile,
     views: readonly PassView[],
     stateLines: readonly PassStateLine[],
-    index: number,
+    position: Readonly<{ count: number; index: number }>,
     originLine: string | null
 ): string {
     const title = getPassFileTitle(views);
     const parametersHTML = getPassFileParameters(views)
-        .map((parameter: PassParameter): string => createParameterHTML(file, title, parameter, index))
+        .map((parameter: PassParameter): string => createParameterHTML(file, title, parameter, position.index))
         .join('');
     const statesHTML = stateLines
         .map((line: PassStateLine): string => createPassStateHTML(views.length === 1 ? line.state : `${line.name}: ${line.state}`))
         .join('');
     const originHTML = originLine === null ? '' : createPassStateHTML(originLine);
-    return createFileEntryHTML(title, index, `${statesHTML}${originHTML}${parametersHTML}`);
+    return createFileEntryHTML(title, position.index, position.count, `${statesHTML}${originHTML}${parametersHTML}`);
 }
 
 /** Returns the option of a pass file the server offers: its name, and its passes'. */
@@ -247,126 +277,77 @@ function createServerPassOptionHTML(entry: ServerPassFile): string {
 }
 
 /** Returns the entry of a file whose source the pass source store does not hold, which the player leaves out, so it can be removed. */
-function createMissingSourceFileHTML(file: StoredPresentationFile, index: number): string {
+function createMissingSourceFileHTML(file: StoredPresentationFile, index: number, count: number): string {
     return createFileEntryHTML(
         globalize.translate('WebGPUShaderPassSourceMissing'),
         index,
+        count,
         createPassStateHTML(`source-missing: key ${file.sourceKey}`)
     );
 }
 
-/** Returns the presentation section's HTML, the HDR output and black bar crop switches and the deinterlacing choice, then the shader pass section's: the file list, the server's passes, and the file buttons. */
-export function createPresentationSectionHTML(): string {
+/** Returns the picture window's HDR output switch and its status line. */
+export function createHDROutputControlHTML(): string {
     return `
-        <section class="webgpuSettingsSection" aria-labelledby="webgpu-presentation-title">
-            <h3 class="webgpuSettingsSectionTitle" id="webgpu-presentation-title">
-                ${translateToHTML('WebGPUPresentation')}
-            </h3>
-            <div class="webgpuSettingsCheckboxRow">
-                <label class="checkboxContainer">
-                    <input
-                        aria-describedby="${getSettingDescriptionId(HDR_OUTPUT_SETTING_KEY)}"
-                        data-setting-checkbox="${HDR_OUTPUT_SETTING_KEY}"
-                        is="emby-checkbox"
-                        type="checkbox"
-                    />
-                    <span>${translateToHTML('WebGPUHDROutput')}</span>
-                </label>
-                ${createDescribedSettingButtonsHTML(HDR_OUTPUT_SETTING_KEY, globalize.translate('WebGPUSettingNameHDROutput'))}
-            </div>
-            <div
-                class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                id="${getSettingDescriptionId(HDR_OUTPUT_SETTING_KEY)}"
-            >${translateToHTML('WebGPUHDROutputHelp')}</div>
-            <div aria-live="polite" class="webgpuSettingsStatus" data-hdr-output-status role="status"></div>
-            <div class="webgpuSettingsCheckboxRow">
-                <label class="checkboxContainer">
-                    <input
-                        aria-describedby="${getSettingDescriptionId(BLACK_BAR_CROP_SETTING_KEY)}"
-                        data-setting-checkbox="${BLACK_BAR_CROP_SETTING_KEY}"
-                        is="emby-checkbox"
-                        type="checkbox"
-                    />
-                    <span>${translateToHTML('WebGPUBlackBarCrop')}</span>
-                </label>
-                ${createDescribedSettingButtonsHTML(BLACK_BAR_CROP_SETTING_KEY, globalize.translate('WebGPUSettingNameBlackBarCrop'))}
-            </div>
-            <div
-                class="fieldDescription webgpuSettingsCheckboxDescription ${HIDDEN_CLASS}"
-                id="${getSettingDescriptionId(BLACK_BAR_CROP_SETTING_KEY)}"
-            >${translateToHTML('WebGPUBlackBarCropHelp')}</div>
-            <div aria-live="polite" class="webgpuSettingsStatus" data-black-bar-crop-status role="status"></div>
-            <div class="webgpuSettingsSelectRow">
-                <div class="selectContainer webgpuSettingsSelectContainer">
-                    <select
-                        aria-describedby="${getSettingDescriptionId(DEINTERLACE_MODE_SETTING_KEY)}"
-                        data-setting-select="${DEINTERLACE_MODE_SETTING_KEY}"
-                        id="webgpu-deinterlace-mode"
-                        is="emby-select"
-                        label="${translateToHTML('WebGPUDeinterlace')}"
-                    >
-                        ${createSettingOptionsHTML(DEINTERLACE_MODE_OPTIONS)}
-                    </select>
-                </div>
-                ${createDescribedSettingButtonsHTML(DEINTERLACE_MODE_SETTING_KEY, globalize.translate('WebGPUSettingNameDeinterlace'))}
-            </div>
-            <div
-                class="fieldDescription ${HIDDEN_CLASS}"
-                id="${getSettingDescriptionId(DEINTERLACE_MODE_SETTING_KEY)}"
-            >${translateToHTML('WebGPUDeinterlaceHelp')}</div>
-            <div aria-live="polite" class="webgpuSettingsStatus" data-deinterlace-mode-status role="status"></div>
-        </section>
+        ${createCheckboxControlHTML(HDR_OUTPUT_SETTING_KEY, {
+            description: globalize.translate('WebGPUHDROutputHelp'),
+            label: globalize.translate('WebGPUHDROutput'),
+            name: globalize.translate('WebGPUSettingNameHDROutput')
+        }, { reset: true })}
+        <div aria-live="polite" class="webgpuStatus" data-hdr-output-status role="status"></div>`;
+}
 
-        <section class="webgpuSettingsSection" aria-labelledby="webgpu-shader-passes-title">
-            <h3 class="webgpuSettingsSectionTitle" id="webgpu-shader-passes-title">
-                ${translateToHTML('WebGPUShaderPasses')}
-            </h3>
-            <div class="fieldDescription">${translateToHTML('WebGPUShaderPassesHelp')}</div>
-            <div class="webgpuSettingsPasses" data-presentation-passes></div>
-            <div class="webgpuSettingsSelectRow">
-                <div class="selectContainer webgpuSettingsSelectContainer">
-                    <select
-                        data-server-passes
-                        id="webgpu-server-passes"
-                        is="emby-select"
-                        label="${translateToHTML('WebGPUServerPasses')}"
-                    ></select>
-                </div>
-                <button
-                    class="raised webgpuSettingsAddServerPass"
-                    is="emby-button"
-                    type="button"
-                >${translateToHTML('WebGPUAddServerPass')}</button>
-            </div>
+/** Returns the pipeline window's switches above its graph: deinterlacing and black bar crop, each with its status line. */
+export function createPipelineControlsHTML(): string {
+    return `
+        ${createSelectControlHTML(DEINTERLACE_MODE_SETTING_KEY, {
+            description: globalize.translate('WebGPUDeinterlaceHelp'),
+            label: globalize.translate('WebGPUDeinterlace'),
+            name: globalize.translate('WebGPUSettingNameDeinterlace')
+        }, createSettingOptionsHTML(DEINTERLACE_MODE_OPTIONS), { reset: true })}
+        <div aria-live="polite" class="webgpuStatus" data-deinterlace-mode-status role="status"></div>
+        ${createCheckboxControlHTML(BLACK_BAR_CROP_SETTING_KEY, {
+            description: globalize.translate('WebGPUBlackBarCropHelp'),
+            label: globalize.translate('WebGPUBlackBarCrop'),
+            name: globalize.translate('WebGPUSettingNameBlackBarCrop')
+        }, { reset: true })}
+        <div aria-live="polite" class="webgpuStatus" data-black-bar-crop-status role="status"></div>`;
+}
+
+/** Returns the shader pass selector along the pipeline window's bottom: the file list, the server's passes, and the file buttons. */
+export function createShaderPassesHTML(): string {
+    return `
+        <div class="webgpuSettingsGroup" role="group" aria-labelledby="webgpu-shader-passes-title">
+            ${createActionControlHTML(SHADER_PASSES_KEY, {
+                description: globalize.translate('WebGPUShaderPassesHelp'),
+                label: globalize.translate('WebGPUShaderPasses'),
+                name: globalize.translate('WebGPUSettingNameShaderPasses')
+            }, `<h3 class="webgpuGroupTitle" id="webgpu-shader-passes-title">${translateToHTML('WebGPUShaderPasses')}</h3>`)}
+            <ol class="webgpuSettingsPasses" data-presentation-passes></ol>
+            ${createSelectControlHTML(SERVER_PASSES_KEY, {
+                description: null,
+                label: globalize.translate('WebGPUServerPasses'),
+                name: globalize.translate('WebGPUServerPasses')
+            }, '', { selectAttributes: 'data-server-passes' })}
             <input
                 accept="${PASS_FILE_TYPES}"
                 class="${HIDDEN_CLASS}"
                 data-presentation-pass-files
                 multiple
+                tabindex="-1"
                 type="file"
             />
-            <div aria-live="polite" class="webgpuSettingsStatus" data-presentation-status role="status"></div>
-            <div class="webgpuSettingsButtonRow">
-                <button
-                    class="raised webgpuSettingsAddPasses"
-                    is="emby-button"
-                    type="button"
-                >${translateToHTML('WebGPUAddShaderPasses')}</button>
-                <button
-                    class="raised webgpuSettingsRemovePasses"
-                    is="emby-button"
-                    type="button"
-                >${translateToHTML('WebGPURemoveShaderPasses')}</button>
-                <button
-                    class="raised webgpuSettingsRestoreDefaultPasses"
-                    is="emby-button"
-                    type="button"
-                >${translateToHTML('WebGPURestoreDefaultShaderPasses')}</button>
+            <div aria-live="polite" class="webgpuStatus" data-presentation-status role="status"></div>
+            <div class="webgpuButtonRow">
+                ${createButtonHTML({ className: 'webgpuSettingsAddServerPass', icon: 'cloud_download', label: globalize.translate('WebGPUAddServerPass'), variant: 'primary' })}
+                ${createButtonHTML({ className: 'webgpuSettingsAddPasses', icon: 'upload_file', label: globalize.translate('WebGPUAddShaderPasses') })}
+                ${createButtonHTML({ className: 'webgpuSettingsRestoreDefaultPasses', icon: 'settings_backup_restore', label: globalize.translate('WebGPURestoreDefaultShaderPasses') })}
+                ${createButtonHTML({ className: 'webgpuSettingsRemovePasses', icon: 'delete_sweep', label: globalize.translate('WebGPURemoveShaderPasses'), variant: 'danger' })}
             </div>
-        </section>`;
+        </div>`;
 }
 
-/** Binds the presentation section's controls; every change persists, then applies to the player live. */
+/** Binds the presentation controls of every window; each change persists, then applies to the player live. */
 export function bindPresentationSection(context: PresentationSectionContext): PresentationSectionController {
     const { panel, player } = context;
     const HDROutputCheckbox = requireSectionElement<HTMLInputElement>(panel, `[data-setting-checkbox="${HDR_OUTPUT_SETTING_KEY}"]`);
@@ -389,20 +370,22 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
     let report = player.getPresentationPlanReport();
     // A preset result arriving after a newer change must not overwrite it
     let presetRevision = 0;
-    // What the file list shows; a save that changes neither keeps the list's inputs, and the focused one
+    // What the file list shows; a save that changes neither keeps the list's fields, and the focused one
     let renderedReport: PlanReport | null = null;
     let renderedSources: readonly (string | null)[] = [];
     let renderedCatalog: ServerModuleCatalog | null = null;
+    // The files' order the list shows, by source key, so a move renders anew while a parameter change keeps the list and its focused field
+    let renderedSourceKeys = '';
     // The stored files' sources from the pass source store; null until they are read
     let sources: Map<number, string> | null = null;
-    // What the server offers, read when the panel opens; null until it is read, or when it cannot be
+    // What the server offers, read when the windows open; null until it is read, or when it cannot be
     let serverCatalog: ServerModuleCatalog | null = null;
     let serverCatalogFailure: string | null = null;
     // A server pass downloads one at a time
     let serverPassPending = false;
-    /** Returns the files the panel's settings resolve to: the user's own preset, else the server's default files. */
+    /** Returns the files the settings resolve to: the user's own preset, else the server's default files. */
     const getEffectiveFiles = (): readonly StoredPresentationFile[] => context.getSettings().presentation.files ?? getDefaultPresentationFiles();
-    // The store keys the settings held while the panel was open, whose sources go once neither these, the stored settings, nor the default files hold them
+    // The store keys the settings held while the windows were open, whose sources go once neither these, the stored settings, nor the default files hold them
     const knownSourceKeys = new Set<number>(getStoredFileSourceKeys(getEffectiveFiles()));
 
     /** Returns where a file came from when that was the server, and whether the server still offers it once its catalog is read. */
@@ -427,6 +410,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         if (addable.some((entry: ServerPassFile): boolean => entry.fileName === selectedFileName)) {
             serverPassSelect.value = selectedFileName;
         }
+        serverPassSelect.title = serverPassSelect.selectedOptions[0]?.textContent ?? '';
         serverPassSelect.disabled = addable.length === 0 || serverPassPending;
         addServerPassButton.disabled = addable.length === 0 || serverPassPending;
     };
@@ -445,6 +429,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         const fileSources = files.map((file: StoredPresentationFile): string | null => getStoredFileSource(file, loadedSources));
         if (report === renderedReport
             && serverCatalog === renderedCatalog
+            && getStoredFileSourceKeys(files).join() === renderedSourceKeys
             && fileSources.length === renderedSources.length
             && fileSources.every((source: string | null, index: number): boolean => source === renderedSources[index])) {
             return;
@@ -452,6 +437,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         renderedReport = report;
         renderedSources = fileSources;
         renderedCatalog = serverCatalog;
+        renderedSourceKeys = getStoredFileSourceKeys(files).join();
         const seenNames = new Set<string>();
         const filesHTML: string[] = [];
         // The player receives only the files with sources, so an unnamed pass's preset position counts only those
@@ -459,7 +445,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         for (const [ index, file ] of files.entries()) {
             const source = fileSources[index];
             if (source === null) {
-                filesHTML.push(createMissingSourceFileHTML(file, index));
+                filesHTML.push(createMissingSourceFileHTML(file, index, files.length));
                 continue;
             }
             const views = describePassFile(source, presetIndex);
@@ -469,9 +455,16 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
                 stateLines.push({ name: view.name, state: getPassState(view, report, seenNames.has(view.name)) });
                 seenNames.add(view.name);
             }
-            filesHTML.push(createFileHTML(file, views, stateLines, index, describeOrigin(file)));
+            filesHTML.push(createFileHTML(file, views, stateLines, { count: files.length, index }, describeOrigin(file)));
         }
+        // A list re-rendered under a focused button keeps the focus on the same control of the same file
+        const focused = document.activeElement instanceof HTMLElement && fileList.contains(document.activeElement) ?
+            document.activeElement.getAttribute('data-move-file') ?? document.activeElement.getAttribute('data-remove-file') :
+            null;
         fileList.innerHTML = filesHTML.join('');
+        if (focused !== null) {
+            fileList.querySelector<HTMLElement>(`[data-move-file="${focused}"]:not(:disabled), [data-remove-file="${focused}"]`)?.focus();
+        }
     };
 
     const deleteSources = (keys: readonly number[]): void => {
@@ -693,7 +686,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         try {
             const added = await addServerPassFile(entry);
             if (!context.isActive()) {
-                // The panel closed meanwhile, so the file is not added, and its stored source goes
+                // The windows closed meanwhile, so the file is not added, and its stored source goes
                 void deletePassSources([ added.file.sourceKey ]);
                 return;
             }
@@ -741,7 +734,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             }
         }
         if (!context.isActive()) {
-            // The panel closed meanwhile, so the files are not added, and their stored sources go
+            // The windows closed meanwhile, so the files are not added, and their stored sources go
             deleteSources(getStoredFileSourceKeys(addedFiles));
             return;
         }
@@ -816,35 +809,53 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         }
     };
 
+    // The list's buttons: a file moves one place up or down, which reorders the passes it runs, or goes
     const onFileListClick = (event: Event): void => {
-        const target = event.target;
-        const removeButton = target instanceof Element ? target.closest<HTMLElement>('[data-remove-file]') : null;
-        if (!removeButton) {
+        const target = event.target instanceof Element ? event.target : null;
+        const moveButton = target?.closest<HTMLButtonElement>('[data-move-file]');
+        const removeButton = target?.closest<HTMLElement>('[data-remove-file]');
+        const files = getEffectiveFiles();
+        if (moveButton && !moveButton.disabled) {
+            const index = Number(moveButton.dataset.moveFile);
+            const otherIndex = index + Number(moveButton.dataset.moveDirection);
+            if (otherIndex < 0 || otherIndex >= files.length || !files[index]) {
+                return;
+            }
+            const reordered = [ ...files ];
+            [ reordered[index], reordered[otherIndex] ] = [ reordered[otherIndex], reordered[index] ];
+            updateFiles(reordered, null);
             return;
         }
-        const removedIndex = Number(removeButton.dataset.removeFile);
-        updateFiles(getEffectiveFiles().filter(
-            (_file: StoredPresentationFile, index: number): boolean => index !== removedIndex
-        ), null);
+        if (removeButton) {
+            const removedIndex = Number(removeButton.dataset.removeFile);
+            updateFiles(files.filter((_file: StoredPresentationFile, index: number): boolean => index !== removedIndex), null);
+        }
     };
 
-    const onFileListChange = (event: Event): void => {
-        const input = event.target;
-        if (!(input instanceof HTMLInputElement) || input.dataset.parameterName === undefined) {
-            return;
+    /** Returns the value a parameter field shows: its stored value, else its pass's default, from the field's file. */
+    const getParameterValue = (field: HTMLInputElement): number | null => {
+        const file = getEffectiveFiles().at(Number(field.dataset.fileIndex));
+        const parameterName = field.dataset.parameterName;
+        if (!file || parameterName === undefined) {
+            return null;
         }
-        const fileIndex = Number(input.dataset.fileIndex);
-        const parameterName = input.dataset.parameterName;
-        // NaN for an emptied or unparsable field, which keeps the parameter; Number('') is 0
-        const value = input.valueAsNumber;
+        if (Object.prototype.hasOwnProperty.call(file.parameters, parameterName)) {
+            return file.parameters[parameterName];
+        }
+        const source = sources === null ? null : getStoredFileSource(file, sources);
+        const declared = (source === null ? [] : describePassFile(source, 0))
+            .flatMap(getTunableParameters)
+            .find((parameter: PassParameter): boolean => parameter.name === parameterName);
+        return declared?.defaultValue ?? null;
+    };
+
+    /** Saves a parameter's value for its file and hands it to every running pass of the file that declares it. */
+    const commitParameter = (field: HTMLInputElement, value: number): void => {
+        const fileIndex = Number(field.dataset.fileIndex);
+        const parameterName = field.dataset.parameterName;
         const files = getEffectiveFiles();
         const changedFile = files.at(fileIndex);
-        if (!changedFile) {
-            return;
-        }
-        if (!Number.isFinite(value)) {
-            // The field shows the parameter again: its stored value, else the value it was rendered with, the pass's default
-            input.value = String(changedFile.parameters[parameterName] ?? input.defaultValue);
+        if (!changedFile || parameterName === undefined) {
             return;
         }
         const saveFailure = savePresentation({
@@ -853,6 +864,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
                 index === fileIndex ? { ...file, parameters: { ...file.parameters, [parameterName]: value } } : file
             ))
         });
+        setNumberFieldValue(field, value);
         // The file's passes share the value, so each pass that declares the parameter or constant takes it; only names matter here, so any preset position does
         const source = sources === null ? null : getStoredFileSource(changedFile, sources);
         const declaringViews = (source === null ? [] : describePassFile(source, fileIndex)).filter((view: PassView): boolean => (
@@ -872,6 +884,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             globalize.translate('WebGPUShaderPassParameterPending', failure);
         setStatus(statusElement, joinSentences(message, describeSaveFailure(saveFailure)) ?? message);
     };
+    bindNumberFields(fileList, { commit: commitParameter, getValue: getParameterValue }, context.cleanupCallbacks);
 
     const listeners: Array<[EventTarget, string, (event: Event) => void]> = [
         [ HDROutputCheckbox, 'change', onHDROutputChange ],
@@ -885,8 +898,7 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
         [ removeFilesButton, 'click', onRemoveFiles ],
         [ restoreDefaultFilesButton, 'click', onRestoreDefaultFiles ],
         [ addServerPassButton, 'click', onAddServerPass ],
-        [ fileList, 'click', onFileListClick ],
-        [ fileList, 'change', onFileListChange ]
+        [ fileList, 'click', onFileListClick ]
     ];
     for (const [ target, type, listener ] of listeners) {
         target.addEventListener(type, listener);
@@ -907,6 +919,20 @@ export function bindPresentationSection(context: PresentationSectionContext): Pr
             // A reset's default files may hold the user's sources under other parameter values, so the list renders anew
             renderedReport = null;
             applyPreset(null);
+        },
+        restorePipelineDefaults: (): void => {
+            const defaults = createDefaultWebGPUUserSettings().presentation;
+            const saveFailure = savePresentation({
+                ...context.getSettings().presentation,
+                blackBarCrop: defaults.blackBarCrop,
+                deinterlaceMode: defaults.deinterlaceMode,
+                files: null
+            });
+            const notice = describeSaveFailure(saveFailure);
+            applyBlackBarCrop(notice);
+            applyDeinterlaceMode(notice);
+            renderedReport = null;
+            applyPreset(notice);
         },
         synchronize: (): void => {
             HDROutputCheckbox.checked = context.getSettings().presentation.hdrOutput;

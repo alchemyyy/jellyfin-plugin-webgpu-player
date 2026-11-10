@@ -52,7 +52,7 @@ The audio output device and a user's own decoders stay per browser, since a devi
 - Reading the defaults applies them to the page, as the sync's read does, but only the sync's read caches them for the next page.
 - Save and every "Retroactively apply to clients" button stay disabled when the defaults could not be read: a save replaces every default, so a form that never showed them would drop them.
 - The editor takes half the page's width, but no less than 30em or the page's width.
-- It has one row per flat key, grouped and labelled like the playback settings panel, with the panel's ranges, units, and options from `ui/SettingDefinitions.ts`.
+- It has one row per flat key, grouped and labelled like the in-player settings windows, with their ranges, units, and options from `ui/SettingDefinitions.ts`.
 - The "Decoder tests" section leads the editor, so it sits at the top of the plugin's settings (11-05).
   It says what decoder tests are, and that a device which only controls others needs none; [The client add-on](add-on.md#decoder-test-timing) has the values and the rules syntax.
   - `decoderTestTiming` is a select of the three timings, like any user setting.
@@ -99,4 +99,4 @@ The audio output device and a user's own decoders stay per browser, since a devi
   The update is all or nothing: a failed download, source write, or settings write deletes the sources it stored and keeps the files from before.
   The replaced files' sources then go, unless the user's own preset holds them.
 - A server without a default preset reads no catalog, and stores nothing while nothing was stored before.
-- The first WebGPU play and the settings panel resolve `null` to these files; a failure never stops either, it only keeps the files from before.
+- The first WebGPU play and the settings windows resolve `null` to these files; a failure never stops either, it only keeps the files from before.

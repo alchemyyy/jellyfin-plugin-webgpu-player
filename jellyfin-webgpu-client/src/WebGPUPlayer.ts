@@ -157,6 +157,7 @@ import {
 } from './custom/CustomDeviceProfile';
 import { isSameSessionNativePlaybackCompatible } from './custom/NativeDirectPlayCompatibility';
 import { reportPlaybackFallback } from './PlaybackFallbackReports';
+import { noteWebGPUFailure } from './WebGPUFailureWarning';
 import ScreenWakeLock from './ScreenWakeLock';
 import CustomPlaybackMediaElement from './CustomPlaybackMediaElement';
 import {
@@ -202,7 +203,7 @@ import WebGPUPresenter, {
     type PresentationSurface,
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
-import type { PlanReport } from 'webgpu-player/presentation/passes/PassTypes';
+import type { PlanReport, PresentationPlan } from 'webgpu-player/presentation/passes/PassTypes';
 import type { VideoDecoderPackage } from 'webgpu-player/decode/packages/DecoderPackage';
 import type { StoredDecoderPackages } from 'webgpu-player/decode/packages/DecoderPackageStore';
 import type { GPUVideoDecoderOffer } from 'webgpu-player/decode/video/gpu/GPUVideoDecoderCatalog';
@@ -378,6 +379,17 @@ export type CustomPlaybackEligibilityTelemetry =
         videoDecoderBackend: CustomDecodeVideoDecoderBackend
         videoOutputMode: CustomDecodeVideoOutputMode
     };
+
+/** The custom route the presenter's source comes from: what decodes the video, and how its frames reach the presenter. */
+export type PresentationRoute = Readonly<{
+    dolbyVisionProfile: CustomDecodeDolbyVisionProfile
+    /** The id of the decoder package whose GPU decoder decodes on the frame-pool route, else null */
+    gpuVideoDecoderId: string | null
+    nativeHDRTransfer: CustomDecodeNativeHDRTransfer
+    rawVideoFrameFormat: CustomDecodeRawVideoFrameFormat | null
+    videoDecoderBackend: CustomDecodeVideoDecoderBackend
+    videoOutputMode: CustomDecodeVideoOutputMode
+}>;
 
 export type CustomPlaybackSetupStage =
     | 'capabilities'
@@ -1004,6 +1016,7 @@ export default class WebGPUPlayer {
             this.handleDecodedPresentationRefresh,
             (reason: GPUDeviceLostReason, message: string): void => {
                 reportPlaybackFallback('device-lost', reason, message);
+                noteWebGPUFailure({ kind: 'device-lost', message, reason });
             }
         );
         this.applyPresentationSettings(loadWebGPUUserSettings());
@@ -1085,7 +1098,7 @@ export default class WebGPUPlayer {
                     './ui/WebGPUPlaybackSettingsDialog'
                 ),
                 loadAddonStrings(),
-                // The panel shows the settings over the server's latest defaults, and the default shader files they resolve to
+                // The settings windows show the settings over the server's latest defaults, and the default shader files they resolve to
                 whenClientDefaultsSettled().then(ensureDefaultPresentationFiles)
             ]).then(([ module ]) => module.toggleWebGPUPlaybackSettingsPanel(this))
         } ];
@@ -1976,7 +1989,7 @@ export default class WebGPUPlayer {
     /**
      * Hands the stored shader files, or the server's default files for a user who follows them, to the presenter once, at the first play that presents through WebGPU, since their sources load from IndexedDB.
      * A file from the server takes the server's newer version first, which that play's negotiation already read the catalog for.
-     * A preset the settings panel applies first is newer, so the stored one yields to it; a failed load is tried again at the next play.
+     * A preset the settings windows apply first is newer, so the stored one yields to it; a failed load is tried again at the next play.
      */
     private loadStoredPresentationPreset(): void {
         if (this.storedPresentationPresetRequested) {
@@ -2029,6 +2042,27 @@ export default class WebGPUPlayer {
     /** Returns the passes the active plan runs and those it leaves out, with the failed check and a detail. */
     getPresentationPlanReport(): PlanReport {
         return this.presenter.getPresentationPlanReport();
+    }
+
+    /** Returns the plan the presenter runs, or null while none is installed, as between playbacks. */
+    getActivePresentationPlan(): PresentationPlan | null {
+        return this.presenter.getActivePresentationPlan();
+    }
+
+    /** Returns the custom route the presenter's source comes from while a custom playback runs, else null. */
+    getPresentationRoute(): PresentationRoute | null {
+        const eligibility = this.lastCustomPlaybackEligibility;
+        if (!this.getActiveCustomPlaybackController() || !eligibility?.eligible) {
+            return null;
+        }
+        return {
+            dolbyVisionProfile: eligibility.dolbyVisionProfile,
+            gpuVideoDecoderId: eligibility.gpuVideoDecoder?.decoderId ?? null,
+            nativeHDRTransfer: eligibility.nativeHDRTransfer ?? null,
+            rawVideoFrameFormat: eligibility.rawVideoFrameFormat,
+            videoDecoderBackend: eligibility.videoDecoderBackend,
+            videoOutputMode: eligibility.videoOutputMode
+        };
     }
 
     /** Selects HDR output for HDR sources on HDR displays; resolves once the presenter runs it. */
@@ -2760,6 +2794,11 @@ export default class WebGPUPlayer {
         }
         console.warn(renegotiates ? CUSTOM_PLAYBACK_INELIGIBLE_RENEGOTIATION_MESSAGE : CUSTOM_PLAYBACK_INELIGIBLE_HTML_BACKEND_MESSAGE, reason);
         reportPlaybackFallback('custom-playback-declined', reason, renegotiates ? 'source-renegotiation' : 'html-backend');
+        // A runtime without WebGPU declines every source, so the warning names the browser API that is missing
+        const runtimeReason = this.lastCustomPlaybackRuntimeAvailability?.reason ?? null;
+        if (eligibility?.eligible === false && eligibility.reason === 'runtime-unavailable' && runtimeReason !== null) {
+            noteWebGPUFailure({ kind: 'runtime', reason: runtimeReason });
+        }
     }
 
     private getCustomPlaybackUnavailableResult(
@@ -3769,6 +3808,7 @@ export default class WebGPUPlayer {
             return;
         }
         reportPlaybackFallback('presentation', reason, detail);
+        noteWebGPUFailure({ detail, kind: 'presentation', reason });
 
         const customPlaybackController = this.getActiveCustomPlaybackController();
         this.webGPUPresentationEnabled = false;

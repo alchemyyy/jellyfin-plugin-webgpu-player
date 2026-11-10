@@ -13,8 +13,8 @@ import { VideoPlayerPreference } from '../PreferredVideoPlayer';
 import type { SettingsButtonPlacement } from '../SettingsButtonPlacement';
 import { translateToHTML } from './SettingsPanelHTML';
 
-// What the settings controls show: each numeric setting's label, description, range, and unit, and each select's options.
-// The playback settings panel renders its controls from these, and so does every other surface that edits the same settings
+// What the settings controls show: each numeric setting's label, description, slider span, range, and unit, and each select's options.
+// The in-player settings windows render their controls from these, and so does every other surface that edits the same settings
 
 export type NumericSettingKey =
     | 'brightness'
@@ -39,8 +39,11 @@ export type NumericControlConfiguration = Readonly<{
     descriptionKey: AddonStringKey
     key: NumericSettingKey
     labelKey: AddonStringKey
+    // The engine's hard range, which a typed value may reach
     range: NumericSettingRange
     section: 'audio' | 'render'
+    // The slider's span: the values worth sweeping through, inside the hard range, at its step
+    sliderRange: NumericSettingRange
     unitKey?: AddonStringKey
 }>;
 
@@ -51,7 +54,12 @@ export type SettingOption<Value extends string> = Readonly<{
     value: Value
 }>;
 
-/** The numeric settings, in the order the panel shows them within each section. */
+/** Returns a slider's span over a hard range: the given bounds, at the hard range's step. */
+function createSliderRange(range: NumericSettingRange, minimum: number, maximum: number): NumericSettingRange {
+    return Object.freeze({ maximum, minimum, step: range.step });
+}
+
+/** The numeric settings, in the order the settings windows show them within each section. */
 export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguration[] = Object.freeze([
     {
         descriptionKey: 'WebGPUManualInputPeakHelp',
@@ -59,6 +67,7 @@ export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguratio
         labelKey: 'WebGPUManualInputPeak',
         range: HDR_RENDER_SETTING_RANGES.inputPeakNits,
         section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.inputPeakNits, 100, 4000),
         unitKey: 'WebGPUUnitNits'
     },
     {
@@ -67,6 +76,7 @@ export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguratio
         labelKey: 'WebGPUOutputPeak',
         range: HDR_RENDER_SETTING_RANGES.outputPeakNits,
         section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.outputPeakNits, 50, 1000),
         unitKey: 'WebGPUUnitNits'
     },
     {
@@ -75,6 +85,7 @@ export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguratio
         labelKey: 'WebGPUPaperWhite',
         range: HDR_RENDER_SETTING_RANGES.paperWhiteNits,
         section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.paperWhiteNits, 50, 500),
         unitKey: 'WebGPUUnitNits'
     },
     {
@@ -83,6 +94,7 @@ export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguratio
         labelKey: 'WebGPUExposure',
         range: HDR_RENDER_SETTING_RANGES.exposure,
         section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.exposure, -4, 4),
         unitKey: 'WebGPUUnitStops'
     },
     {
@@ -90,49 +102,56 @@ export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguratio
         key: 'desaturationStrength',
         labelKey: 'WebGPUHighlightDesaturation',
         range: HDR_RENDER_SETTING_RANGES.desaturationStrength,
-        section: 'render'
+        section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.desaturationStrength, 0, 1)
     },
     {
         descriptionKey: 'WebGPUBrightnessHelp',
         key: 'brightness',
         labelKey: 'WebGPUBrightness',
         range: HDR_RENDER_SETTING_RANGES.brightness,
-        section: 'render'
+        section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.brightness, -0.5, 0.5)
     },
     {
         descriptionKey: 'WebGPUContrastHelp',
         key: 'contrast',
         labelKey: 'WebGPUContrast',
         range: HDR_RENDER_SETTING_RANGES.contrast,
-        section: 'render'
+        section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.contrast, 0.5, 2)
     },
     {
         descriptionKey: 'WebGPUSaturationHelp',
         key: 'saturation',
         labelKey: 'WebGPUSaturation',
         range: HDR_RENDER_SETTING_RANGES.saturation,
-        section: 'render'
+        section: 'render',
+        sliderRange: createSliderRange(HDR_RENDER_SETTING_RANGES.saturation, 0, 2)
     },
     {
         descriptionKey: 'WebGPUCenterLevelHelp',
         key: 'centerLevel',
         labelKey: 'WebGPUCenterLevel',
         range: AUDIO_DOWNMIX_SETTING_RANGES.centerLevel,
-        section: 'audio'
+        section: 'audio',
+        sliderRange: createSliderRange(AUDIO_DOWNMIX_SETTING_RANGES.centerLevel, 0, 2)
     },
     {
         descriptionKey: 'WebGPUSurroundLevelHelp',
         key: 'surroundLevel',
         labelKey: 'WebGPUSurroundLevel',
         range: AUDIO_DOWNMIX_SETTING_RANGES.surroundLevel,
-        section: 'audio'
+        section: 'audio',
+        sliderRange: createSliderRange(AUDIO_DOWNMIX_SETTING_RANGES.surroundLevel, 0, 2)
     },
     {
         descriptionKey: 'WebGPUDownmixOutputGainHelp',
         key: 'outputGain',
         labelKey: 'WebGPUDownmixOutputGain',
         range: AUDIO_DOWNMIX_SETTING_RANGES.outputGain,
-        section: 'audio'
+        section: 'audio',
+        sliderRange: createSliderRange(AUDIO_DOWNMIX_SETTING_RANGES.outputGain, 0, 3)
     }
 ] satisfies NumericControlConfiguration[]);
 

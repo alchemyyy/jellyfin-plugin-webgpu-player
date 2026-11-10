@@ -78,9 +78,11 @@ export type WebGPUUserSettings = Readonly<{
         /** The speakers decoded audio plays to: `auto` follows the output's channel count */
         speakerLayout: CustomAudioSpeakerLayout
     }>
-    // Applies live: the video OSD places its entry to the settings panel anew
+    // Each applies live: the video OSD places its entry to the settings windows anew, and the next WebGPU failure reads the warning choice
     osd: Readonly<{
         settingsButtonPlacement: SettingsButtonPlacement
+        /** Whether a page shows its first WebGPU failure in a dialog that explains it */
+        webGPUFailureWarning: boolean
     }>
     // Each applies from the next playback: custom decode and HDR tone mapping shape what the player negotiates with the server,
     // and GPU decode slicing how a decoder package's GPU decoder submits its work
@@ -244,7 +246,8 @@ export function createBuiltInWebGPUUserSettings(): WebGPUUserSettings {
             speakerLayout: DEFAULT_CUSTOM_AUDIO_SPEAKER_LAYOUT
         },
         osd: {
-            settingsButtonPlacement: DEFAULT_SETTINGS_BUTTON_PLACEMENT
+            settingsButtonPlacement: DEFAULT_SETTINGS_BUTTON_PLACEMENT,
+            webGPUFailureWarning: true
         },
         playback: {
             decoderTestTiming: DEFAULT_DECODER_TEST_TIMING,
@@ -284,7 +287,8 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
             speakerLayout: serverDefaults.speakerLayout
         },
         osd: {
-            settingsButtonPlacement: serverDefaults.settingsButtonPlacement
+            settingsButtonPlacement: serverDefaults.settingsButtonPlacement,
+            webGPUFailureWarning: serverDefaults.webGPUFailureWarning
         },
         playback: {
             decoderTestTiming: serverDefaults.decoderTestTiming,
@@ -440,7 +444,8 @@ function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUU
         osd: {
             settingsButtonPlacement: isSettingsButtonPlacement(osd.settingsButtonPlacement) ?
                 osd.settingsButtonPlacement :
-                defaults.osd.settingsButtonPlacement
+                defaults.osd.settingsButtonPlacement,
+            webGPUFailureWarning: normalizeBoolean(osd.webGPUFailureWarning, defaults.osd.webGPUFailureWarning)
         },
         playback: {
             decoderTestTiming: normalizeDecoderTestTiming(playback.decoderTestTiming) ?? defaults.playback.decoderTestTiming,
@@ -576,7 +581,8 @@ const SETTING_PATHS: Readonly<Partial<Record<ClientDefaultKey, readonly string[]
     settingsButtonPlacement: [ 'osd', 'settingsButtonPlacement' ],
     speakerLayout: [ 'audio', 'speakerLayout' ],
     surroundLevel: [ 'audio', 'downmix', 'surroundLevel' ],
-    toneMapOperator: [ 'render', 'settings', 'toneMapping', 'operator' ]
+    toneMapOperator: [ 'render', 'settings', 'toneMapping', 'operator' ],
+    webGPUFailureWarning: [ 'osd', 'webGPUFailureWarning' ]
 });
 
 /** Deletes a leaf of nested settings, and each parent it leaves empty. */

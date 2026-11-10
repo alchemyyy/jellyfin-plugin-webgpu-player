@@ -1,262 +1,110 @@
-.webgpuSettingsPanel {
-    --webgpu-settings-top: 5em;
-    // The panel replaces this with the space above the video OSD controls once it measures them
-    --webgpu-settings-max-height: calc(100vh - var(--webgpu-settings-top) - 1.5em);
-
-    position: fixed;
-    top: var(--webgpu-settings-top);
-    display: flex;
-    width: min(42em, calc(100% - 3em));
-    // The floor keeps a viewport too short for the panel from collapsing it
-    max-height: max(10em, var(--webgpu-settings-max-height));
-    overflow: hidden;
-    flex-direction: column;
-    background: rgba(28, 28, 28, 0.8);
-    border-radius: 0.3em;
-    color: #fff;
-    pointer-events: auto;
-    z-index: 100001;
-
-    [dir="ltr"] & {
-        left: 1.5em;
+// The settings windows' own content: the master's footer, the pipeline window's groups, the shader file and decoder lists, and button rows.
+// The window frames come from windows/SettingsWindows.scss and the rows from controls/SettingControls.scss
+.webgpuSettingsWindows {
+    .webgpuButtonRow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--webgpu-ui-gap);
+        margin: 0.35em 0.45em;
     }
 
-    [dir="rtl"] & {
-        right: 1.5em;
+    .webgpuWindowFooter {
+        justify-content: flex-end;
+        margin-top: 0.7em;
+        padding-top: 0.6em;
+        border-top: 0.0625em solid var(--webgpu-ui-border);
     }
 
-    .webgpuSettingsContent {
-        padding: 0.65em 1em 0.85em;
-        overflow-y: auto;
-        font-size: 84%;
-        overscroll-behavior: contain;
+    // A group of the pipeline window: its title row holds the heading where other rows hold a button
+    .webgpuSettingsGroup {
+        margin-top: 0.6em;
+        padding-top: 0.35em;
+        border-top: 0.0625em solid var(--webgpu-ui-border);
     }
 
-    .webgpuSettingsTitle,
-    .webgpuSettingsSectionTitle {
-        font-size: 100%;
-        font-weight: 500;
-    }
-
-    .webgpuSettingsTitle {
-        margin: 0 2.75em 0.45em 0;
-    }
-
-    .webgpuSettingsSectionTitle {
-        margin: 0.55em 0 0.3em;
-    }
-
-    .webgpuSettingsClose {
-        position: absolute;
-        top: 0.25em;
-        color: #ccc;
-        z-index: 1;
-
-        [dir="ltr"] & {
-            right: 0.25em;
-        }
-
-        [dir="rtl"] & {
-            left: 0.25em;
-        }
-    }
-
-    .webgpuSettingsSection {
+    .webgpuActionControl .webgpuGroupTitle {
         margin: 0;
-        padding: 0 0 0.65em;
-        border-bottom: 0.0625em solid rgba(255, 255, 255, 0.18);
     }
 
-    .webgpuSettingsCheckboxDescription {
-        margin: 0 0 0.4em 2.4em;
-    }
-
-    .webgpuSettingsNumericControl {
-        margin: 0.05em 0;
-    }
-
-    .webgpuSettingsControlLabel {
-        display: block;
-        margin: 0;
-        font-weight: 500;
-    }
-
-    .webgpuSettingsNumericRow {
-        display: grid;
-        grid-template-columns: 10.5em minmax(8em, 1fr) 4.75em auto;
-        gap: 0.4em;
-        align-items: center;
-    }
-
-    .webgpuSettingsControlDescription {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        border: 0;
-        clip: rect(0 0 0 0);
-        white-space: nowrap;
-    }
-
-    .webgpuSettingsSelectRow,
-    .webgpuSettingsCheckboxRow {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+    .webgpuSettingsKeysLabel {
+        display: inline-flex;
         gap: 0.45em;
+        min-width: 0;
         align-items: center;
-        // Each control after the first takes a column of its own on the row's line
-        grid-auto-flow: column;
-    }
-
-    .webgpuSettingsSelectRow {
-        margin-bottom: 0.35em;
-        row-gap: 0;
-
-        // Every control after the select shares the select's line, below its label, so the controls center on the select itself
-        > :not(.webgpuSettingsSelectContainer) {
-            grid-row: 2;
-        }
-    }
-
-    // Lays its label and select out on the row's two lines, and keeps its own box, which places the arrow emby-select adds
-    .webgpuSettingsSelectContainer {
-        display: grid;
-        grid-row: 1 / span 2;
-        grid-column: 1;
-        grid-template-rows: subgrid;
-        margin-bottom: 0;
-
-        > .selectLabel {
-            grid-row: 1;
-            margin-bottom: 0.1em;
-            font-weight: 500;
-        }
-
-        > select {
-            grid-row: 2;
-        }
-    }
-
-    .webgpuSettingsCheckboxRow .checkboxContainer {
-        margin-bottom: 0;
-    }
-
-    .webgpuSettingsCheckboxRow .emby-checkbox-label {
-        height: 2.1em;
-    }
-
-    .webgpuSettingsChooseAudioOutput,
-    .webgpuSettingsRedetectAudioOutput,
-    .webgpuSettingsAddServerPass,
-    .webgpuSettingsResetRender,
-    .webgpuSettingsResetAudio,
-    .webgpuSettingsResetAll {
-        margin: 0;
-        padding: 0.35em 0.65em;
+        overflow: hidden;
         font-weight: 500;
-    }
-
-    // Icons, so each row keeps its width for the control itself
-    .webgpuSettingsDefaultButton,
-    .webgpuSettingsInfoButton {
-        margin: 0;
-        padding: 0.2em;
-        color: #ccc;
-        justify-self: end;
+        text-overflow: ellipsis;
+        white-space: nowrap;
 
         > .material-icons {
-            font-size: 1.3em;
+            color: var(--webgpu-ui-text-muted);
+            font-size: 1.25em;
         }
     }
 
-    .webgpuSettingsInfoButton[aria-expanded="true"] {
-        color: #fff;
+    .webgpuSettingsCrashedProbes {
+        color: var(--webgpu-ui-warning);
     }
 
-    .webgpuSettingsAddServerPass {
-        align-self: end;
-        white-space: nowrap;
-    }
-
-    .webgpuSettingsChooseAudioOutput,
-    .webgpuSettingsRedetectAudioOutput {
-        align-self: end;
-        white-space: nowrap;
-    }
-
-    .webgpuSettingsSlider {
-        width: 100%;
-    }
-
-    .webgpuSettingsSliderContainer.mdl-slider-container {
-        height: 1.35em;
-    }
-
-    .webgpuSettingsNumberContainer > .inputLabel {
-        display: none;
-    }
-
-    .webgpuSettingsNumber {
-        min-width: 0;
-        width: 100%;
-        padding: 0.25em 0.35em;
-    }
-
-    .fieldDescription,
-    .webgpuSettingsStatus {
-        font-size: 90%;
-        line-height: 1.25;
-    }
-
-    .fieldDescription {
-        margin-top: 0.1em;
-        color: #ddd;
-    }
-
-    .webgpuSettingsSafetyDescription {
-        margin: 0.35em 0;
-    }
-
-    .webgpuSettingsStatus {
-        margin: 0.35em 0;
-        color: #ddd;
-    }
-
-    .webgpuSettingsStatus:empty {
-        display: none;
+    .webgpuSettingsPipelineGraph {
+        margin: 0.4em 0.45em 0.2em;
     }
 
     .webgpuSettingsPasses,
     .webgpuSettingsDecoders {
         display: flex;
-        gap: 0.4em;
-        margin: 0.35em 0;
+        gap: 0.35em;
+        margin: 0.3em 0.45em;
+        padding: 0;
         flex-direction: column;
+        list-style: none;
     }
 
+    .webgpuSettingsPasses:empty,
     .webgpuSettingsDecoders:empty {
         display: none;
     }
 
     .webgpuSettingsPass,
     .webgpuSettingsDecoder {
-        padding: 0.35em 0.5em;
-        background: rgba(255, 255, 255, 0.06);
-        border-radius: 0.2em;
+        padding: 0.25em 0.4em 0.4em;
+        background: var(--webgpu-ui-control-background);
+        border: 0.0625em solid transparent;
+        border-radius: var(--webgpu-ui-radius);
+        transition: border-color 0.12s;
+    }
+
+    .webgpuSettingsPass:hover,
+    .webgpuSettingsDecoder:hover {
+        border-color: var(--webgpu-ui-border);
+    }
+
+    .webgpuSettingsPass:focus-within,
+    .webgpuSettingsDecoder:focus-within {
+        border-color: rgba(0, 164, 220, 0.6);
     }
 
     .webgpuSettingsPassHeader,
     .webgpuSettingsDecoderHeader {
         display: flex;
-        gap: 0.5em;
+        gap: 0.2em;
+        min-height: 2em;
         align-items: center;
-        justify-content: space-between;
+    }
+
+    .webgpuSettingsPassOrder {
+        flex: none;
+        min-width: 1.4em;
+        color: var(--webgpu-ui-accent-text);
+        font-family: var(--webgpu-ui-monospace);
+        font-size: 85%;
+        text-align: center;
     }
 
     .webgpuSettingsPassName,
     .webgpuSettingsDecoderName {
+        flex: 1 1 auto;
+        min-width: 0;
         overflow: hidden;
         font-weight: 600;
         text-overflow: ellipsis;
@@ -265,105 +113,28 @@
 
     .webgpuSettingsPassState,
     .webgpuSettingsDecoderState {
-        overflow-wrap: anywhere;
+        overflow: hidden;
+        color: var(--webgpu-ui-text-muted);
+        font-family: var(--webgpu-ui-monospace);
+        font-size: 82%;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .webgpuSettingsPassParameter {
         display: grid;
-        gap: 0.5em;
+        gap: var(--webgpu-ui-gap);
         margin-top: 0.25em;
         align-items: center;
-        grid-template-columns: minmax(6em, 1fr) minmax(5em, 8em);
+        grid-template-columns: minmax(0, 1fr) auto;
     }
 
-    .webgpuSettingsButtonRow {
-        display: flex;
-        gap: 0.45em;
-        flex-wrap: wrap;
-    }
-
-    // A button beside the info button of its description
-    .webgpuSettingsDescribedButtonRow {
-        display: flex;
-        gap: 0.45em;
-        align-items: center;
-
-        > .emby-button {
-            margin: 0;
-        }
-    }
-
-    // A section title beside the info button of the section's description
-    .webgpuSettingsSectionHeader {
-        display: flex;
-        gap: 0.3em;
-        margin: 0.55em 0 0.3em;
-        align-items: center;
-
-        > .webgpuSettingsSectionTitle {
-            margin: 0;
-        }
-
-        // The icon's padding overhangs the title's line, so the header stays as tall as other section titles
-        > .webgpuSettingsInfoButton {
-            margin: -0.2em 0;
-        }
-    }
-
-    .webgpuSettingsFooter {
-        display: flex;
-        gap: 0.45em;
-        margin-top: 0.55em;
-        justify-content: flex-end;
-        flex-wrap: wrap;
-    }
-}
-
-.webgpuSettingsPanel-tv {
-    --webgpu-settings-top: 4em;
-
-    .webgpuSettingsContent {
-        font-size: 60%;
-    }
-}
-
-// The host's playback info overlay beside the panel, at the offset the panel sets from its start edge
-.playerStats.webgpuSettingsPlaybackInfo {
-    max-width: calc(100% - var(--webgpu-playback-info-offset) - 1.5em);
-
-    [dir="ltr"] & {
-        left: var(--webgpu-playback-info-offset);
-    }
-
-    [dir="rtl"] & {
-        right: var(--webgpu-playback-info-offset);
-    }
-}
-
-@media all and (max-width: 40em) {
-    .webgpuSettingsPanel {
-        --webgpu-settings-max-height: calc(100vh - var(--webgpu-settings-top) - 0.5em);
-
-        width: calc(100% - 1em);
-
-        [dir="ltr"] & {
-            left: 0.5em;
-        }
-
-        [dir="rtl"] & {
-            right: 0.5em;
-        }
-    }
-}
-
-@media all and (max-width: 30em) {
-    .webgpuSettingsPanel {
-        .webgpuSettingsNumericRow {
-            grid-template-columns: minmax(0, 1fr) 4.75em auto;
-        }
-
-        .webgpuSettingsControlLabel {
-            grid-column: 1 / -1;
-        }
+    .webgpuSettingsPassParameterName {
+        min-width: 0;
+        overflow: hidden;
+        font-family: var(--webgpu-ui-monospace);
+        font-size: 88%;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 }

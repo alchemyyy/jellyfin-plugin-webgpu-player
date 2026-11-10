@@ -1,0 +1,338 @@
+// The WebGPU failure warning: a window centered over the player, above the settings windows, in the add-on's shared look
+.webgpuFailureDialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 100010;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    width: min(40em, 100vw - 2em);
+    max-height: calc(100vh - 2em);
+    border: 1px solid var(--webgpu-ui-border);
+    border-radius: var(--webgpu-ui-radius);
+    background: var(--webgpu-ui-background);
+    box-shadow: 0 0.5em 2em rgba(0, 0, 0, 0.6);
+    line-height: 1.45;
+    overflow: hidden;
+    transform: translate(-50%, -50%);
+    backdrop-filter: blur(0.4em);
+
+    // The window takes the focus as a whole when it opens; its controls show their own focus
+    &:focus {
+        outline: none;
+    }
+}
+
+.webgpuFailureTitleBar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--webgpu-ui-gap);
+    padding: 0.3em 0.3em 0.3em 0.75em;
+    border-bottom: 1px solid var(--webgpu-ui-border);
+    background: var(--webgpu-ui-title-background);
+}
+
+.webgpuFailureTitleIcon {
+    flex: none;
+    color: var(--webgpu-ui-warning);
+}
+
+.webgpuFailureTitle {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 1.05em;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.webgpuFailureBody {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 0.8em;
+    min-height: 0;
+    padding: 0.85em 1em;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    overflow-wrap: break-word;
+
+    p {
+        margin: 0;
+    }
+}
+
+.webgpuFailureCause {
+    padding: 0.6em 0.75em;
+    border-left: 0.2em solid var(--webgpu-ui-warning);
+    border-radius: var(--webgpu-ui-radius);
+    background: var(--webgpu-ui-control-background);
+}
+
+.webgpuFailureCauseHeadline,
+.webgpuFailureFixHeading {
+    margin: 0 0 0.35em;
+    font-size: 1em;
+    font-weight: 600;
+}
+
+.webgpuFailureConfidence {
+    margin-top: 0.35em;
+    color: var(--webgpu-ui-text-muted);
+    font-size: 0.9em;
+}
+
+.webgpuFailureFixHeading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--webgpu-ui-gap);
+}
+
+.webgpuFailureCopyHint {
+    color: var(--webgpu-ui-text-muted);
+    font-size: 0.9em;
+}
+
+.webgpuFailureSteps {
+    margin: 0.5em 0 0;
+    padding-left: 1.6em;
+}
+
+.webgpuFailureStep {
+    margin: 0 0 0.45em;
+    padding-left: 0.2em;
+}
+
+.webgpuFailureUiLabel {
+    font-weight: 600;
+}
+
+.webgpuFailureChip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    margin: 0.05em 0;
+    border: 1px solid var(--webgpu-ui-border);
+    border-radius: var(--webgpu-ui-radius);
+    background: var(--webgpu-ui-control-background);
+    vertical-align: middle;
+}
+
+.webgpuFailureChipValue {
+    min-width: 0;
+    padding: 0.05em 0.4em;
+    font-family: var(--webgpu-ui-monospace);
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}
+
+// Every button and the select share the theme's control look
+.webgpuFailureChipCopy,
+.webgpuFailureIconButton,
+.webgpuFailureButton,
+.webgpuFailureBrowser {
+    box-sizing: border-box;
+    margin: 0;
+    border: 1px solid transparent;
+    border-radius: var(--webgpu-ui-radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.webgpuFailureChipCopy {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 1.8em;
+    height: 1.6em;
+    padding: 0;
+    border-left-color: var(--webgpu-ui-border);
+    border-radius: 0 var(--webgpu-ui-radius) var(--webgpu-ui-radius) 0;
+
+    .material-icons {
+        font-size: 1em;
+    }
+}
+
+.webgpuFailureIconButton {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--webgpu-ui-control-height);
+    height: var(--webgpu-ui-control-height);
+    padding: 0;
+}
+
+.webgpuFailureButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    min-height: var(--webgpu-ui-control-height);
+    padding: 0.25em 0.9em;
+    border-color: var(--webgpu-ui-border);
+    background: var(--webgpu-ui-control-background);
+
+    .material-icons {
+        font-size: 1.15em;
+    }
+}
+
+.webgpuFailureButtonPrimary {
+    border-color: var(--webgpu-ui-accent);
+    background: var(--webgpu-ui-accent);
+}
+
+.webgpuFailureBrowser {
+    max-width: 100%;
+    height: var(--webgpu-ui-control-height);
+    padding: 0 0.5em;
+    border-color: var(--webgpu-ui-border);
+    background: var(--webgpu-ui-control-background);
+    font-weight: 600;
+
+    option {
+        background: #222;
+        color: #fff;
+    }
+}
+
+.webgpuFailureDetails {
+    border: 1px solid var(--webgpu-ui-border);
+    border-radius: var(--webgpu-ui-radius);
+}
+
+.webgpuFailureDetailsSummary {
+    padding: 0.35em 0.6em;
+    border-radius: var(--webgpu-ui-radius);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.webgpuFailureFacts {
+    display: grid;
+    grid-template-columns: minmax(6em, max-content) minmax(0, 1fr);
+    gap: 0.25em 0.75em;
+    margin: 0;
+    padding: 0.35em 0.6em 0.6em;
+    font-size: 0.9em;
+}
+
+.webgpuFailureFactLabel {
+    color: var(--webgpu-ui-text-muted);
+    font-family: var(--webgpu-ui-monospace);
+    overflow-wrap: anywhere;
+}
+
+.webgpuFailureFactValue {
+    min-width: 0;
+    margin: 0;
+    font-family: var(--webgpu-ui-monospace);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.webgpuFailureReportText {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 8em;
+    padding: 0.4em 0.6em;
+    border: 1px solid var(--webgpu-ui-border);
+    border-radius: var(--webgpu-ui-radius);
+    background: var(--webgpu-ui-control-background);
+    color: inherit;
+    font-family: var(--webgpu-ui-monospace);
+    font-size: 0.85em;
+    resize: vertical;
+}
+
+.webgpuFailureShowWarning {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    cursor: pointer;
+}
+
+.webgpuFailureShowWarning:hover {
+    color: var(--webgpu-ui-accent-text);
+}
+
+.webgpuFailureShowWarningCheckbox {
+    flex: none;
+    width: 1.1em;
+    height: 1.1em;
+    margin: 0;
+    border-radius: 0.15em;
+    accent-color: var(--webgpu-ui-accent);
+    cursor: pointer;
+}
+
+.webgpuFailureChipCopy:hover,
+.webgpuFailureIconButton:hover,
+.webgpuFailureButton:hover,
+.webgpuFailureBrowser:hover,
+.webgpuFailureDetailsSummary:hover {
+    background: var(--webgpu-ui-hover);
+}
+
+.webgpuFailureButtonPrimary:hover {
+    background: var(--webgpu-ui-accent);
+    filter: brightness(1.15);
+}
+
+.webgpuFailureChipCopy:focus,
+.webgpuFailureIconButton:focus,
+.webgpuFailureButton:focus,
+.webgpuFailureBrowser:focus,
+.webgpuFailureDetailsSummary:focus,
+.webgpuFailureShowWarningCheckbox:focus,
+.webgpuFailureReportText:focus {
+    outline: none;
+}
+
+.webgpuFailureChipCopy:focus-visible,
+.webgpuFailureIconButton:focus-visible,
+.webgpuFailureButton:focus-visible,
+.webgpuFailureBrowser:focus-visible,
+.webgpuFailureDetailsSummary:focus-visible,
+.webgpuFailureShowWarningCheckbox:focus-visible,
+.webgpuFailureReportText:focus-visible {
+    box-shadow: var(--webgpu-ui-focus-ring);
+}
+
+.webgpuFailureStatus {
+    color: var(--webgpu-ui-text-muted);
+    font-size: 0.9em;
+
+    &:empty {
+        display: none;
+    }
+}
+
+.webgpuFailureButtons {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--webgpu-ui-gap);
+    padding: 0.6em 1em;
+    border-top: 1px solid var(--webgpu-ui-border);
+    background: var(--webgpu-ui-title-background);
+}
+
+// A narrow window lists each detail under its name
+@media (max-width: 30em) {
+    .webgpuFailureFacts {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .webgpuFailureFactValue {
+        margin-bottom: 0.3em;
+    }
+}

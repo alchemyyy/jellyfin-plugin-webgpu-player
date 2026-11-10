@@ -195,6 +195,7 @@ describe('client defaults editor', () => {
         expect(getValueControl(container, 'settingsButtonPlacement').value).toBe('before-settings');
         expect(getValueControl(container, 'enableCustomDecode').checked).toBe(true);
         expect(getValueControl(container, 'enableGPUDecodeSlicing').checked).toBe(false);
+        expect(getValueControl(container, 'webGPUFailureWarning').checked).toBe(true);
         expect(getValueControl(container, 'toneMapOperator').value).toBe(builtInRender.toneMapping.operator);
         expect(Number(getValueControl(container, 'brightness').value)).toBe(builtInRender.display.brightness);
         expect(getValueControl(container, 'audioDownmixAlgorithm').value).toBe(DEFAULT_CUSTOM_AUDIO_DOWNMIX_ALGORITHM);
@@ -203,7 +204,14 @@ describe('client defaults editor', () => {
     });
 
     it('shows the value of each setting the server sets', async () => {
-        serverMockState.defaults = { blackBarCrop: true, brightness: 0.1, deinterlaceMode: 'off', hdrOutput: true, preferredVideoPlayer: 'html' };
+        serverMockState.defaults = {
+            blackBarCrop: true,
+            brightness: 0.1,
+            deinterlaceMode: 'off',
+            hdrOutput: true,
+            preferredVideoPlayer: 'html',
+            webGPUFailureWarning: false
+        };
 
         const container = await renderEditor();
 
@@ -211,6 +219,7 @@ describe('client defaults editor', () => {
         expect(Number(getValueControl(container, 'brightness').value)).toBe(0.1);
         expect(getValueControl(container, 'deinterlaceMode').value).toBe('off');
         expect(getValueControl(container, 'hdrOutput').checked).toBe(true);
+        expect(getValueControl(container, 'webGPUFailureWarning').checked).toBe(false);
         expect(getValueControl(container, 'preferredVideoPlayer').value).toBe('html');
         expect(Number(getValueControl(container, 'contrast').value)).toBe(createHDRToSDRRenderSettings().display.contrast);
         expect(getStatus(container)).toBe('');
@@ -238,6 +247,7 @@ describe('client defaults editor', () => {
         changeValue(getValueControl(container, 'brightness'), '9999');
         getValueControl(container, 'blackBarCrop').checked = true;
         getValueControl(container, 'hdrOutput').checked = true;
+        getValueControl(container, 'webGPUFailureWarning').checked = false;
         changeValue(getValueControl(container, 'deinterlaceMode'), 'single-rate');
         changeValue(getValueControl(container, 'preferredVideoPlayer'), 'webgpu');
         // A value changed back to the built-in one, by hand or by its reset, is not stored
@@ -255,7 +265,8 @@ describe('client defaults editor', () => {
             brightness: HDR_RENDER_SETTING_RANGES.brightness.maximum,
             deinterlaceMode: 'single-rate',
             hdrOutput: true,
-            preferredVideoPlayer: 'webgpu'
+            preferredVideoPlayer: 'webgpu',
+            webGPUFailureWarning: false
         }, []);
         expect(Number(getValueControl(container, 'contrast').value)).toBe(createHDRToSDRRenderSettings().display.contrast);
         expect(Number(getValueControl(container, 'saturation').value)).toBe(createHDRToSDRRenderSettings().display.saturation);

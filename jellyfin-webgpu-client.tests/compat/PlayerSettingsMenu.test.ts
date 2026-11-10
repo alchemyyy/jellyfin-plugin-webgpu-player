@@ -182,7 +182,8 @@ function flushTasks(): Promise<void> {
 }
 
 function savePlacement(settingsButtonPlacement: SettingsButtonPlacement): void {
-    saveWebGPUUserSettings({ ...loadWebGPUUserSettings(), osd: { settingsButtonPlacement } });
+    const settings = loadWebGPUUserSettings();
+    saveWebGPUUserSettings({ ...settings, osd: { ...settings.osd, settingsButtonPlacement } });
 }
 
 function playEpisodes(currentPlayer: unknown): void {

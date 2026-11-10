@@ -1,0 +1,24 @@
+// The look the add-on's own windows share: the settings windows and the WebGPU failure warning.
+// Each window root carries the class, so every control inside it reads the same variables
+.webgpuUi {
+    --webgpu-ui-accent: #00a4dc;
+    --webgpu-ui-accent-text: #5fd0f5;
+    --webgpu-ui-background: rgba(18, 18, 18, 0.95);
+    --webgpu-ui-title-background: rgba(0, 0, 0, 0.5);
+    --webgpu-ui-border: rgba(255, 255, 255, 0.14);
+    --webgpu-ui-control-background: rgba(255, 255, 255, 0.08);
+    --webgpu-ui-hover: rgba(255, 255, 255, 0.1);
+    --webgpu-ui-selected: rgba(0, 164, 220, 0.24);
+    --webgpu-ui-focus-ring: 0 0 0 0.125em var(--webgpu-ui-accent);
+    --webgpu-ui-text: #fff;
+    --webgpu-ui-text-muted: #bdbdbd;
+    --webgpu-ui-success: #7bd88f;
+    --webgpu-ui-warning: #ffb74d;
+    --webgpu-ui-failure: #ff7070;
+    --webgpu-ui-radius: 0.3em;
+    --webgpu-ui-gap: 0.45em;
+    --webgpu-ui-control-height: 2.1em;
+    --webgpu-ui-monospace: ui-monospace, "Cascadia Mono", consolas, menlo, monospace;
+
+    color: var(--webgpu-ui-text);
+}
