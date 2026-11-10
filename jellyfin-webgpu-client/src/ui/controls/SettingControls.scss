@@ -1,0 +1,634 @@
+// The settings windows' controls: compact rows of a label, its control, and its info and reset buttons, in the windows' dark look.
+// A row lays out on one line in a wide window, and puts its label above its control in a narrow one
+
+.webgpuUi {
+    .webgpuControl {
+        position: relative;
+        padding: 0.15em 0.45em;
+        border-radius: var(--webgpu-ui-radius);
+        transition: background-color 0.12s;
+    }
+
+    // The accent bar on the start edge of the row under the pointer or holding the focus
+    .webgpuControl::before {
+        position: absolute;
+        top: 0.3em;
+        bottom: 0.3em;
+        left: 0;
+        width: 0.15em;
+        background: var(--webgpu-ui-accent);
+        border-radius: 0.075em;
+        content: "";
+        opacity: 0;
+        transition: opacity 0.12s;
+    }
+
+    .webgpuControl:hover {
+        background: rgba(255, 255, 255, 0.04);
+    }
+
+    .webgpuControl:focus-within {
+        background: rgba(255, 255, 255, 0.06);
+    }
+
+    .webgpuControl:hover::before {
+        opacity: 0.5;
+    }
+
+    .webgpuControl:focus-within::before {
+        opacity: 1;
+    }
+
+    .webgpuControlLine {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+        gap: var(--webgpu-ui-gap);
+        align-items: center;
+        min-height: var(--webgpu-ui-control-height);
+    }
+
+    .webgpuCheckboxControl .webgpuControlLine,
+    .webgpuActionControl .webgpuControlLine {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .webgpuControlLabel {
+        min-width: 0;
+        overflow: hidden;
+        font-weight: 500;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .webgpuControlDisabled .webgpuControlLabel {
+        color: var(--webgpu-ui-text-muted);
+    }
+
+    .webgpuControlField {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        justify-content: flex-end;
+    }
+
+    .webgpuNumericField {
+        gap: var(--webgpu-ui-gap);
+    }
+
+    .webgpuControlAction {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+    }
+
+    .webgpuControlButtons {
+        display: inline-flex;
+        flex: none;
+        gap: 0.1em;
+        align-items: center;
+        justify-self: end;
+    }
+
+    // A numeric or select row puts its label and buttons on a line above its slider and field, or its select, which take the row's width;
+    // a wide window puts them on one line
+    .webgpuNumericControl .webgpuControlLine,
+    .webgpuSelectControl .webgpuControlLine {
+        grid-template-areas:
+            "label buttons"
+            "field field";
+        grid-template-columns: minmax(0, 1fr) auto;
+        row-gap: 0.1em;
+    }
+
+    .webgpuNumericControl .webgpuControlLabel,
+    .webgpuSelectControl .webgpuControlLabel {
+        grid-area: label;
+    }
+
+    .webgpuNumericControl .webgpuNumericField,
+    .webgpuSelectControl .webgpuControlField {
+        grid-area: field;
+    }
+
+    .webgpuNumericControl .webgpuControlButtons,
+    .webgpuSelectControl .webgpuControlButtons {
+        grid-area: buttons;
+    }
+
+    .webgpuControlDescription {
+        margin: 0.1em 0 0.3em;
+        color: var(--webgpu-ui-text-muted);
+        font-size: 88%;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+        white-space: pre-line;
+    }
+
+    // Text buttons
+    .webgpuButton {
+        display: inline-flex;
+        min-width: 0;
+        max-width: 100%;
+        min-height: var(--webgpu-ui-control-height);
+        gap: 0.35em;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        padding: 0 0.8em;
+        background: var(--webgpu-ui-control-background);
+        border: 0.0625em solid var(--webgpu-ui-border);
+        border-radius: var(--webgpu-ui-radius);
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 500;
+        transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+    }
+
+    .webgpuButtonPrimary {
+        background: var(--webgpu-ui-accent);
+        border-color: var(--webgpu-ui-accent);
+        color: #fff;
+    }
+
+    .webgpuButtonDanger {
+        border-color: rgba(255, 112, 112, 0.5);
+        color: var(--webgpu-ui-failure);
+    }
+
+    .webgpuButton:hover {
+        background: var(--webgpu-ui-hover);
+        border-color: rgba(255, 255, 255, 0.32);
+    }
+
+    .webgpuButtonPrimary:hover {
+        background: #19b4e8;
+        border-color: #19b4e8;
+    }
+
+    .webgpuButtonDanger:hover {
+        background: rgba(255, 112, 112, 0.14);
+        border-color: var(--webgpu-ui-failure);
+    }
+
+    .webgpuButton:focus-visible,
+    .webgpuButtonPrimary:focus-visible,
+    .webgpuButtonDanger:focus-visible {
+        outline: none;
+        box-shadow: var(--webgpu-ui-focus-ring);
+    }
+
+    .webgpuButton:disabled,
+    .webgpuButtonPrimary:disabled,
+    .webgpuButtonDanger:disabled {
+        background: var(--webgpu-ui-control-background);
+        border-color: var(--webgpu-ui-border);
+        cursor: default;
+        opacity: 0.45;
+    }
+
+    .webgpuButtonLabel {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .webgpuButton > .material-icons {
+        flex: none;
+        font-size: 1.2em;
+    }
+
+    // Square icon buttons
+    .webgpuIconButton {
+        display: inline-flex;
+        flex: none;
+        width: 1.9em;
+        min-width: 1.9em;
+        height: 1.9em;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        border-radius: var(--webgpu-ui-radius);
+        color: var(--webgpu-ui-text-muted);
+        cursor: pointer;
+        font: inherit;
+        transition: background-color 0.12s, color 0.12s;
+    }
+
+    .webgpuIconButton > .material-icons {
+        font-size: 1.25em;
+    }
+
+    .webgpuIconButton:hover {
+        background: var(--webgpu-ui-hover);
+        color: var(--webgpu-ui-text);
+    }
+
+    .webgpuIconButton:focus-visible {
+        outline: none;
+        box-shadow: var(--webgpu-ui-focus-ring);
+        color: var(--webgpu-ui-text);
+    }
+
+    .webgpuIconButton:disabled {
+        background: transparent;
+        color: var(--webgpu-ui-text-muted);
+        cursor: default;
+        opacity: 0.45;
+    }
+
+    .webgpuSettingsInfoButton[aria-expanded="true"] {
+        color: var(--webgpu-ui-accent-text);
+    }
+
+    // Checkboxes: a square box in front of a real input, which keeps the focus and the keyboard
+    .webgpuCheckbox {
+        position: relative;
+        display: flex;
+        min-width: 0;
+        min-height: var(--webgpu-ui-control-height);
+        gap: 0.6em;
+        align-items: center;
+        cursor: pointer;
+    }
+
+    .webgpuCheckboxInput {
+        position: absolute;
+        top: 50%;
+        left: 0;
+        width: 1.05em;
+        height: 1.05em;
+        margin: -0.525em 0 0;
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .webgpuCheckboxBox {
+        position: relative;
+        flex: none;
+        width: 1.05em;
+        height: 1.05em;
+        box-sizing: border-box;
+        border: 0.125em solid rgba(255, 255, 255, 0.55);
+        border-radius: 0.15em;
+        transition: background-color 0.12s, border-color 0.12s;
+    }
+
+    // The check mark
+    .webgpuCheckboxBox::after {
+        position: absolute;
+        top: 0.06em;
+        left: 0.26em;
+        width: 0.22em;
+        height: 0.48em;
+        border: solid #fff;
+        border-width: 0 0.12em 0.12em 0;
+        content: "";
+        opacity: 0;
+        transform: rotate(45deg);
+    }
+
+    .webgpuCheckbox:hover .webgpuCheckboxBox {
+        border-color: var(--webgpu-ui-text);
+    }
+
+    .webgpuCheckboxInput:checked + .webgpuCheckboxBox {
+        background: var(--webgpu-ui-accent);
+        border-color: var(--webgpu-ui-accent);
+    }
+
+    .webgpuCheckboxInput:focus-visible + .webgpuCheckboxBox {
+        box-shadow: var(--webgpu-ui-focus-ring);
+    }
+
+    .webgpuCheckboxInput:disabled + .webgpuCheckboxBox {
+        opacity: 0.45;
+    }
+
+    .webgpuCheckboxInput:checked + .webgpuCheckboxBox::after {
+        opacity: 1;
+    }
+
+    // Selects: as wide as their row, or 18 ems on a wide window's single line, their text cut short, the whole text in their tooltip
+    .webgpuSelect {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        height: var(--webgpu-ui-control-height);
+        margin: 0;
+        padding: 0 1.7em 0 0.55em;
+        overflow: hidden;
+        background-color: var(--webgpu-ui-control-background);
+        background-image:
+            linear-gradient(45deg, transparent 50%, currentcolor 50%),
+            linear-gradient(135deg, currentcolor 50%, transparent 50%);
+        background-position: calc(100% - 0.95em) 55%, calc(100% - 0.65em) 55%;
+        background-repeat: no-repeat;
+        background-size: 0.3em 0.3em;
+        border: 0.0625em solid var(--webgpu-ui-border);
+        border-radius: var(--webgpu-ui-radius);
+        color: inherit;
+        color-scheme: dark;
+        cursor: pointer;
+        font: inherit;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        appearance: none;
+        transition: background-color 0.12s, border-color 0.12s;
+    }
+
+    .webgpuSelect > option {
+        background: #202020;
+        color: #fff;
+    }
+
+    .webgpuSelect:hover {
+        background-color: var(--webgpu-ui-hover);
+        border-color: rgba(255, 255, 255, 0.32);
+    }
+
+    .webgpuSelect:focus-visible {
+        outline: none;
+        border-color: var(--webgpu-ui-accent);
+        box-shadow: var(--webgpu-ui-focus-ring);
+    }
+
+    .webgpuSelect:disabled {
+        background-color: var(--webgpu-ui-control-background);
+        border-color: var(--webgpu-ui-border);
+        cursor: default;
+        opacity: 0.45;
+    }
+
+    // Sliders: a thin track filled in the accent color up to a round thumb
+    .webgpuSlider {
+        --webgpu-slider-fill: 0%;
+
+        flex: 1 1 6em;
+        min-width: 3em;
+        height: 1.5em;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        cursor: pointer;
+        appearance: none;
+    }
+
+    .webgpuSlider::-webkit-slider-runnable-track {
+        height: 0.25em;
+        background:
+            linear-gradient(
+                to right,
+                var(--webgpu-ui-accent) var(--webgpu-slider-fill),
+                rgba(255, 255, 255, 0.22) var(--webgpu-slider-fill)
+            );
+        border-radius: 0.125em;
+    }
+
+    .webgpuSlider::-webkit-slider-thumb {
+        width: 0.95em;
+        height: 0.95em;
+        margin-top: -0.35em;
+        background: #fff;
+        border: 0;
+        border-radius: 50%;
+        box-shadow: 0 0 0 0.125em rgba(0, 0, 0, 0.35);
+        appearance: none;
+        transition: transform 0.12s;
+    }
+
+    .webgpuSlider::-moz-range-track {
+        height: 0.25em;
+        background: rgba(255, 255, 255, 0.22);
+        border-radius: 0.125em;
+    }
+
+    .webgpuSlider::-moz-range-progress {
+        height: 0.25em;
+        background: var(--webgpu-ui-accent);
+        border-radius: 0.125em;
+    }
+
+    .webgpuSlider::-moz-range-thumb {
+        width: 0.95em;
+        height: 0.95em;
+        background: #fff;
+        border: 0;
+        border-radius: 50%;
+        box-shadow: 0 0 0 0.125em rgba(0, 0, 0, 0.35);
+        transition: transform 0.12s;
+    }
+
+    .webgpuSlider:focus-visible {
+        outline: none;
+    }
+
+    .webgpuSlider:hover::-webkit-slider-thumb {
+        transform: scale(1.2);
+    }
+
+    .webgpuSlider:hover::-moz-range-thumb {
+        transform: scale(1.2);
+    }
+
+    .webgpuSlider:focus-visible::-webkit-slider-thumb {
+        box-shadow: 0 0 0 0.2em var(--webgpu-ui-accent);
+    }
+
+    .webgpuSlider:focus-visible::-moz-range-thumb {
+        box-shadow: 0 0 0 0.2em var(--webgpu-ui-accent);
+    }
+
+    .webgpuSlider:disabled {
+        cursor: default;
+        opacity: 0.45;
+    }
+
+    // A value beyond the slider's span: the slider rests at its end, dimmed, and its tooltip says why
+    .webgpuBeyondSlider .webgpuSlider {
+        opacity: 0.55;
+    }
+
+    // Number fields: a typed value between its decrease and increase buttons
+    .webgpuNumberField {
+        display: inline-flex;
+        flex: none;
+        height: var(--webgpu-ui-control-height);
+        box-sizing: border-box;
+        align-items: stretch;
+        overflow: hidden;
+        background: var(--webgpu-ui-control-background);
+        border: 0.0625em solid var(--webgpu-ui-border);
+        border-radius: var(--webgpu-ui-radius);
+        transition: border-color 0.12s;
+    }
+
+    .webgpuBeyondSlider .webgpuNumberField {
+        border-color: rgba(255, 183, 77, 0.6);
+    }
+
+    .webgpuNumberField:hover {
+        border-color: rgba(255, 255, 255, 0.32);
+    }
+
+    .webgpuNumberField:focus-within {
+        border-color: var(--webgpu-ui-accent);
+        box-shadow: var(--webgpu-ui-focus-ring);
+    }
+
+    .webgpuNumberInput {
+        width: 4.6em;
+        min-width: 0;
+        margin: 0;
+        padding: 0 0.2em;
+        background: transparent;
+        border: 0;
+        color: inherit;
+        font: inherit;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+        text-overflow: ellipsis;
+    }
+
+    .webgpuNumberInput:hover {
+        background: rgba(255, 255, 255, 0.04);
+    }
+
+    .webgpuNumberInput:focus-visible {
+        outline: none;
+        background: rgba(255, 255, 255, 0.06);
+    }
+
+    // Typed text that Enter has not applied yet
+    .webgpuNumberInput.webgpuUncommitted {
+        box-shadow: inset 0 -0.125em 0 var(--webgpu-ui-warning);
+        color: var(--webgpu-ui-warning);
+        font-style: italic;
+    }
+
+    .webgpuNumberInput:disabled {
+        background: transparent;
+        cursor: default;
+        opacity: 0.45;
+    }
+
+    .webgpuStepper {
+        display: inline-flex;
+        flex: none;
+        width: 1.9em;
+        min-height: 1.9em;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        color: var(--webgpu-ui-text-muted);
+        cursor: pointer;
+        font: inherit;
+        transition: background-color 0.12s, color 0.12s;
+    }
+
+    .webgpuStepper > .material-icons {
+        font-size: 1.1em;
+    }
+
+    .webgpuStepper:hover {
+        background: var(--webgpu-ui-hover);
+        color: var(--webgpu-ui-text);
+    }
+
+    .webgpuStepper:active {
+        background: var(--webgpu-ui-selected);
+    }
+
+    .webgpuStepper:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 0.125em var(--webgpu-ui-accent);
+        color: var(--webgpu-ui-text);
+    }
+
+    .webgpuStepper:disabled {
+        background: transparent;
+        color: var(--webgpu-ui-text-muted);
+        cursor: default;
+        opacity: 0.45;
+    }
+
+    // Status lines and the headings of a window's groups of rows
+    .webgpuStatus {
+        margin: 0.3em 0.45em;
+        color: var(--webgpu-ui-text-muted);
+        font-size: 88%;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+    }
+
+    .webgpuStatus:empty {
+        display: none;
+    }
+
+    .webgpuGroupTitle {
+        margin: 0.75em 0.45em 0.25em;
+        overflow: hidden;
+        color: var(--webgpu-ui-accent-text);
+        font-size: 78%;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .webgpuGroupTitle:first-child {
+        margin-top: 0.2em;
+    }
+}
+
+// Right-to-left pages put the accent bar, the select's arrow, and the slider's fill on the other side
+[dir="rtl"] .webgpuUi {
+    .webgpuControl::before {
+        right: 0;
+        left: auto;
+    }
+
+    .webgpuCheckboxInput {
+        right: 0;
+        left: auto;
+    }
+
+    .webgpuSelect {
+        padding: 0 0.55em 0 1.7em;
+        background-position: 0.65em 55%, 0.95em 55%;
+    }
+
+    .webgpuSlider::-webkit-slider-runnable-track {
+        background:
+            linear-gradient(
+                to left,
+                var(--webgpu-ui-accent) var(--webgpu-slider-fill),
+                rgba(255, 255, 255, 0.22) var(--webgpu-slider-fill)
+            );
+    }
+}
+
+// A wide window has room for a numeric row's label, slider, field, and buttons on one line, and for a select row's label, select, and buttons
+@container (min-width: 36em) {
+    .webgpuUi .webgpuNumericControl .webgpuControlLine {
+        grid-template-areas: "label field buttons";
+        grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto;
+    }
+
+    .webgpuUi .webgpuSelectControl .webgpuControlLine {
+        grid-template-areas: "label field buttons";
+        grid-template-columns: minmax(0, 1fr) auto auto;
+    }
+
+    .webgpuUi .webgpuSelect {
+        width: 18em;
+    }
+}

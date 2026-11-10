@@ -32,7 +32,8 @@ export const CLIENT_DEFAULT_KEYS = Object.freeze([
     'settingsButtonPlacement',
     'speakerLayout',
     'surroundLevel',
-    'toneMapOperator'
+    'toneMapOperator',
+    'webGPUFailureWarning'
 ] as const);
 
 export type ClientDefaultKey = typeof CLIENT_DEFAULT_KEYS[number];

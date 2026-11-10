@@ -30,12 +30,12 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The server checks only the document's shape and stores each value verbatim, and the add-on normalizes every value as it normalizes a user's stored choice.
   So the add-on stays the one owner of each setting's range and options, and a setting the add-on adds or widens needs no plugin change.
 - A user's settings store only what differs from the defaults (10-27).
-  A full snapshot, as version 4 stored, would pin every value at the defaults of its save, so a default the server sets later would never reach a user who once opened the panel.
+  A full snapshot, as version 4 stored, would pin every value at the defaults of its save, so a default the server sets later would never reach a user who once opened the settings.
   So a value equal to its default follows the default, and restoring a default drops the value; version 4 snapshots load with their built-in values as following the defaults, since the user could not tell them apart from choices.
-  The page applies the server's defaults cached by the last read before it reads them again, and waits for a read in progress only where it reads the settings for a decision: opening the panel and a new negotiation.
+  The page applies the server's defaults cached by the last read before it reads them again, and waits for a read in progress only where it reads the settings for a decision: opening the settings windows and a new negotiation.
 - The default shader preset is `null` in a user's settings, not a copy of the server's files (10-27).
   A copied list would carry source keys the user's settings own, so a later default preset could never replace it, and an empty list could not tell "no passes" from "follow the server".
-  So a user who follows it plays the files `DefaultPresentationFiles.ts` downloads once per preset and file version into its own cache, and an edit in the panel makes a list of the user's own.
+  So a user who follows it plays the files `DefaultPresentationFiles.ts` downloads once per preset and file version into its own cache, and an edit in the settings makes a list of the user's own.
   A new version of a default file downloads under a new key rather than replacing the source in place, since the user's own preset may share the old key after an edit.
 - The WebGPU player toggle restarts the current video through PlaybackManager rather than swapping players (10-27).
   A player swapped in place would leave PlaybackManager's stream state, progress reports, and the OSD bound to the old one, and a page reload would lose the queue.
@@ -55,6 +55,19 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The element carries `disablepictureinpicture` instead, so scripts skip it.
   Other playback rates stay unsupported too, as the rate menu offers none for custom playback, so the element refuses one as a browser refuses a rate it does not support.
   Jellyfin Enhanced's rating in the OSD can show another item's rating with any player: it reads the first `.videoOsdBottom` in the document, which can be a cached, hidden video page of an earlier playback.
+- The in-player settings are windows the user arranges, which the layout keeps apart and inside the player rather than letting them overlap or leave it (11-09); [The settings windows](add-on.md#the-settings-windows) has the rules.
+  One tall panel covered a third of the picture to show one setting, while separate windows show only what the user expands, where the user puts it, as a game client's GUI does.
+  A player that shrinks, or a window that grows, would push windows off the screen or over each other, so a window that no longer fits moves to the nearest free place, then shrinks there, and stacks only when nothing else fits; the place the user gave it stays stored, so it returns once the room allows.
+  A window the user drops on another takes that place, since the drop is the user's latest and clearest wish, and the covered window moves aside; a place is stored as the distance from the nearer edges, so a window put in a corner stays in that corner on any screen.
+  Windows the user never placed keep reading-order slots a title bar high, so expanding one pushes the windows below it in its column down: filling free room in reading order with the windows' whole heights moved a window into a gap a collapsed one left, and every expand and collapse reordered the windows after it.
+  The master window is pinned and cannot collapse, so the list that brings every other window back is always in reach, and the layout belongs to the browser, stored apart from the settings, which the server's defaults and the resets do not touch.
+- A number field applies only on a step or on Enter, not as the user types (11-09).
+  Typing 1000 into the input peak passes through 1, 10, and 100, and applying each would flash the picture; a field that applied on change would also apply a half-typed value when the focus leaves.
+  Its slider spans a reasonable range, and the field the engine's whole range, so a value past the slider stays reachable without making the slider too coarse to use.
+- A failure of WebGPU itself tells the user once per page load, in a window that names the likely cause and the fix in the user's browser (11-09); [The client add-on](add-on.md#webgpu-failure-warning) has the rules.
+  The fallback to the browser's own player keeps the video playing, so without it a user saw only HDR, shaders, and decoders stop working, and asked whoever runs the server, who had only the server log's reason.
+  A page cannot tell Zen and LibreWolf from Firefox, or Vivaldi from Chrome, so the window starts at the detected browser and lets the user pick theirs; their fixes differ mostly in names and page addresses.
+  It reads the WebGL renderer to tell a blocked GPU from software rendering, except on the Firefox family, where LibreWolf asks the user's permission for WebGL; a page cannot open a browser's own pages, so the window offers their addresses to copy.
 
 ## Negotiation
 
@@ -115,7 +128,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
 - A probe crash the engine finds is reported to the server, which writes it to its log (11-05); [The client add-on](add-on.md#probe-crash-reports) has the route and its limits.
   A crash takes its page, and the page's console with it, so nothing the crashed page logged survives for a user to copy into a report.
   The next page knows the crash, but on iOS its storage and console are readable only through a Mac's Web Inspector, which few users who meet the crash have.
-  The server's log is the one place an administrator reads with what they already have, under Dashboard > Logs, so the add-on posts each crash there, with the browser calls the probe had in flight, and the settings panel shows the same blocked and suspect calls, grouped by test, to the user.
+  The server's log is the one place an administrator reads with what they already have, under Dashboard > Logs, so the add-on posts each crash there, with the browser calls the probe had in flight, and the settings' master window shows the same blocked and suspect calls, grouped by test, to the user.
   The report runs once per crash, on the page that finds it, so it costs nothing on a browser that never crashes, and a failed post is only logged, since the crash stays in the browser's stored verdicts.
 - Why a playback left the WebGPU route is reported to the server's log too, once per kind and reason in a page (11-06); [The client add-on](add-on.md#playback-fallback-reports) has the kinds and the route.
   A laptop whose browser had been set to render on Microsoft's software rasterizer, WARP, had no WebGPU adapter, so its presenter fell back and its HEVC sources transcoded, and only its console said why.

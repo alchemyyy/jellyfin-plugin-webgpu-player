@@ -1,0 +1,168 @@
+// The pipeline graph: pass nodes from top to bottom, positioned over an SVG of texture edges and as wide as the view, with the passes the plan left out below.
+// Geometry comes inline from the layout; the colors come from the window's .webgpuUi theme
+.webgpuPipelineGraph {
+    display: flex;
+    flex-direction: column;
+    gap: var(--webgpu-ui-gap);
+    min-width: 0;
+}
+
+.webgpuPipelineGraphEmpty {
+    margin: 0;
+    color: var(--webgpu-ui-text-muted);
+}
+
+// The graph fills the view's width and the window scrolls it vertically; only a view narrower than the narrowest nodes scrolls sideways
+.webgpuPipelineGraphDiagram {
+    position: relative;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+// Read by screen readers only: the passes in order
+.webgpuPipelineGraphSummary {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    border: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.webgpuPipelineGraphCanvas {
+    position: relative;
+}
+
+.webgpuPipelineGraphEdges {
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+}
+
+.webgpuPipelineGraphEdge {
+    fill: none;
+    stroke: var(--webgpu-ui-text-muted);
+    stroke-width: 1.25;
+}
+
+// History reads: the previous frames of a texture
+.webgpuPipelineGraphEdge[data-history] {
+    stroke: var(--webgpu-ui-warning);
+    stroke-dasharray: 4 3;
+}
+
+// Each edge's arrowhead is a triangle turned along the edge's last stretch
+.webgpuPipelineGraphArrow {
+    fill: var(--webgpu-ui-text-muted);
+}
+
+.webgpuPipelineGraphArrow[data-history] {
+    fill: var(--webgpu-ui-warning);
+}
+
+.webgpuPipelineGraphEdgeLabel {
+    fill: var(--webgpu-ui-warning);
+    font-family: var(--webgpu-ui-monospace);
+    font-size: 10px;
+    text-anchor: middle;
+    dominant-baseline: central;
+}
+
+// The frame is a shadow, so it takes none of the layout's room
+.webgpuPipelineGraphNode {
+    position: absolute;
+    box-sizing: border-box;
+    overflow: hidden;
+    border-radius: var(--webgpu-ui-radius);
+    background: var(--webgpu-ui-control-background);
+    box-shadow: inset 0 0 0 1px var(--webgpu-ui-border);
+    font-family: var(--webgpu-ui-monospace);
+    font-size: 11px;
+    transition: background-color 0.12s ease;
+}
+
+.webgpuPipelineGraphNode[data-kind='source'],
+.webgpuPipelineGraphNode[data-kind='canvas'] {
+    box-shadow: inset 0 0 0 1px var(--webgpu-ui-accent);
+}
+
+// The passes of the user's own shader files stand out
+.webgpuPipelineGraphNodeUser {
+    background: var(--webgpu-ui-selected);
+    box-shadow: inset 0 0 0 1px var(--webgpu-ui-accent);
+}
+
+.webgpuPipelineGraphNode:hover {
+    background: var(--webgpu-ui-hover);
+}
+
+.webgpuPipelineGraphLine {
+    overflow: hidden;
+    color: var(--webgpu-ui-text-muted);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.webgpuPipelineGraphLine[data-role='title'] {
+    color: var(--webgpu-ui-text);
+    font-weight: 600;
+}
+
+.webgpuPipelineGraphLine[data-role='step'] {
+    color: var(--webgpu-ui-accent-text);
+}
+
+.webgpuPipelineGraphSidePassesTitle,
+.webgpuPipelineGraphLeftOutTitle {
+    margin: 0 0 calc(var(--webgpu-ui-gap) / 2);
+    color: var(--webgpu-ui-text-muted);
+    font-size: inherit;
+    font-weight: 600;
+}
+
+.webgpuPipelineGraphSidePassList,
+.webgpuPipelineGraphLeftOutList {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.webgpuPipelineGraphSidePass,
+.webgpuPipelineGraphLeftOutPass {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: calc(var(--webgpu-ui-gap) / 2);
+}
+
+.webgpuPipelineGraphSidePassUser .webgpuPipelineGraphSidePassName {
+    color: var(--webgpu-ui-accent-text);
+}
+
+.webgpuPipelineGraphSidePassLine,
+.webgpuPipelineGraphSidePassReads,
+.webgpuPipelineGraphLeftOutReason {
+    font-family: var(--webgpu-ui-monospace);
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}
+
+.webgpuPipelineGraphSidePassLine {
+    color: var(--webgpu-ui-text-muted);
+}
+
+.webgpuPipelineGraphSidePassLine[data-role='step'] {
+    color: var(--webgpu-ui-accent-text);
+}
+
+.webgpuPipelineGraphLeftOutPass[data-tone='failure'] .webgpuPipelineGraphLeftOutReason {
+    color: var(--webgpu-ui-failure);
+}
+
+.webgpuPipelineGraphLeftOutPass[data-tone='muted'] .webgpuPipelineGraphLeftOutReason {
+    color: var(--webgpu-ui-text-muted);
+}

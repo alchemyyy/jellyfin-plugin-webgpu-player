@@ -192,7 +192,7 @@ async function requestCatalog(apiClient: ServerApiClient): Promise<ServerModuleC
 }
 
 /**
- * Returns what the item's server offers, reusing a catalog read moments ago; a refresh always reads it again, as the settings panel does when it opens.
+ * Returns what the item's server offers, reusing a catalog read moments ago; a refresh always reads it again, as the settings windows do when they open.
  * Rejects when the server cannot be reached or answers without the plugin's catalog.
  */
 export function loadServerModuleCatalog(serverId?: string | null, refresh = false): Promise<ServerModuleCatalog> {

@@ -1,5 +1,5 @@
 // The stock host registers emby-select only from lazily loaded pages, and a second registration throws, so the add-on cannot register it.
-// Until the host does, the settings panel labels its selects itself
+// Until the host does, the client defaults editor labels its selects itself
 
 const EMBY_SELECT_SELECTOR = 'select[is="emby-select"]';
 // emby-select's attach step skips elements that already carry this class, so a later upgrade adds no second label
@@ -26,7 +26,7 @@ export function labelSelectsAwaitingHostUpgrade(root: ParentNode): void {
     }
 }
 
-/** Labels the panel's selects once registered host elements have had their chance to upgrade. */
+/** Labels a form's selects once registered host elements have had their chance to upgrade. */
 export function scheduleSelectLabelFallback(root: ParentNode): void {
     globalThis.setTimeout((): void => {
         labelSelectsAwaitingHostUpgrade(root);

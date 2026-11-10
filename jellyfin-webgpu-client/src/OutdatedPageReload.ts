@@ -17,7 +17,7 @@ const RELOADABLE_ROUTES: ReadonlySet<string> = new Set([
     'books', 'boxsets', 'details', 'home', 'homevideos', 'list', 'livetv', 'movies', 'music', 'musicvideos', 'tv'
 ]);
 const ROUTE_PATTERN = /^#!?\/?([^/?#]*)/;
-// A dialog of the host's dialog helper, or a native one, such as an action sheet or the add-on's settings panel
+// A dialog of the host's dialog helper, or a native one, such as an action sheet; the add-on's settings windows open only over the player, which never reloads
 const OPEN_DIALOG_SELECTOR = '.dialogContainer, dialog[open]';
 const EDITABLE_SELECTOR = 'input, select, textarea';
 

@@ -11,19 +11,15 @@ import type {
 
 import { addDecoderPackage, loadStoredDecoderPackages, removeDecoderPackage } from '../DecoderPackages';
 import type { ServerDecoderPackage, ServerModuleCatalog } from '../ServerModules';
-import {
-    createInfoButtonHTML,
-    getSettingDescriptionId,
-    HIDDEN_CLASS,
-    setStatus,
-    translateToHTML
-} from './SettingsPanelHTML';
+import { createActionControlHTML, createButtonHTML, createIconButtonHTML } from './controls/SettingControls';
+import { HIDDEN_CLASS, setStatus, translateToHTML } from './SettingsPanelHTML';
 
-// The decoders section of the playback settings panel: the decoder packages the user adds in this browser, and the ones the server offers.
+// The decoders of the pipeline window: the decoder packages the user adds in this browser, and the ones the server offers.
 // The user's packages live in IndexedDB apart from the settings, and a playback reads them when it starts; a server package downloads when a playback needs it
 
 // The package files the picker offers: WebAssembly modules
 const PACKAGE_FILE_TYPES = `${DECODER_PACKAGE_FILE_EXTENSION},application/wasm`;
+const DECODER_PACKAGES_KEY = 'decoderPackages';
 const LIST_SEPARATOR = ', ';
 const FILE_UNSUPPORTED_FAILURE = 'package-file-unsupported';
 const STALE_PACKAGE_FAILURE = 'package-stale';
@@ -32,7 +28,7 @@ export type DecoderPackageSectionContext = Readonly<{
     cleanupCallbacks: Array<() => void>
     isActive: () => boolean
     panel: HTMLElement
-    /** What the server offers, read once as the panel opens; it rejects when the server cannot be reached */
+    /** What the server offers, read once as the windows open; it rejects when the server cannot be reached */
     serverCatalog: Promise<ServerModuleCatalog>
 }>;
 
@@ -43,7 +39,7 @@ function getErrorMessage(error: unknown): string {
 function requireSectionElement<ElementType extends Element>(panel: ParentNode, selector: string): ElementType {
     const element = panel.querySelector<ElementType>(selector);
     if (!element) {
-        throw new Error(`WebGPU settings panel is missing ${selector}`);
+        throw new Error(`WebGPU settings windows are missing ${selector}`);
     }
     return element;
 }
@@ -63,23 +59,21 @@ function describePackage(decoderPackage: DecoderPackage): string {
 /** Returns a package's entry: its title with its remove button, then its lines. */
 function createEntryHTML(id: string, title: string, lines: readonly string[]): string {
     const linesHTML = lines
-        .map((line: string): string => `<div class="fieldDescription webgpuSettingsDecoderState">${escapeHtml(line)}</div>`)
+        .map((line: string): string => `<div class="webgpuSettingsDecoderState" title="${escapeHtml(line)}">${escapeHtml(line)}</div>`)
         .join('');
     return `
-        <div class="webgpuSettingsDecoder">
+        <li class="webgpuSettingsDecoder">
             <div class="webgpuSettingsDecoderHeader">
-                <span class="webgpuSettingsDecoderName">${escapeHtml(title)}</span>
-                <button
-                    aria-label="${translateToHTML('WebGPURemoveDecoderPackage', title)}"
-                    class="webgpuSettingsRemoveDecoder"
-                    data-remove-decoder="${escapeHtml(id)}"
-                    is="paper-icon-button-light"
-                    title="${translateToHTML('WebGPURemoveDecoderPackage', title)}"
-                    type="button"
-                ><span class="material-icons delete" aria-hidden="true"></span></button>
+                <span class="webgpuSettingsDecoderName" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+                ${createIconButtonHTML({
+                    attributes: `data-remove-decoder="${escapeHtml(id)}"`,
+                    className: 'webgpuSettingsRemoveDecoder',
+                    icon: 'delete',
+                    label: globalize.translate('WebGPURemoveDecoderPackage', title)
+                })}
             </div>
             ${linesHTML}
-        </div>`;
+        </li>`;
 }
 
 function createPackageHTML(stored: StoredDecoderPackage): string {
@@ -93,38 +87,30 @@ function createFailureHTML(failure: StoredDecoderPackageFailure): string {
     ]);
 }
 
-/** Returns the decoders section's HTML: the title with the help's info button, the package list, and the add button. */
+/** Returns the decoders group of the pipeline window: its title with the help's info button, the server's decoders, the user's package list, and the add button. */
 export function createDecoderPackageSectionHTML(): string {
     return `
-        <section class="webgpuSettingsSection" aria-labelledby="webgpu-decoders-title">
-            <div class="webgpuSettingsSectionHeader">
-                <h3 class="webgpuSettingsSectionTitle" id="webgpu-decoders-title">
-                    ${translateToHTML('WebGPUDecoders')}
-                </h3>
-                ${createInfoButtonHTML('decoderPackages', globalize.translate('WebGPUSettingNameDecoders'))}
-            </div>
-            <div
-                class="fieldDescription ${HIDDEN_CLASS}"
-                id="${getSettingDescriptionId('decoderPackages')}"
-            >${translateToHTML('WebGPUDecoderPackagesHelp')}</div>
-            <div class="fieldDescription" data-server-decoders></div>
-            <div class="webgpuSettingsDecoders" data-decoder-packages></div>
+        <div class="webgpuSettingsGroup" role="group" aria-labelledby="webgpu-decoders-title">
+            ${createActionControlHTML(DECODER_PACKAGES_KEY, {
+                description: globalize.translate('WebGPUDecoderPackagesHelp'),
+                label: globalize.translate('WebGPUDecoders'),
+                name: globalize.translate('WebGPUSettingNameDecoders')
+            }, `<h3 class="webgpuGroupTitle" id="webgpu-decoders-title">${translateToHTML('WebGPUDecoders')}</h3>`)}
+            <div class="webgpuStatus webgpuSettingsServerDecoders" data-server-decoders></div>
+            <ul class="webgpuSettingsDecoders" data-decoder-packages></ul>
             <input
                 accept="${PACKAGE_FILE_TYPES}"
                 class="${HIDDEN_CLASS}"
                 data-decoder-package-files
                 multiple
+                tabindex="-1"
                 type="file"
             />
-            <div aria-live="polite" class="webgpuSettingsStatus" data-decoder-status role="status"></div>
-            <div class="webgpuSettingsButtonRow">
-                <button
-                    class="raised webgpuSettingsAddDecoders"
-                    is="emby-button"
-                    type="button"
-                >${translateToHTML('WebGPUAddDecoderPackages')}</button>
+            <div aria-live="polite" class="webgpuStatus" data-decoder-status role="status"></div>
+            <div class="webgpuButtonRow">
+                ${createButtonHTML({ className: 'webgpuSettingsAddDecoders', icon: 'upload_file', label: globalize.translate('WebGPUAddDecoderPackages') })}
             </div>
-        </section>`;
+        </div>`;
 }
 
 /** Binds the decoders section's controls; each change stores at once and applies from the next playback. */

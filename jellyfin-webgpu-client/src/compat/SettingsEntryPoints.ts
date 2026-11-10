@@ -21,7 +21,7 @@ type SettingsMenuItem = Readonly<{
     onSelect: () => unknown
 }>;
 
-/** The player whose settings panel the OSD button opens and closes */
+/** The player whose settings windows the OSD button opens and closes */
 export type SettingsEntryPlayer = {
     getSettingsMenuItems: () => readonly SettingsMenuItem[]
 };
@@ -55,19 +55,19 @@ function getSettingsMenuItem(player: SettingsEntryPlayer): SettingsMenuItem | un
     return player.getSettingsMenuItems().find(menuItem => menuItem.id === SETTINGS_MENU_ITEM_ID);
 }
 
-/** Returns the player's WebGPU Settings menu item name, or null when the player offers no settings panel. */
+/** Returns the player's WebGPU Settings menu item name, or null when the player offers no settings. */
 export function getSettingsPanelName(player: SettingsEntryPlayer): string | null {
     return getSettingsMenuItem(player)?.name ?? null;
 }
 
-/** Opens or closes the WebGPU settings panel through the player's menu item. */
+/** Opens or closes the WebGPU settings windows through the player's menu item. */
 export function toggleSettingsPanel(player: SettingsEntryPlayer): void {
     Promise.resolve(getSettingsMenuItem(player)?.onSelect()).catch((error: unknown): void => {
-        console.error('[WebGPUPlayer] unable to toggle the WebGPU settings panel', error);
+        console.error('[WebGPUPlayer] unable to toggle the WebGPU settings', error);
     });
 }
 
-/** Returns where the video OSD offers the WebGPU settings panel. */
+/** Returns where the video OSD offers the WebGPU settings windows. */
 export function getSettingsButtonPlacement(): SettingsButtonPlacement {
     return loadWebGPUUserSettings().osd.settingsButtonPlacement;
 }
