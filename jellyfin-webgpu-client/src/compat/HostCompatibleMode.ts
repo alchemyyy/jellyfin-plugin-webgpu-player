@@ -3,6 +3,7 @@ import { playbackManager } from 'components/playback/playbackmanager';
 
 import { holdOutdatedPageReload } from '../OutdatedPageReload';
 
+import { installOsdDoubleClickSelectionGuard } from './OsdDoubleClickSelection';
 import { installPlaybackManagerHooks } from './PlaybackManagerHooks';
 import { installPlayerSettingsMenu, type PlayerSettingsMenuPlayer } from './PlayerSettingsMenu';
 import { installSettingsEntryPoints } from './SettingsEntryPoints';
@@ -51,10 +52,11 @@ function hideLoading(): void {
     loading.hide();
 }
 
-/** Installs the PlaybackManager hooks, settings entry points, and player settings menu items once; call after the host bridge is bound. */
+/** Installs the PlaybackManager hooks, settings entry points, player settings menu items, and OSD double-click guard once; call after the host bridge is bound. */
 export function installHostCompatibleMode(player: HostCompatiblePlayer): void {
     hostCompatiblePlayers.add(player);
     installPlaybackManagerHooks(playbackManager, { beginPlaybackRequest, cancelPendingPlays, hideLoading, isRequestStartPending });
     installSettingsEntryPoints(player);
     installPlayerSettingsMenu(player);
+    installOsdDoubleClickSelectionGuard();
 }

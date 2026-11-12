@@ -21,6 +21,7 @@ The plugin's `README.md` maps the server plugin, and the engine's [Module map](h
 - `compat/`: stand-ins for the PlaybackManager seams stock Jellyfin Web lacks: the PlaybackInfo interceptor and its policies, PlaybackManager hooks, and the settings entry points.
   `GzipText.ts` gzips the PlaybackInfo bodies the interceptor sends.
   `SettingsEntryPoints.ts` places the OSD's WebGPU Settings button and adds the preferred player control; `PlayerSettingsMenu.ts` adds the WebGPU player toggle and the settings item to the host's player settings menu, and restarts the current video through `playbackManager.play` when the toggle changes its player.
+  `OsdDoubleClickSelection.ts` cancels the second press of a double click on the OSD page's background or the player's container, so the double click that toggles fullscreen selects no text, such as the OSD title's first word.
 - `host/`, `shims/`: host singletons bound late from the plugin bag, and replacements for host modules the add-on cannot import.
 - `WebGPUUserSettings.ts`, `WebGPUPlaybackPreferences.ts`, `PreferredVideoPlayer.ts`: local per-user settings (v5, only the values that differ from the defaults), the custom decode, HDR tone mapping, and GPU decode slicing preferences, the decoder test timing, and the Auto, WebGPU, or HTML player preference.
 - `ServerClientDefaults.ts`: the server's defaults for the client settings, read at plugin load and on each sign-in, cached per server, and saved by an administrator.
