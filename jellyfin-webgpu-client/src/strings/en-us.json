@@ -318,7 +318,7 @@
     "WebGPUKeyboardShortcuts": "Keyboard shortcuts",
     "WebGPUSettingNameKeyboardShortcuts": "keyboard shortcuts",
     "WebGPUKeyboardShortcutsHelp": "Tab, Shift+Tab: next or previous control\nF6, Shift+F6: next or previous window\n1 to 9: show or hide the listed window\nArrow keys on a window's title: move the window; Shift moves it further\nEnter on a window's title: collapse or expand it; Home: back to the first free place; Delete: hide it\nAlt+R: restore the focused setting's default\nAlt+I: show or hide the focused setting's details\nNumber fields: the arrow keys and Page Up and Page Down step the value at once; a typed value applies on Enter, and Escape undoes it\nEscape: close the settings",
-    "WebGPUToneMapOperatorHelp": "The curve that maps HDR brightness into SDR. Reinhard, the default, rolls highlights off gently; Spline works in a perceptual space and follows each scene's average brightness where HDR10+ metadata gives it; ACES gives a filmic look with stronger contrast.",
+    "WebGPUToneMapOperatorHelp": "The curve that maps HDR brightness into SDR. Reinhard, the default, rolls highlights off gently; Spline works in a perceptual space and follows each scene's average brightness where HDR10+ or Dolby Vision metadata gives it; ACES gives a filmic look with stronger contrast; ST 2094-40 follows the tone curve a video's HDR10+ metadata carries, and matches each scene's brightness where there is none.",
     "WebGPUSettingNameAudioOutput": "audio output",
     "WebGPUShowFailureReport": "Show the WebGPU failure report",
     "WebGPUShowFailureReportHelp": "Opens the report of the last time WebGPU failed on this page, also while the warning is off. The button waits until WebGPU fails.",

@@ -229,6 +229,7 @@ function normalizeToneMapOperator(value: unknown, fallback: ToneMapOperator): To
         case 'aces':
         case 'reinhard':
         case 'spline':
+        case 'st2094-40':
             return value;
         default:
             return fallback;

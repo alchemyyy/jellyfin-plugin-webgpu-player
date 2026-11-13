@@ -172,7 +172,7 @@ The add-on's text is translated the way Jellyfin Web's is: one JSON file per lan
 - The add-on loads the translation for Jellyfin Web's display language, else the one for its base language (`pt` for `pt-br`). A string that is missing or empty there shows its `en-us.json` text.
 - Keys start with `WebGPU`. Words Jellyfin Web already translates, such as `Default`, `Auto`, `Unknown` and `ButtonClose`, use Jellyfin Web's own keys and translations.
 - `{0}`, `{1}` are placeholders, as in Jellyfin Web. A translation keeps them and may reorder them. `WebGPUJoinedSentences` (`{0} {1}`) joins two complete sentences, so a language can change the separator.
-- Names of technologies, standards and algorithms are not translated: WebGPU, HTML, WebCodecs, ACES, Reinhard, AC-4, RFC 7845 and Dave750.
+- Names of technologies, standards and algorithms are not translated: WebGPU, HTML, WebCodecs, ACES, Reinhard, ST 2094-40, AC-4, RFC 7845 and Dave750.
 - `jellyfin-webgpu-client.tests/strings/strings.test.ts` checks the folder: the file names, that a translation has only source keys and keeps their placeholders, that every key the add-on translates exists, and that no source key is unused.
 
 The Weblate component:

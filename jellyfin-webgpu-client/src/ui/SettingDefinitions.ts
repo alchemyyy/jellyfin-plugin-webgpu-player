@@ -158,7 +158,8 @@ export const NUMERIC_CONTROL_CONFIGURATIONS: readonly NumericControlConfiguratio
 export const TONE_MAP_OPERATOR_OPTIONS: ReadonlyArray<SettingOption<ToneMapOperator>> = Object.freeze([
     { labelKey: 'WebGPUToneMapOperatorSpline', value: 'spline' },
     { name: 'ACES', value: 'aces' },
-    { name: 'Reinhard', value: 'reinhard' }
+    { name: 'Reinhard', value: 'reinhard' },
+    { name: 'ST 2094-40', value: 'st2094-40' }
 ] satisfies Array<SettingOption<ToneMapOperator>>);
 
 export const AUDIO_DOWNMIX_ALGORITHM_OPTIONS: ReadonlyArray<SettingOption<CustomAudioDownmixAlgorithm>> = Object.freeze([
