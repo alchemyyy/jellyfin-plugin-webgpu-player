@@ -274,6 +274,16 @@ function getCustomBitmapSubtitleAspectMode(aspectRatio) {
     }
 }
 
+/** Returns the display width, including anamorphic pixels, rather than just the stored sample width. */
+function getSubtitleVideoDisplayWidth(videoStream) {
+    const aspectParts = typeof videoStream?.AspectRatio === 'string' ? videoStream.AspectRatio.split(':').map(Number) : [];
+    const validAspect = (aspectParts.length === 1 || aspectParts.length === 2)
+        && aspectParts.every(part => Number.isFinite(part) && part > 0);
+    const aspectRatio = validAspect ? aspectParts[0] / (aspectParts[1] ?? 1) : Number.NaN;
+    const displayWidth = videoStream?.Height * aspectRatio;
+    return Number.isFinite(displayWidth) && displayWidth > 0 ? displayWidth : videoStream?.Width;
+}
+
 function getSubtitleTimeOffset(playOptions, subtitleOffset = 0) {
     return ((playOptions?.transcodingOffsetTicks || 0) / 10000000) + subtitleOffset;
 }
@@ -350,6 +360,8 @@ export class HtmlVideoPlayer {
      * @type {HTMLCanvasElement | null | undefined}
      */
     #currentAssCanvas;
+    /** @type {(() => void) | null} */
+    #stopCustomAssResize = null;
     /**
      * @type {any | null | undefined}
      */
@@ -1859,7 +1871,7 @@ export class HtmlVideoPlayer {
         return canvas;
     }
 
-    /** Aligns a source-less subtitle canvas with the owned video surface. */
+    /** Aligns a source-less ASS canvas with the picture inside the owned video surface. */
     #synchronizeCustomSubtitleCanvas(canvas, videoElement) {
         const container = videoElement.parentElement;
         if (!container) {
@@ -1874,20 +1886,38 @@ export class HtmlVideoPlayer {
         const normalizedScaleY = containerScaleY > 0 ? containerScaleY : 1;
         const fallbackWidth = videoElement.clientWidth || container.clientWidth;
         const fallbackHeight = videoElement.clientHeight || container.clientHeight;
-        const width = Math.max(
+        const surfaceWidth = Math.max(
             MINIMUM_SUBTITLE_CANVAS_DIMENSION,
             videoRectangle.width > 0 ? videoRectangle.width / normalizedScaleX : fallbackWidth
         );
-        const height = Math.max(
+        const surfaceHeight = Math.max(
             MINIMUM_SUBTITLE_CANVAS_DIMENSION,
             videoRectangle.height > 0 ? videoRectangle.height / normalizedScaleY : fallbackHeight
         );
-        const left = videoRectangle.width > 0 ?
+        const surfaceLeft = videoRectangle.width > 0 ?
             (videoRectangle.left - containerRectangle.left) / normalizedScaleX :
             videoElement.offsetLeft;
-        const top = videoRectangle.height > 0 ?
+        const surfaceTop = videoRectangle.height > 0 ?
             (videoRectangle.top - containerRectangle.top) / normalizedScaleY :
             videoElement.offsetTop;
+
+        // The source-less video has no intrinsic dimensions for libass's getVideoPosition().
+        // Fit the stream's picture ourselves, rather than giving ASS the letterboxed element's aspect ratio.
+        const videoStream = getMediaStreamVideoTracks(this._currentPlayOptions.mediaSource)[0];
+        const sourceWidth = getSubtitleVideoDisplayWidth(videoStream);
+        const sourceHeight = videoStream?.Height;
+        let width = surfaceWidth;
+        let height = surfaceHeight;
+        const objectFit = videoElement.style.objectFit || 'contain';
+        if (Number.isFinite(sourceWidth) && sourceWidth > 0 && Number.isFinite(sourceHeight) && sourceHeight > 0 && objectFit !== 'fill') {
+            const scaleX = surfaceWidth / sourceWidth;
+            const scaleY = surfaceHeight / sourceHeight;
+            const scale = objectFit === 'cover' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+            width = sourceWidth * scale;
+            height = sourceHeight * scale;
+        }
+        const left = surfaceLeft + (surfaceWidth - width) / 2;
+        const top = surfaceTop + (surfaceHeight - height) / 2;
 
         canvas.style.left = `${left}px`;
         canvas.style.top = `${top}px`;
@@ -1905,12 +1935,43 @@ export class HtmlVideoPlayer {
         if (this.#currentAssCanvas) {
             const geometry = this.#synchronizeCustomSubtitleCanvas(this.#currentAssCanvas, this.#mediaElement);
             if (geometry && this.#currentAssRenderer?.resize) {
-                const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
-                const width = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.width * pixelRatio));
-                const height = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.height * pixelRatio));
+                const pixelRatio = window.devicePixelRatio || 1;
+                // Canvas-only resize bypasses libass's sizing helper, so use the renderer's active policy.
+                const renderer = this.#currentAssRenderer;
+                const pixelHeight = geometry.height * pixelRatio;
+                const scaleFactor = renderer.prescaleFactor > 0 ? renderer.prescaleFactor : 1;
+                const direction = scaleFactor < 1 ? -1 : 1;
+                let renderHeight = pixelHeight;
+                if (direction * pixelHeight * scaleFactor <= direction * renderer.prescaleHeightLimit) {
+                    renderHeight *= scaleFactor;
+                } else if (direction * pixelHeight < direction * renderer.prescaleHeightLimit) {
+                    renderHeight = renderer.prescaleHeightLimit;
+                }
+                if (renderer.maxRenderHeight > 0) {
+                    renderHeight = Math.min(renderHeight, renderer.maxRenderHeight);
+                }
+                const width = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.width * renderHeight / geometry.height));
+                const height = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(renderHeight));
                 this.#currentAssRenderer.resize(width, height, 0, 0);
             }
         }
+    }
+
+    /** Keeps a manually clocked ASS renderer fitted even while playback is paused. */
+    #observeCustomAssCanvas(videoElement) {
+        const onResize = () => this.#renderCustomSpecializedSubtitles();
+        let observer = null;
+        if (typeof ResizeObserver === 'function') {
+            observer = new ResizeObserver(onResize);
+        }
+        observer?.observe(videoElement);
+        window.addEventListener('resize', onResize);
+        document.addEventListener('fullscreenchange', onResize);
+        this.#stopCustomAssResize = () => {
+            observer?.disconnect();
+            window.removeEventListener('resize', onResize);
+            document.removeEventListener('fullscreenchange', onResize);
+        };
     }
 
     /** Advances ASS/SSA and bitmap renderers from the source-less custom clock. */
@@ -2196,6 +2257,8 @@ export class HtmlVideoPlayer {
         this.#currentAssRenderer = null;
         const assCanvas = this.#currentAssCanvas;
         this.#currentAssCanvas = null;
+        this.#stopCustomAssResize?.();
+        this.#stopCustomAssResize = null;
         if (octopus) {
             octopus.dispose();
         }
@@ -2295,7 +2358,11 @@ export class HtmlVideoPlayer {
             timeOffset: 0
         } : {
             ...options,
-            video: videoElement
+            video: videoElement,
+            // Preserve the existing native playback quality and rendering budget.
+            prescaleFactor: 0.8,
+            prescaleHeightLimit: 1080,
+            maxRenderHeight: 2160
         };
         let renderer;
         try {
@@ -2314,6 +2381,7 @@ export class HtmlVideoPlayer {
         this.#currentAssRenderer = renderer;
         this.#currentAssCanvas = customCanvas;
         if (customCanvas) {
+            this.#observeCustomAssCanvas(videoElement);
             this.#synchronizeCustomSubtitleCanvases();
             this.#renderCustomSpecializedSubtitles();
             this.#updateCustomAssPlaybackState();
@@ -2362,6 +2430,8 @@ export class HtmlVideoPlayer {
                     htmlVideoPlayer.#currentAssRenderer = null;
                     const assCanvas = htmlVideoPlayer.#currentAssCanvas;
                     htmlVideoPlayer.#currentAssCanvas = null;
+                    htmlVideoPlayer.#stopCustomAssResize?.();
+                    htmlVideoPlayer.#stopCustomAssResize = null;
                     assCanvas?.remove();
 
                     // HACK: Give JavascriptSubtitlesOctopus time to dispose itself
@@ -2375,15 +2445,12 @@ export class HtmlVideoPlayer {
                 },
                 timeOffset: transcodingOffsetTicks / 10000000,
 
-                // new octopus options; override all, even defaults
+                // Shared renderer options; native sizing overrides are applied when installing it.
                 renderMode: 'wasm-blend',
                 dropAllAnimations: false,
                 libassMemoryLimit: 40,
                 libassGlyphLimit: 40,
                 targetFps: videoStream?.ReferenceFrameRate || 24,
-                prescaleFactor: 0.8,
-                prescaleHeightLimit: 1080,
-                maxRenderHeight: 2160,
                 resizeVariation: 0.2,
                 renderAhead: 90
             };
@@ -3317,7 +3384,7 @@ export class HtmlVideoPlayer {
             this.#currentBitmapSubRenderer.updateCanvasSize?.();
         }
 
-        this.#synchronizeCustomSubtitleCanvases();
+        this.#renderCustomSpecializedSubtitles();
     }
 
     setAspectRatio(val) {

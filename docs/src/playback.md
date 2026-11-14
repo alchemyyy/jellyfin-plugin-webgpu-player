@@ -33,6 +33,14 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
 ## Steady state
 
 - The frame loop takes the controller's current frame each animation frame and presents it.
+- ASS and SSA use a manually clocked libass canvas over the custom picture.
+  Its size comes from the video stream's display aspect ratio and height fitted inside the source-less video element, centered for Auto, cropped for Cover, or stretched for Fill.
+  The display aspect ratio accounts for anamorphic pixels; absent or invalid aspect metadata falls back to the stored width and height.
+  The canvas excludes letterbox and pillarbox space, and its backing resolution follows the libass instance's active `prescaleFactor`, `prescaleHeightLimit`, and `maxRenderHeight`.
+  The custom path leaves those settings unset, so libass supplies its defaults.
+  Native playback retains its existing policy: `prescaleFactor: 0.8`, `prescaleHeightLimit: 1080`, and `maxRenderHeight: 2160`.
+  Backing dimensions use the browser's current device pixel ratio, including ratios below one when zoomed out.
+  Aspect, element size, window resize, and fullscreen changes refit it even while playback is paused; the resize listeners belong to the subtitle renderer and stop with it.
 - No animation frame runs while the page is hidden, so the frame loop's 25 ms timer takes and discards due frames against the clock instead.
   Credits keep flowing and audio stays the master.
 - A screen wake lock is held while the controller is playing, because the source-less `<video>` never earns the browser's own video wake lock.

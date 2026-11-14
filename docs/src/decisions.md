@@ -18,6 +18,13 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   This follows upstream and adds VobSub support.
   The custom path drives it through `timeOffset`, measured against the time the source-less video reports, which is the custom clock since 11-06 (see [Playback in Jellyfin Web](playback.md#the-video-element)).
   VobSub reaches it as the Matroska subtitle file the server extracts, requested as `Stream.mks`, the one name every server from 12.1 serves unchanged (10-27); [Direct play support](direct-play-support.md#vobsub-delivery) has the server's rules.
+- The custom ASS canvas fits the video stream's picture, rather than the source-less video element's whole box (11-14).
+  libass derives that fit from intrinsic video dimensions on the native path, but the custom path's element has none.
+  Using the whole box instead changes ASS's aspect ratio and font scale on letterboxed or pillarboxed video.
+  The stream's display aspect ratio corrects its stored sample dimensions for anamorphic pixels, with the stored dimensions used when the aspect metadata is missing or invalid.
+  Explicit libass canvas resizing also bypasses its native prescaling, so the custom path reads the active sizing policy from the renderer instance.
+  The custom path leaves the sizing options unset and uses libass's defaults, rather than maintaining separate policy constants; see [Steady state](playback.md#steady-state).
+  Native playback retains its previous downscaling and render-height limits to preserve its rendering budget on large displays.
 - The server offers the engine's decoder packages and passes, and a client fetches each when it needs it (10-16).
   The add-on build carries every package `bin/wgpud/` (engine) holds and every pass file of `bin/wgpup/` (engine), and an administrator uploads, deletes, enables, and disables them on the plugin's settings page.
   Since 11-02 those are the engine's pinned releases of its decoder and pass repositories, which `./build.sh` installs, rather than packages the build compiles, so a plugin build needs no decoder toolchain.

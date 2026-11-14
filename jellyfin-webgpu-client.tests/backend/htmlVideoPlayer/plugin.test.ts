@@ -43,6 +43,7 @@ type BitmapSubtitleRendererMock = {
 };
 
 type TestMediaStream = {
+    AspectRatio?: string
     Codec?: string
     DeliveryMethod?: string
     DeliveryUrl?: string
@@ -51,6 +52,8 @@ type TestMediaStream = {
     IsExternalUrl?: boolean
     Path?: string
     Type: string
+    Height?: number
+    Width?: number
 };
 
 type TestPlayOptions = {
@@ -198,7 +201,10 @@ const serverConnectionsMock = vi.hoisted(() => {
 const specializedSubtitleRendererMock = vi.hoisted(() => {
     const assInstances: Array<{
         dispose: Mock
+        maxRenderHeight: number
         options: AssSubtitleRendererOptions
+        prescaleFactor: number
+        prescaleHeightLimit: number
         resetRenderAheadCache: Mock
         resize: Mock
         setCurrentTime: Mock
@@ -209,7 +215,10 @@ const specializedSubtitleRendererMock = vi.hoisted(() => {
 
     class MockAssRenderer {
         readonly dispose = vi.fn();
+        maxRenderHeight = 0;
         readonly options: AssSubtitleRendererOptions;
+        prescaleFactor = 1;
+        prescaleHeightLimit = 1080;
         readonly resetRenderAheadCache = vi.fn();
         readonly resize = vi.fn();
         readonly setCurrentTime = vi.fn();
@@ -762,6 +771,172 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         vi.unstubAllGlobals();
     });
 
+    it.each([
+        { name: 'letterboxed widescreen', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 1,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 1920, renderHeight: 800 },
+        { name: 'pillarboxed video', sourceWidth: 1440, sourceHeight: 1080, cssScale: 1, pixelRatio: 1,
+            left: 240, top: 0, width: 1440, height: 1080, renderWidth: 1440, renderHeight: 1080 },
+        { name: 'anamorphic widescreen', sourceWidth: 720, sourceHeight: 576, aspectRatio: '16:9', cssScale: 1, pixelRatio: 1,
+            left: 0, top: 0, width: 1920, height: 1080, renderWidth: 1920, renderHeight: 1080 },
+        { name: 'anamorphic 4:3', sourceWidth: 720, sourceHeight: 576, aspectRatio: '4:3', cssScale: 1, pixelRatio: 1,
+            left: 240, top: 0, width: 1440, height: 1080, renderWidth: 1440, renderHeight: 1080 },
+        { name: 'anamorphic cover', sourceWidth: 720, sourceHeight: 576, aspectRatio: '4:3', aspectMode: 'cover', cssScale: 1, pixelRatio: 1,
+            left: 0, top: -180, width: 1920, height: 1440, renderWidth: 1920, renderHeight: 1440 },
+        { name: 'anamorphic fill', sourceWidth: 720, sourceHeight: 576, aspectRatio: '4:3', aspectMode: 'fill', cssScale: 1, pixelRatio: 1,
+            left: 0, top: 0, width: 1920, height: 1080, renderWidth: 1920, renderHeight: 1080 },
+        { name: 'decimal display aspect', sourceWidth: 720, sourceHeight: 576, aspectRatio: '1.6', cssScale: 1, pixelRatio: 1,
+            left: 96, top: 0, width: 1728, height: 1080, renderWidth: 1728, renderHeight: 1080 },
+        ...['bad', '16:0', '-16:-9', '16:9:1', '', 'Infinity'].map(aspectRatio => ({
+            name: `invalid display aspect ${aspectRatio}`, sourceWidth: 720, sourceHeight: 576, aspectRatio, cssScale: 1, pixelRatio: 1,
+            left: 285, top: 0, width: 1350, height: 1080, renderWidth: 1350, renderHeight: 1080
+        })),
+        { name: 'CSS-scaled container', sourceWidth: 1920, sourceHeight: 800, cssScale: 2, pixelRatio: 1,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 1920, renderHeight: 800 },
+        { name: 'renderer defaults on high DPI', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 2,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 3840, renderHeight: 1600 },
+        { name: 'fractional pixel ratio', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 1.5,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 2880, renderHeight: 1200 },
+        { name: 'browser zoom below unit pixel ratio', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 0.75,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 1440, renderHeight: 600 },
+        { name: 'unlimited render height', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 4,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 7680, renderHeight: 3200 },
+        { name: 'renderer-selected downscaling', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 2,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 1920, renderHeight: 800,
+            rendererSettings: { prescaleFactor: 0.5, prescaleHeightLimit: 600, maxRenderHeight: 0 } },
+        { name: 'renderer-selected threshold', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 2,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 2400, renderHeight: 1000,
+            rendererSettings: { prescaleFactor: 0.5, prescaleHeightLimit: 1000, maxRenderHeight: 0 } },
+        { name: 'renderer-selected height cap', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 2,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 1865, renderHeight: 777,
+            rendererSettings: { prescaleFactor: 1, prescaleHeightLimit: 0, maxRenderHeight: 777 } },
+        { name: 'renderer-selected upscaling', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 1,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 2880, renderHeight: 1200,
+            rendererSettings: { prescaleFactor: 1.5, prescaleHeightLimit: 1500, maxRenderHeight: 0 } },
+        { name: 'upscaling threshold', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 1,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 2880, renderHeight: 1200,
+            rendererSettings: { prescaleFactor: 2, prescaleHeightLimit: 1200, maxRenderHeight: 0 } },
+        { name: 'disabled prescaling', sourceWidth: 1920, sourceHeight: 800, cssScale: 1, pixelRatio: 2,
+            left: 0, top: 140, width: 1920, height: 800, renderWidth: 3840, renderHeight: 1600,
+            rendererSettings: { prescaleFactor: 0, prescaleHeightLimit: 0, maxRenderHeight: 0 } },
+        { name: 'unknown stream dimensions', sourceWidth: 0, sourceHeight: 0, cssScale: 1, pixelRatio: 1,
+            left: 0, top: 0, width: 1920, height: 1080, renderWidth: 1920, renderHeight: 1080 }
+    ])('fits ASS to the picture for $name', async (example) => {
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.aspectRatio = 'aspectMode' in example ? example.aspectMode : 'auto';
+        options.mediaSource.MediaStreams = [
+            { Index: 0, Type: 'Video', Width: example.sourceWidth, Height: example.sourceHeight,
+                AspectRatio: 'aspectRatio' in example ? example.aspectRatio : undefined },
+            createSpecializedTrack(1, 'ass', 'https://example.test/subtitles.ass')
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+        Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: example.pixelRatio });
+        Object.defineProperty(surface.container, 'clientWidth', { configurable: true, value: 1920 });
+        Object.defineProperty(surface.container, 'clientHeight', { configurable: true, value: 1080 });
+        const rectangle = createRectangle(10, 20, 1920 * example.cssScale, 1080 * example.cssScale);
+        vi.spyOn(surface.container, 'getBoundingClientRect').mockReturnValue(rectangle);
+        vi.spyOn(surface.video, 'getBoundingClientRect').mockReturnValue(rectangle);
+        expect(surface.video.videoWidth).toBe(0);
+
+        player.setSubtitleStreamIndex(1);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.assInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.assInstances[0];
+        expect(renderer.options.prescaleFactor).toBeUndefined();
+        expect(renderer.options.prescaleHeightLimit).toBeUndefined();
+        expect(renderer.options.maxRenderHeight).toBeUndefined();
+        if ('rendererSettings' in example) {
+            Object.assign(renderer, example.rendererSettings);
+            player.notifyCustomPlaybackTimeUpdate(0);
+        }
+        expect(renderer.options.canvas?.style).toMatchObject({
+            left: `${example.left}px`, top: `${example.top}px`, width: `${example.width}px`, height: `${example.height}px`
+        });
+        expect(renderer.resize).toHaveBeenLastCalledWith(example.renderWidth, example.renderHeight, 0, 0);
+        player.destroy();
+    });
+
+    it('refits ASS on aspect and viewport changes while custom playback is paused', async () => {
+        let onResize: (() => void) | undefined;
+        const observe = vi.fn();
+        const disconnect = vi.fn();
+        vi.stubGlobal('ResizeObserver', class {
+            readonly observe = observe;
+            readonly disconnect = disconnect;
+            constructor(callback: () => void) {
+                onResize = callback;
+            }
+        });
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            { Index: 0, Type: 'Video', Width: 1920, Height: 800 },
+            createSpecializedTrack(1, 'ass', 'https://example.test/subtitles.ass')
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+        Object.defineProperty(surface.container, 'clientWidth', { configurable: true, value: 1920 });
+        Object.defineProperty(surface.container, 'clientHeight', { configurable: true, value: 1080 });
+        vi.spyOn(surface.container, 'getBoundingClientRect').mockReturnValue(createRectangle(0, 0, 1920, 1080));
+        const videoRectangle = vi.spyOn(surface.video, 'getBoundingClientRect').mockReturnValue(createRectangle(0, 0, 1920, 1080));
+        player.setSubtitleStreamIndex(1);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.assInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.assInstances[0];
+        const canvas = renderer.options.canvas;
+        expect(canvas?.style.top).toBe('140px');
+        expect(observe).toHaveBeenCalledWith(surface.video);
+
+        player.notifyCustomPlaybackTimeUpdate(2500);
+        renderer.setCurrentTime.mockClear();
+        player.setAspectRatio('cover');
+        expect(canvas?.style).toMatchObject({ left: '-336px', top: '0px', width: '2592px', height: '1080px' });
+        expect(renderer.resize).toHaveBeenLastCalledWith(2592, 1080, 0, 0);
+        expect(renderer.setCurrentTime).toHaveBeenLastCalledWith(2.5);
+        player.setAspectRatio('fill');
+        expect(canvas?.style).toMatchObject({ left: '0px', top: '0px', width: '1920px', height: '1080px' });
+        expect(renderer.resize).toHaveBeenLastCalledWith(1920, 1080, 0, 0);
+
+        videoRectangle.mockReturnValue(createRectangle(480, 0, 960, 1080));
+        player.setAspectRatio('auto');
+        expect(canvas?.style).toMatchObject({ left: '480px', top: '340px', width: '960px', height: '400px' });
+        expect(renderer.resize).toHaveBeenLastCalledWith(960, 400, 0, 0);
+
+        videoRectangle.mockReturnValue(createRectangle(0, 0, 1920, 1080));
+        onResize?.();
+        expect(renderer.resize).toHaveBeenLastCalledWith(1920, 800, 0, 0);
+        expect(canvas?.style.top).toBe('140px');
+        videoRectangle.mockReturnValue(createRectangle(480, 0, 960, 1080));
+        window.dispatchEvent(new Event('resize'));
+        expect(renderer.resize).toHaveBeenLastCalledWith(960, 400, 0, 0);
+        videoRectangle.mockReturnValue(createRectangle(0, 0, 1920, 1080));
+        document.dispatchEvent(new Event('fullscreenchange'));
+        expect(renderer.resize).toHaveBeenLastCalledWith(1920, 800, 0, 0);
+
+        Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 0.75 });
+        window.dispatchEvent(new Event('resize'));
+        expect(renderer.resize).toHaveBeenLastCalledWith(1440, 600, 0, 0);
+        expect(canvas?.style).toMatchObject({ left: '0px', top: '140px', width: '1920px', height: '800px' });
+
+        player.destroy();
+        expect(disconnect).toHaveBeenCalledOnce();
+        renderer.resize.mockClear();
+        window.dispatchEvent(new Event('resize'));
+        document.dispatchEvent(new Event('fullscreenchange'));
+        expect(renderer.resize).not.toHaveBeenCalled();
+    });
+
     it('owns ASS canvas clocking, pause state, seeking, offsets, resize, and stop cleanup', async () => {
         const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
         const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
@@ -997,6 +1172,11 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         expect(renderer.options.canvas).toBeUndefined();
         expect(renderer.options.timeOffset).toBe(1);
         expect(renderer.options.renderAhead).toBe(90);
+        expect(renderer.options).toMatchObject({
+            prescaleFactor: 0.8,
+            prescaleHeightLimit: 1080,
+            maxRenderHeight: 2160
+        });
         expect(document.querySelectorAll('.htmlVideoPlayerCustomSubtitleCanvas')).toHaveLength(0);
 
         vi.mocked(userSettings.getSubtitleAppearanceSettings).mockReturnValue({
