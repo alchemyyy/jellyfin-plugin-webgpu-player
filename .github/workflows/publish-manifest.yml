@@ -1,0 +1,122 @@
+# Puts out a release that release.yml or release-unstable.yml drafted, once its draft is published (Releases > Edit the draft > Publish release).
+# A draft and its zip are visible only to users with push access, so no manifest names a release until then, and a server never offers a version it cannot download.
+# Update main puts a release's commit, and with it manifest.json, on main; Update the unstable manifest records an unstable build's zip in manifest.json on the unstable branch.
+# Each needs only the published release and its tag, so rerunning it retries after a failed push.
+name: Publish manifest
+run-name: Publish manifest for ${{ github.event.release.tag_name }}
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# One manifest update at a time, queued rather than cancelled, so two published releases never push against each other
+concurrency:
+  group: publish-manifest
+  cancel-in-progress: false
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
+# NOTE: Scripts read the tag from the environment only, because ${{ }} inside a script would splice the tag name into shell code
+env:
+  TAG: ${{ github.event.release.tag_name }}
+  # The branch whose manifest.json lists the unstable builds, as release.py's UNSTABLE_BRANCH names it
+  UNSTABLE_BRANCH: unstable
+
+jobs:
+  update-main:
+    name: Update main
+    # An unstable build's tag ends in -unstable, as release.py's UNSTABLE_TAG_SUFFIX names it
+    if: ${{ !endsWith(github.event.release.tag_name, '-unstable') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Pushes the release commit to main
+    permissions:
+      contents: write
+    steps:
+      # The release commit the published tag names, with the full history to rebase it onto main
+      - name: Check out the release
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # release.yml makes the release commit on a commit of main; a tag on another branch would carry that branch's commits into main
+      - name: Stop unless the release commit follows main
+        run: |
+          if ! git merge-base --is-ancestor HEAD^ origin/main; then
+            echo "::error::$TAG does not tag a release commit made on main"
+            exit 1
+          fi
+
+      # Commits pushed to main since the release was drafted go under the release commit; the tag keeps the commit that was built
+      - name: Publish manifest.json on main
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rebase origin/main
+          git push origin HEAD:main
+          echo "manifest.json lists ${TAG#v} on main as of $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+  update-unstable-manifest:
+    name: Update the unstable manifest
+    if: endsWith(github.event.release.tag_name, '-unstable')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Pushes the manifest to the unstable branch
+    permissions:
+      contents: write
+    steps:
+      # release.py, and the repository the unstable branch's worktree joins
+      - name: Check out the plugin
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      # The published zip, into bin/package/ as the build wrote it
+      - name: Download the zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" --pattern '*.zip' --dir bin/package
+
+      # The first unstable build starts the branch, which holds only the manifest
+      - name: Check out the unstable branch
+        run: |
+          if git ls-remote --exit-code --heads origin "$UNSTABLE_BRANCH" > /dev/null; then
+            git fetch --depth 1 origin "$UNSTABLE_BRANCH"
+            git worktree add --detach "$RUNNER_TEMP/unstable" FETCH_HEAD
+          else
+            git worktree add --orphan -b "$UNSTABLE_BRANCH" "$RUNNER_TEMP/unstable"
+          fi
+
+      # Every earlier build keeps its entry, so a server can install any of them again
+      - name: Record the zip in the unstable manifest
+        run: |
+          uv run .github/scripts/release.py record bin/package/*.zip \
+            --source-url-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG" \
+            --manifest "$RUNNER_TEMP/unstable/manifest.json" \
+            --repository "$GITHUB_REPOSITORY"
+
+      # A rerun after a push that went through finds the build listed already
+      - name: Publish the unstable manifest
+        working-directory: ${{ runner.temp }}/unstable
+        run: |
+          version="${TAG#v}"
+          version="${version%-unstable}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add manifest.json
+          if git diff --cached --quiet; then
+            echo "manifest.json on $UNSTABLE_BRANCH lists $version already" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit --message "Unstable $version"
+          git push origin "HEAD:refs/heads/$UNSTABLE_BRANCH"
+          echo "manifest.json on $UNSTABLE_BRANCH lists $version" >> "$GITHUB_STEP_SUMMARY"

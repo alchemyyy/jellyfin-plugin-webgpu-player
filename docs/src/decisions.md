@@ -189,3 +189,9 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   A release ends in `.0`, and an unstable build takes the latest release's first three parts and numbers the fourth, so every build sorts above the release it follows and below the next one: a tester's server moves through the builds onto each release, and one that drops the unstable repository keeps its build until the next release passes it, since Jellyfin never downgrades a plugin.
   Each build keeps its pre-release and its manifest entry, so a server can install any earlier build again, and the unstable manifest never lists a release, since Jellyfin lists a version twice when two repositories carry it.
   The version is set in the build alone and the manifest lives on its own branch, so an unstable build commits nothing to `main`.
+- The release workflows draft their GitHub releases, and a release goes out only when its draft is published (11-15).
+  `release.yml` and `release-unstable.yml` build, tag, and draft it; publishing the draft runs `publish-manifest.yml`, which puts a release's commit with `manifest.json` on `main`, or records an unstable build in the `unstable` branch's manifest.
+  A draft and its zip are visible only to users with push access, so a manifest that named the zip before then would offer servers a version they cannot download.
+  The tag goes up with the draft, so a waiting draft already counts as released: the next unstable build numbers after it, the next release notes start from it, and a stable release built while another stable draft waits carries a `manifest.json` without that one, which conflicts on `main` once both are published.
+  Publish or delete each draft before the next run.
+  Deleting a draft on the Releases page keeps its tag, which still counts and blocks drafting that version again; `gh release delete <tag> --cleanup-tag` deletes both.

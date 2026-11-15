@@ -23,8 +23,9 @@ package zips the artifacts of the dotnet publish output (./build.sh --publish) w
 and inserts or replaces that version in a plugin repository manifest whose imageUrl names the image committed on main.
 Both land in bin/package/ by default, a repository to serve over HTTP for test installs. The release workflow writes the
 committed manifest.json instead, with the GitHub release as the download source. record inserts or replaces a zip that
-package wrote in another manifest, from the meta.json the zip carries; the unstable release workflow records each build
-in the manifest.json of the unstable branch, with the build's GitHub pre-release as the download source.
+package wrote in another manifest, from the meta.json the zip carries; once an unstable build's draft is published, the
+publish manifest workflow records it in the manifest.json of the unstable branch, with the build's GitHub pre-release as
+the download source.
 
 release-notes writes the GitHub release body: the install steps, the merged pull requests, and the commits since the
 previous release tag, or for an unstable build since the previous release or unstable build. It reads the history from

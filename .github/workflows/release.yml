@@ -1,8 +1,8 @@
-# Releases the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
+# Drafts a release of the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
 # Validate checks the branch, the version, which ends in .0 because unstable builds (release-unstable.yml) number the fourth part, the changelog, and that the release tag is free, before anything builds.
 # Build (build-plugin.yml) sets the version, builds and packages the plugin, and records the zip in manifest.json, while Release notes lists the merged pull requests and the commits since the previous release tag.
-# Publish release commits the version and manifest.json, tags that commit, and publishes the GitHub release with the zip; Update main then puts the release commit on main.
-# Only those two jobs can write to the repository. Update main needs only the pushed tag, so rerunning it alone retries main after a failed push.
+# Draft release, the only job that can write to the repository, commits the version and manifest.json, tags that commit, and drafts the GitHub release with the zip.
+# Nothing goes out until the draft is published (Releases > Edit the draft > Publish release), which runs publish-manifest.yml to put the release commit, and with it manifest.json, on main.
 name: Release
 run-name: Release ${{ inputs.version }}
 
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      # Update main rebases the release commit onto main and pushes it, which would carry another branch's commits into main
+      # Once the draft is published, Update main (publish-manifest.yml) rebases the release commit onto main and pushes it, which would carry another branch's commits into main
       - name: Stop unless run on main
         if: github.ref != 'refs/heads/main'
         run: |
@@ -120,12 +120,12 @@ jobs:
           path: ${{ runner.temp }}/release-notes.md
           if-no-files-found: error
 
-  publish:
-    name: Publish release
+  draft:
+    name: Draft release
     needs: [build, release-notes]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Pushes the release tag and creates the release
+    # Pushes the release tag and drafts the release
     permissions:
       contents: write
     steps:
@@ -152,37 +152,12 @@ jobs:
           git commit --message "Release $VERSION"
           git tag --annotate "$TAG" --message "$PLUGIN_NAME $VERSION"
 
-      # The release goes up before manifest.json reaches main, so the manifest never names a missing zip
-      - name: Publish the GitHub release
+      # A draft and its zip are visible only to users with push access, so manifest.json reaches main only once the draft is published, and never names a zip a server cannot download
+      - name: Draft the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git push origin "refs/tags/$TAG"
-          gh release create "$TAG" bin/package/*.zip \
-            --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
-          echo "Published [$PLUGIN_NAME $VERSION]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"
-
-  update-main:
-    name: Update main
-    needs: publish
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    # Pushes the release commit to main
-    permissions:
-      contents: write
-    steps:
-      # The tag's release commit, with the full history to rebase it onto main
-      - name: Check out the release
-        uses: actions/checkout@v7
-        with:
-          ref: refs/tags/${{ env.TAG }}
-          fetch-depth: 0
-
-      # Commits pushed to main during the release go under the release commit; the tag keeps the commit that was built
-      - name: Publish manifest.json on main
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rebase origin/main
-          git push origin HEAD:main
-          echo "manifest.json lists $VERSION on main as of $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          release_url="$(gh release create "$TAG" bin/package/*.zip --draft \
+            --verify-tag --title "$PLUGIN_NAME $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md")"
+          echo "Drafted [$PLUGIN_NAME $VERSION]($release_url); publish the draft to release it" >> "$GITHUB_STEP_SUMMARY"
