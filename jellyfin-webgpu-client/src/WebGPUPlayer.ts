@@ -13,7 +13,7 @@ import { createStreamURLSource } from './DirectPlayHeadPrefetch';
 import { PLAYBACK_SUPERSEDED } from './constants/playbackResult';
 import { WebGPUPlayerEvent } from './constants/playerEvent';
 import { loadAddonStrings } from './host/globalize';
-import { whenClientDefaultsSettled, whenUserSignedIn } from './ServerClientDefaults';
+import { subscribeUserSignedIn, whenClientDefaultsSettled, whenUserSignedIn } from './ServerClientDefaults';
 import {
     translateAudioOutputLayout,
     translateAudioPath,
@@ -1025,6 +1025,12 @@ export default class WebGPUPlayer {
             const settings = loadWebGPUUserSettings();
             this.applyPresentationSettings(settings);
             this.reloadDefaultPresentationPreset(settings);
+        });
+        // The host loads the player before any user signs in, when its user settings read no user's choices, so the user's own apply only at sign-in
+        subscribeUserSignedIn((): void => {
+            const settings = loadWebGPUUserSettings();
+            this.applyPresentationSettings(settings);
+            void audioOutputManager.setSelectedDeviceId(settings.audio.outputDeviceId);
         });
         // The host reuses the player after destroy(), for its next playback, so this listener stays too; without a playback it does nothing
         if (typeof document !== 'undefined') {

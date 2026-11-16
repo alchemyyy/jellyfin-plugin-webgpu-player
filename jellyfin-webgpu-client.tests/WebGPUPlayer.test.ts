@@ -4,6 +4,7 @@ import { PLAYBACK_SUPERSEDED } from 'addons/webGPUPlayer/constants/playbackResul
 import { MediaError } from 'types/mediaError';
 import Events from 'utils/events';
 
+import { getWebGPUAudioOutputManager } from 'webgpu-player/audio/output/WebGPUAudioOutputManager';
 import { microsecondsToMilliseconds } from 'webgpu-player/MediaTime';
 import {
     RENDER_SETTINGS_VERSION,
@@ -147,7 +148,8 @@ const userSettingsMockState = vi.hoisted(() => ({
 // The read of the server's defaults the player waits for before it reads the settings, and the sign-in the decoder warm-up waits for
 const clientDefaultsMockState = vi.hoisted(() => ({
     settled: Promise.resolve() as Promise<void>,
-    signedIn: Promise.resolve() as Promise<void>
+    signedIn: Promise.resolve() as Promise<void>,
+    signInListeners: [] as Array<() => void>
 }));
 // The server's default shader files the player makes sure of before it opens the panel, and which a user who follows them plays with
 const defaultPresentationFilesMockState = vi.hoisted(() => ({
@@ -265,6 +267,9 @@ vi.mock('addons/webGPUPlayer/shims/userSettings', () => ({
 }));
 
 vi.mock('addons/webGPUPlayer/ServerClientDefaults', () => ({
+    subscribeUserSignedIn: vi.fn((listener: () => void): void => {
+        clientDefaultsMockState.signInListeners.push(listener);
+    }),
     whenClientDefaultsSettled: vi.fn(() => clientDefaultsMockState.settled),
     whenUserSignedIn: vi.fn(() => clientDefaultsMockState.signedIn)
 }));
@@ -1923,6 +1928,37 @@ describe('WebGPUPlayer HTML delegation', () => {
             expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ 'single-rate' ] ]);
         } finally {
             setClientDefaults({});
+        }
+    });
+
+    it('applies the user\'s presentation settings and audio output device at sign-in, which the host reaches after it loads the player', () => {
+        // Before sign-in the host's user settings read no user's choices
+        userSettingsMockState.webGPUPlaybackSettings = null;
+        clientDefaultsMockState.signInListeners.length = 0;
+        const player = new WebGPUPlayer();
+        const presenter = getPresenter();
+        player.destroy();
+        presenter.setHDROutputEnabled.mockClear();
+        presenter.setBlackBarCropEnabled.mockClear();
+        presenter.setDeinterlaceMode.mockClear();
+        const setSelectedDeviceId = vi.spyOn(getWebGPUAudioOutputManager(), 'setSelectedDeviceId').mockResolvedValue();
+
+        try {
+            userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({
+                ...createDefaultWebGPUUserSettings(),
+                audio: { ...createDefaultWebGPUUserSettings().audio, outputDeviceId: 'speakers-2' },
+                presentation: { ...createDefaultWebGPUUserSettings().presentation, blackBarCrop: true, deinterlaceMode: 'single-rate', hdrOutput: true }
+            });
+            for (const listener of clientDefaultsMockState.signInListeners) {
+                listener();
+            }
+
+            expect(presenter.setHDROutputEnabled.mock.calls).toEqual([ [ true ] ]);
+            expect(presenter.setBlackBarCropEnabled.mock.calls).toEqual([ [ true ] ]);
+            expect(presenter.setDeinterlaceMode.mock.calls).toEqual([ [ 'single-rate' ] ]);
+            expect(setSelectedDeviceId).toHaveBeenCalledWith('speakers-2');
+        } finally {
+            setSelectedDeviceId.mockRestore();
         }
     });
 
