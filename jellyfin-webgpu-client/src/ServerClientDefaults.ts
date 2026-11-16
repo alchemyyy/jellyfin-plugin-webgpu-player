@@ -230,6 +230,11 @@ export function whenUserSignedIn(): Promise<void> {
     });
 }
 
+/** Calls the listener after each sign-in, when the host's user settings already read the signed-in user's choices; the subscription lasts as long as the page. */
+export function subscribeUserSignedIn(listener: () => void): void {
+    Events.on(ServerConnections, 'localusersignedin', listener);
+}
+
 /** Applies the current server's last read defaults, then reads them again now and on each sign-in; later calls do nothing. */
 export function startClientDefaultsSync(): void {
     if (syncStarted) {

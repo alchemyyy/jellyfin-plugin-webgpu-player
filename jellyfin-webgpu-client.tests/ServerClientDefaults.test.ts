@@ -292,6 +292,21 @@ describe('ServerClientDefaults', () => {
         expect(countSignInListeners(serverConnections)).toBe(0);
     });
 
+    it('calls a sign-in subscriber on each sign-in, and keeps listening', async () => {
+        testState.userId = null;
+        const { serverConnections, sync } = await importModules();
+        const listener = vi.fn();
+
+        sync.subscribeUserSignedIn(listener);
+        expect(listener).not.toHaveBeenCalled();
+
+        Events.trigger(serverConnections, 'localusersignedin', [ { Id: USER_ID } ]);
+        Events.trigger(serverConnections, 'localusersignedin', [ { Id: USER_ID } ]);
+
+        expect(listener).toHaveBeenCalledTimes(2);
+        expect(countSignInListeners(serverConnections)).toBe(1);
+    });
+
     it('saves defaults in the settings envelope, then applies and caches what the server stored', async () => {
         responses.push(respondJSON({ applied: {}, settings: { brightness: 0.5, settingsButtonPlacement: 'controls-end' } }));
         const { clientDefaults, sync } = await importModules();
