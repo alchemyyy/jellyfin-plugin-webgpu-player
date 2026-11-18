@@ -74,6 +74,11 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The fallback to the browser's own player keeps the video playing, so without it a user saw only HDR, shaders, and decoders stop working, and asked whoever runs the server, who had only the server log's reason.
   A page cannot tell Zen and LibreWolf from Firefox, or Vivaldi from Chrome, so the window starts at the detected browser and lets the user pick theirs; their fixes differ mostly in names and page addresses.
   It reads the WebGL renderer to tell a blocked GPU from software rendering, except on the Firefox family, where LibreWolf asks the user's permission for WebGL; a page cannot open a browser's own pages, so the window offers their addresses to copy.
+- HDR peak detection is a user setting, on by default, that follows the automatic input peak (11-17); [The client add-on](add-on.md#settings) has the rules.
+  HDR10-only sources looked different from mpv (issue #13): mpv measures each scene's brightness with `--hdr-compute-peak` by default, while the player tone mapped every frame from the static mastering peak, 4000 nits for a grade whose scenes rarely reach a quarter of it.
+  The engine measures as libplacebo does, with mpv's defaults; the setting only turns that on or off, as a user who prefers the static curve, or a slow GPU, may want.
+  It is a render setting rather than a presentation setting, so it applies live with the tone-mapping controls and resets with them, and it is meaningless with a manual input peak, which it would otherwise override, so the switch is disabled then.
+  HDR10+ and Dolby Vision L1 keep priority over the measurement, a deviation from libplacebo, whose detected values override HDR10+; the engine's decisions give the reason.
 
 ## Negotiation
 

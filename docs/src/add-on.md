@@ -239,6 +239,9 @@ Every setting is the user's own in the browser profile, else the default an admi
 - The speaker layout and binaural rendering also take part in choosing a track's decoder, so a change that needs another decoder, such as one that renders objects, applies from the next playback or audio track switch.
 - Custom decode and HDR tone mapping (`WebGPUPlaybackPreferences.ts`) default to on.
   They shape the device profile, so a playback keeps the values its negotiation adopted, and a change applies from the next negotiation.
+- HDR peak detection (`render.settings.toneMapping.peakDetection`, client default key `peakDetection`), on by default, is the engine's render setting `toneMapping.peakDetection`: it measures each frame's brightness and tone maps to the smoothed scene peak and average, as mpv's `--hdr-compute-peak` does.
+  It applies only to PQ video whose frames carry neither HDR10+ nor Dolby Vision L1 brightness, which keep priority, and only while the automatic input peak ("Track source peak metadata") is on, so the Picture window disables its switch while that is off.
+  Like the other render controls, it applies live through `updateRenderSettings`, and the playback info shows `Detected HDR peak / average` with the count of frames tone mapped from it once detection has measured a frame.
 - The decoder test timing defaults to `automatic` and applies from the next page load; see [Decoder test timing](#decoder-test-timing).
 - GPU decode slicing defaults to off, and a playback keeps the value it started with.
   `WebGPUPlayer` hands it to the engine's `createGPUVideoDecodeSessionFactory` with each playback's controller, and with it on, a picture a decoder package decodes on the GPU submits its work in slices, so a presented frame waits behind less decode; the engine book's decisions weigh what it costs.

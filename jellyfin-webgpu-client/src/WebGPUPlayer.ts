@@ -1919,7 +1919,12 @@ export default class WebGPUPlayer {
                             {
                                 label: globalize.translate('WebGPUStatsVideoResyncsSuspensions'),
                                 value: `${customTelemetry.videoDecode.videoResyncCount} / ${customTelemetry.videoDecode.videoSuspensionCount}`
-                            }
+                            },
+                            // Shown once detection has measured a frame: the smoothed scene peak and average, and the frames tone mapped from them
+                            ...(presentationTelemetry.detectedPeakNits === null || presentationTelemetry.detectedAverageNits === null ? [] : [ {
+                                label: globalize.translate('WebGPUStatsDetectedPeakAverage'),
+                                value: `${Math.round(presentationTelemetry.detectedPeakNits)} / ${Math.round(presentationTelemetry.detectedAverageNits)} ${globalize.translate('WebGPUUnitNits')}, ${presentationTelemetry.appliedPeakDetectionFrameCount} ${globalize.translate('WebGPUStatsFramesUnit')}`
+                            } ])
                         ],
                         type: 'video'
                     },

@@ -118,7 +118,8 @@ describe('WebGPUUserSettings', () => {
                         inputPeakNits: 120,
                         operator: 'aces',
                         outputPeakNits: 80,
-                        paperWhiteNits: 203
+                        paperWhiteNits: 203,
+                        peakDetection: 'off'
                     }
                 }
             },
@@ -148,8 +149,39 @@ describe('WebGPUUserSettings', () => {
             inputPeakNits: 120,
             operator: 'aces',
             outputPeakNits: 80,
-            paperWhiteNits: 120
+            paperWhiteNits: 120,
+            peakDetection: true
         });
+    });
+
+    it('keeps peak detection as a render setting that persists, follows its server default, and clears back to it', () => {
+        const storage = createStorage();
+        expect(createBuiltInWebGPUUserSettings().render.settings.toneMapping.peakDetection).toBe(true);
+
+        setClientDefaults({ peakDetection: 'no' });
+        expect(createDefaultWebGPUUserSettings().render.settings.toneMapping.peakDetection).toBe(true);
+        setClientDefaults({ peakDetection: false });
+        const defaults = createDefaultWebGPUUserSettings();
+        expect(defaults.render.settings.toneMapping.peakDetection).toBe(false);
+
+        saveWebGPUUserSettings({
+            ...defaults,
+            render: {
+                ...defaults.render,
+                settings: { ...defaults.render.settings, toneMapping: { ...defaults.render.settings.toneMapping, peakDetection: true } }
+            }
+        }, storage);
+        expect(JSON.parse(storage.get(WEBGPU_USER_SETTINGS_STORAGE_KEY) ?? '')).toEqual({
+            render: { settings: { toneMapping: { peakDetection: true } } },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        const loaded = loadWebGPUUserSettings(storage);
+        expect(loaded.render.settings.toneMapping.peakDetection).toBe(true);
+        // The configured settings the player applies carry the choice to the engine
+        expect(createConfiguredHDRRenderSettings(loaded, 1_000).toneMapping.peakDetection).toBe(true);
+
+        clearWebGPUUserSettingChoices([ 'peakDetection' ], storage);
+        expect(loadWebGPUUserSettings(storage).render.settings.toneMapping.peakDetection).toBe(false);
     });
 
     it('stores only the settings that differ from the defaults, and reads them back over the defaults', () => {

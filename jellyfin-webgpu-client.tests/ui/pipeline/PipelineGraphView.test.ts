@@ -77,6 +77,7 @@ function createTemporalPlan(): PresentationPlan {
         output: { colorSpace: 'srgb', format: 'bgra8unorm', toneMapping: 'standard' },
         parameterSets: [],
         passTextures: [],
+        peakDetection: null,
         passes: [
             createPass({ label: SIGNAL_LABEL, target: { kind: 'texture', textureId: SIGNAL_TEXTURE_ID } }),
             createPass({

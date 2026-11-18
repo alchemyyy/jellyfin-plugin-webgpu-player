@@ -518,7 +518,7 @@ function commitNumber(field: HTMLInputElement, text: string): void {
 
 // One default button per setting the windows offer, the settings button placement, the decoder test timing, HDR output, black bar crop,
 // deinterlacing, GPU decode slicing, the speaker layout, binaural rendering, and the failure warning included
-const DEFAULT_SETTING_BUTTON_COUNT = 26;
+const DEFAULT_SETTING_BUTTON_COUNT = 27;
 
 // What a player reports before any shader pass runs
 const EMPTY_PLAN_REPORT: PlanReport = { activePasses: [], inactivePasses: [] };
@@ -886,6 +886,22 @@ describe('WebGPUPlaybackSettingsPanel', () => {
             }
         });
 
+        // Peak detection applies live through the render settings and persists
+        const peakDetectionCheckbox = requirePanelElement<HTMLInputElement>(
+            panel,
+            '[data-setting-checkbox="peakDetection"]'
+        );
+        expect(peakDetectionCheckbox.checked).toBe(true);
+        expect(peakDetectionCheckbox.disabled).toBe(false);
+        peakDetectionCheckbox.checked = false;
+        peakDetectionCheckbox.dispatchEvent(new Event('change'));
+        runAnimationFrames();
+        expect(player.updateRenderSettings).toHaveBeenLastCalledWith(
+            expect.objectContaining({ toneMapping: expect.objectContaining({ peakDetection: false }) }),
+            true
+        );
+        expect(readSavedSettings()).toMatchObject({ render: { settings: { toneMapping: { peakDetection: false } } } });
+
         const operatorSelect = requirePanelElement<HTMLSelectElement>(
             panel,
             '[data-setting-select="operator"]'
@@ -894,11 +910,14 @@ describe('WebGPUPlaybackSettingsPanel', () => {
         operatorSelect.dispatchEvent(new Event('change'));
         automaticInputPeakCheckbox.checked = false;
         automaticInputPeakCheckbox.dispatchEvent(new Event('change'));
+        // Detection only replaces the automatic input peak, so it is disabled while that is off
+        expect(peakDetectionCheckbox.disabled).toBe(true);
         for (const settingKey of [
             'brightness',
             'operator',
             'audioDownmixAlgorithm',
             'automaticInputPeakNits',
+            'peakDetection',
             'forceStereoDownmix'
         ]) {
             requirePanelElement<HTMLButtonElement>(
@@ -915,7 +934,10 @@ describe('WebGPUPlaybackSettingsPanel', () => {
                 automaticInputPeakNits: defaultSettings.render.automaticInputPeakNits,
                 settings: {
                     display: { brightness: defaultSettings.render.settings.display.brightness },
-                    toneMapping: { operator: defaultSettings.render.settings.toneMapping.operator }
+                    toneMapping: {
+                        operator: defaultSettings.render.settings.toneMapping.operator,
+                        peakDetection: defaultSettings.render.settings.toneMapping.peakDetection
+                    }
                 }
             }
         });

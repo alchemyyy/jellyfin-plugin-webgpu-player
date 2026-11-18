@@ -198,6 +198,12 @@ const LEADING_SECTIONS: readonly SettingSection[] = Object.freeze([
                 kind: 'boolean',
                 labelKey: 'WebGPUTrackSourcePeakMetadata'
             },
+            {
+                descriptionKey: 'WebGPUPeakDetectionHelp',
+                key: 'peakDetection',
+                kind: 'boolean',
+                labelKey: 'WebGPUPeakDetection'
+            },
             ...getNumericRows('render')
         ],
         titleKey: 'WebGPUToneMappingAndDisplay'
@@ -299,6 +305,7 @@ function getSettingValues(settings: WebGPUUserSettings, separateValues: Separate
         outputGain: downmix.outputGain,
         outputPeakNits: toneMapping.outputPeakNits,
         paperWhiteNits: toneMapping.paperWhiteNits,
+        peakDetection: toneMapping.peakDetection,
         preferredVideoPlayer: separateValues.preferredVideoPlayer,
         saturation: display.saturation,
         settingsButtonPlacement: settings.osd.settingsButtonPlacement,

@@ -316,7 +316,8 @@ export function createDefaultWebGPUUserSettings(): WebGPUUserSettings {
                     inputPeakNits: serverDefaults.inputPeakNits,
                     operator: serverDefaults.toneMapOperator,
                     outputPeakNits: serverDefaults.outputPeakNits,
-                    paperWhiteNits: serverDefaults.paperWhiteNits
+                    paperWhiteNits: serverDefaults.paperWhiteNits,
+                    peakDetection: serverDefaults.peakDetection
                 }
             }
         }
@@ -396,7 +397,8 @@ function normalizeSettingsOver(value: Record<string, unknown>, defaults: WebGPUU
                 HDR_RENDER_SETTING_RANGES.outputPeakNits.minimum,
                 HDR_RENDER_SETTING_RANGES.outputPeakNits.maximum
             ),
-            paperWhiteNits
+            paperWhiteNits,
+            peakDetection: normalizeBoolean(toneMapping.peakDetection, defaultRenderSettings.toneMapping.peakDetection)
         }
     });
 
@@ -577,6 +579,7 @@ const SETTING_PATHS: Readonly<Partial<Record<ClientDefaultKey, readonly string[]
     outputGain: [ 'audio', 'downmix', 'outputGain' ],
     outputPeakNits: [ 'render', 'settings', 'toneMapping', 'outputPeakNits' ],
     paperWhiteNits: [ 'render', 'settings', 'toneMapping', 'paperWhiteNits' ],
+    peakDetection: [ 'render', 'settings', 'toneMapping', 'peakDetection' ],
     presentationFiles: [ 'presentation', 'files' ],
     saturation: [ 'render', 'settings', 'display', 'saturation' ],
     settingsButtonPlacement: [ 'osd', 'settingsButtonPlacement' ],

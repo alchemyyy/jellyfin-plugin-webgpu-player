@@ -14,7 +14,8 @@ import {
     createConfiguredHDRRenderSettings,
     createDefaultWebGPUUserSettings,
     type StoredPresentationFile,
-    type WebGPUUserSettings
+    type WebGPUUserSettings,
+    WEBGPU_USER_SETTINGS_VERSION
 } from 'addons/webGPUPlayer/WebGPUUserSettings';
 import { createDefaultAudioDownmixSettings } from 'webgpu-player/audio/processing/CustomAudioDownmix';
 import type { CustomPlaybackStartResult } from 'webgpu-player/pipeline/CustomPlaybackControllerTypes';
@@ -780,6 +781,9 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
             dolbyVisionDualLayerFELBaseFallbackPresentedFrameCount: 0,
             dolbyVisionDualLayerFELPresentedFrameCount: 0,
             dolbyVisionDualLayerMELPresentedFrameCount: 0,
+            appliedPeakDetectionFrameCount: 0,
+            detectedAverageNits: null,
+            detectedPeakNits: null,
             fallbackReason: null,
             firstFrameLatencyMicroseconds: null,
             firstPresentedMediaTimeMicroseconds: null,
@@ -6907,7 +6911,8 @@ describe('WebGPUPlayer HTML delegation', () => {
                 inputPeakNits: 1_000,
                 operator: 'aces' as const,
                 outputPeakNits: 100,
-                paperWhiteNits: 203
+                paperWhiteNits: 203,
+                peakDetection: true
             },
             version: RENDER_SETTINGS_VERSION
         };
@@ -6936,6 +6941,61 @@ describe('WebGPUPlayer HTML delegation', () => {
             mode: 'identity-sdr',
             version: RENDER_SETTINGS_VERSION
         });
+    });
+
+    it('shows the detected HDR peak and average once peak detection has measured a frame', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const presenter = getPresenter();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        const readVideoStats = async (): Promise<Array<{ label: string, value: string }>> => (
+            (await player.getStats() as { categories: Array<{ stats: Array<{ label: string, value: string }>, type: string }> })
+                .categories.find(category => category.type === 'video')?.stats ?? []
+        );
+
+        expect((await readVideoStats()).map(stat => stat.label)).not.toContain('Detected HDR peak / average');
+
+        presenter.getTelemetry.mockReturnValue({
+            ...presenter.getTelemetry(),
+            appliedPeakDetectionFrameCount: 240,
+            detectedAverageNits: 31.6,
+            detectedPeakNits: 811.7
+        });
+        expect(await readVideoStats()).toContainEqual({ label: 'Detected HDR peak / average', value: '812 / 32 nits, 240 frames' });
+    });
+
+    it('forwards the stored peak detection choice into the HDR render settings', async () => {
+        userSettingsMockState.webGPUPlaybackSettings = JSON.stringify({
+            render: { settings: { toneMapping: { peakDetection: false } } },
+            version: WEBGPU_USER_SETTINGS_VERSION
+        });
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const presenter = getPresenter();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        playbackPreferencesMockState.hdrToneMappingEnabled = true;
+        presenterMockState.authorizedExternalHDRRouteKeys = [ EXTERNAL_PQ_ROUTE_KEY ];
+        customDecodeMockState.eligible = true;
+        customDecodeMockState.hdr = true;
+        customDecodeMockState.nativeHDRTransfer = 'pq';
+        customDecodeMockState.neutralizeHDRColorMetadata = true;
+        customDecodeMockState.videoOutputMode = 'video-frame';
+
+        await player.play(createKnownHDRPlayOptions({ playMethod: 'DirectPlay' }));
+
+        expect(presenter.configureColorPipeline).toHaveBeenCalledWith(expect.objectContaining({
+            settings: expect.objectContaining({ toneMapping: expect.objectContaining({ peakDetection: false }) })
+        }), 1);
     });
 
     it('preserves a custom audio switch when later falling back to native playback', async () => {

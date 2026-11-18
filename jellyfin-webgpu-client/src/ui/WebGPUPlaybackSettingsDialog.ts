@@ -92,6 +92,7 @@ type DefaultSettingKey =
     | 'enableHDRToneMapping'
     | 'forceStereoDownmix'
     | 'operator'
+    | 'peakDetection'
     | 'settingsButtonPlacement'
     | 'speakerLayout'
     | 'webGPUFailureWarning';
@@ -266,6 +267,7 @@ function createPictureContentHTML(): string {
             { reset: true }
         )}
         ${createCheckboxControlHTML('automaticInputPeakNits', getControlText('WebGPUTrackSourcePeakMetadata', 'WebGPUTrackSourcePeakMetadataHelp', 'WebGPUSettingNameSourcePeakTracking'), { reset: true })}
+        ${createCheckboxControlHTML('peakDetection', getControlText('WebGPUPeakDetection', 'WebGPUPeakDetectionHelp', 'WebGPUSettingNamePeakDetection'), { reset: true })}
         ${createNumericControlsHTML('render')}
         <div aria-live="polite" class="webgpuStatus" data-render-status role="status"></div>
         ${createHDROutputControlHTML()}`;
@@ -570,6 +572,7 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     const audioOutputPicker = requireElement<HTMLButtonElement>(panel, '[data-audio-output-picker]');
     const audioOutputRedetect = requireElement<HTMLButtonElement>(panel, '[data-audio-output-redetect]');
     const automaticInputPeakCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="automaticInputPeakNits"]');
+    const peakDetectionCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="peakDetection"]');
     const forceStereoCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="forceStereoDownmix"]');
     const binauralHeadphonesCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="binauralHeadphones"]');
     const customDecodeCheckbox = requireElement<HTMLInputElement>(panel, '[data-setting-checkbox="enableCustomDecode"]');
@@ -655,6 +658,9 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
             binding.synchronize();
         }
         automaticInputPeakCheckbox.checked = settings.render.automaticInputPeakNits;
+        peakDetectionCheckbox.checked = settings.render.settings.toneMapping.peakDetection;
+        // Detection replaces only the automatic input peak, so it has no effect while that is off
+        peakDetectionCheckbox.disabled = !settings.render.automaticInputPeakNits;
         forceStereoCheckbox.checked = settings.audio.forceStereoDownmix;
         binauralHeadphonesCheckbox.checked = settings.audio.binauralHeadphones;
         customDecodeCheckbox.checked = settings.playback.enableCustomDecode;
@@ -923,6 +929,25 @@ function createPanelController(player: WebGPUPlayer, invokingElement: HTMLElemen
     bindDefaultButton('automaticInputPeakNits', (): void => {
         automaticInputPeakCheckbox.checked = createDefaultWebGPUUserSettings().render.automaticInputPeakNits;
         onAutomaticInputPeakChange();
+    });
+
+    const onPeakDetectionChange = (): void => {
+        settings = normalizeWebGPUUserSettings({
+            ...settings,
+            render: {
+                ...settings.render,
+                settings: {
+                    ...settings.render.settings,
+                    toneMapping: { ...settings.render.settings.toneMapping, peakDetection: peakDetectionCheckbox.checked }
+                }
+            }
+        });
+        commitSectionSettings('render');
+    };
+    listen(peakDetectionCheckbox, 'change', onPeakDetectionChange);
+    bindDefaultButton('peakDetection', (): void => {
+        peakDetectionCheckbox.checked = createDefaultWebGPUUserSettings().render.settings.toneMapping.peakDetection;
+        onPeakDetectionChange();
     });
 
     const onForceStereoChange = (): void => {

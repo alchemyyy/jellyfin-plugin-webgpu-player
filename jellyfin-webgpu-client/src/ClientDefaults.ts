@@ -26,6 +26,7 @@ export const CLIENT_DEFAULT_KEYS = Object.freeze([
     'outputGain',
     'outputPeakNits',
     'paperWhiteNits',
+    'peakDetection',
     'preferredVideoPlayer',
     'presentationFiles',
     'saturation',
