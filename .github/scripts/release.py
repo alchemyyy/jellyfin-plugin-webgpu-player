@@ -27,9 +27,11 @@ package wrote in another manifest, from the meta.json the zip carries; once an u
 publish manifest workflow records it in the manifest.json of the unstable branch, with the build's GitHub pre-release as
 the download source.
 
-release-notes writes the GitHub release body: the install steps, the merged pull requests, and the commits since the
-previous release tag, or for an unstable build since the previous release or unstable build. It reads the history from
-git and the pull requests through the GitHub CLI.
+release-notes writes the GitHub release body: the install steps, the merged pull requests, the commits since the
+previous release tag, or for an unstable build since the previous release or unstable build, and the engine's commits
+since the engine the previous release carried, each credited to its author and co-authors, then the contributors whose
+first credited commit the release carries. It reads the history from git, the engine's from its submodule checkout or a
+blobless clone, and the authors' GitHub accounts and the pull requests through the GitHub CLI.
 """
 
 import argparse
@@ -41,9 +43,13 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
+import urllib.parse
 import uuid
 import xml.etree.ElementTree as ElementTree
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
@@ -86,19 +92,48 @@ GITHUB_API_VERSION: str = "2022-11-28"
 # GitHub rejects a release body above 125000 characters
 MAXIMUM_RELEASE_NOTES_LENGTH: int = 120_000
 RELEASE_NOTES_TRUNCATION_NOTICE: str = "Release notes truncated because they exceed GitHub's release body limit."
-# Commit fields joined by the unit separator, one record per line
-COMMIT_LOG_FORMAT: str = "%H%x1f%h%x1f%ae%x1f%s"
+# Commit fields joined by the unit separator, one record per line: the hashes, the author, the commit time, the
+# Co-authored-by trailers joined by the record separator, and the subject last, the one field that may hold anything
+COMMIT_LOG_FORMAT: str = (
+    "%H%x1f%h%x1f%an%x1f%ae%x1f%ct%x1f%(trailers:key=Co-authored-by,valueonly,separator=%x1e)%x1f%s"
+)
 COMMIT_FIELD_SEPARATOR: str = "\x1f"
+TRAILER_SEPARATOR: str = "\x1e"
+# The author's email and the Co-authored-by trailers of every commit before a release, which tell its new contributors
+CREDIT_LOG_FORMAT: str = "%ae%x1f%(trailers:key=Co-authored-by,valueonly,separator=%x1e)"
+# A Co-authored-by trailer: the name, then the email in angle brackets
+CO_AUTHOR_PATTERN: re.Pattern[str] = re.compile(r"(?P<name>.*?)\s*<(?P<email>[^<>]+)>")
+# The submodule, as .gitmodules names it, whose commits a release carries beside the plugin's
+ENGINE_SUBMODULE: str = "webgpu-player"
+GITHUB_REPOSITORY_URL_PATTERN: re.Pattern[str] = re.compile(
+    r"github\.com[:/](?P<repository>[^/\s]+/[^/\s]+?)(?:\.git)?/?$"
+)
+# Commits per GraphQL query that reads their authors and pull requests
+COMMIT_QUERY_BATCH_SIZE: int = 50
+# GitHub's app accounts, such as github-actions[bot], which the notes credit but never welcome as new contributors
+BOT_LOGIN_SUFFIX: str = "[bot]"
 REQUIRED_KEYS: tuple[str, ...] = (
     "name", "guid", "version", "targetAbi", "overview", "description", "category", "owner", "artifacts", "changelog",
 )
 
 
 @dataclass(frozen=True)
-class CommitEntry:
-    full_hash: str
-    short_hash: str
-    subject: str
+class Contributor:
+    """A commit's author or co-author, with the GitHub account its email belongs to when GitHub knows one."""
+
+    name: str
+    email: str
+    login: str | None
+
+    @property
+    def identity(self) -> str:
+        """The key every credit of one person shares: the GitHub account, else the email."""
+        return f"login:{self.login.lower()}" if self.login else f"email:{self.email.lower()}"
+
+    @property
+    def credit(self) -> str:
+        """An @mention, which GitHub links and lists among the release's contributors, else the name."""
+        return f"@{self.login}" if self.login else self.name
 
 
 @dataclass(frozen=True)
@@ -106,6 +141,52 @@ class PullRequestEntry:
     number: int
     title: str
     author_login: str
+    url: str
+
+
+@dataclass(frozen=True)
+class CommitEntry:
+    full_hash: str
+    short_hash: str
+    subject: str
+    timestamp: int
+    url: str
+    # The author first, then the co-authors, one credit per person
+    contributors: tuple[Contributor, ...]
+    # The merged pull requests that carried the commit
+    pull_requests: tuple[PullRequestEntry, ...]
+
+
+@dataclass(frozen=True)
+class GitHistory:
+    """A GitHub repository, as owner/name, and the git arguments that reach its commits locally."""
+
+    repository: str
+    git_arguments: tuple[str, ...] = ()
+
+    def git(self, *arguments: str) -> list[str]:
+        """Returns a git command line over this history."""
+        return ["git", *self.git_arguments, *arguments]
+
+
+@dataclass(frozen=True)
+class EngineHistory:
+    """The engine's history beside a release: the submodule's commit the previous release carried and the target's."""
+
+    history: GitHistory
+    previous_commit: str
+    commit: str
+
+    @property
+    def changed(self) -> bool:
+        """Whether the release carries engine commits."""
+        return self.previous_commit != self.commit
+
+
+@dataclass(frozen=True)
+class NewContributor:
+    contributor: Contributor
+    # The pull request that carried the contributor's first credited commit, else that commit
     url: str
 
 
@@ -338,6 +419,11 @@ def run_command(command: list[str]) -> str:
     return result.stdout
 
 
+def command_succeeds(command: list[str]) -> bool:
+    """Runs a command in the repository and returns whether it exited with 0, discarding its output."""
+    return subprocess.run(command, cwd=REPOSITORY_DIRECTORY, capture_output=True).returncode == 0
+
+
 def read_release_tag(tag: str) -> ReleaseTag | None:
     """Reads a release tag, such as v1.1.0.0 or an unstable build's v1.1.0.1-unstable, or returns None for another tag."""
     if not tag.startswith(RELEASE_TAG_PREFIX):
@@ -409,92 +495,333 @@ def next_unstable_version() -> str:
     return ".".join(str(part) for part in (*stable_version[:3], build_number))
 
 
-def read_commits(previous_tag: str | None, target: str) -> list[CommitEntry]:
-    """Reads the commits on the target since the previous release tag, newest first, without merges or release commits."""
-    # NOTE: The released commit is rebased onto main afterwards, so the tag may not be an ancestor; the range still
-    # excludes everything the tag reached
-    revision_range: str = f"{previous_tag}..{target}" if previous_tag else target
-    log_output: str = run_command(["git", "log", "--no-merges", f"--format={COMMIT_LOG_FORMAT}", revision_range])
-    commits: list[CommitEntry] = []
+def query_commit_details(repository: str, full_hashes: list[str]) -> dict[str, dict]:
+    """Reads each commit's authors, co-authors included, and the pull requests that carried it from GitHub, in batches.
+
+    GitHub matches each author's email to the account it belongs to, which the commit itself never names. A commit
+    GitHub does not have, such as one not pushed yet, is left out.
+    """
+    owner, name = repository.split("/", 1)
+    details: dict[str, dict] = {}
+    for start in range(0, len(full_hashes), COMMIT_QUERY_BATCH_SIZE):
+        batch: list[str] = full_hashes[start:start + COMMIT_QUERY_BATCH_SIZE]
+        # The hashes come from git log, so they are hexadecimal and safe to write into the query
+        fields: str = " ".join(
+            f'c{index}: object(oid: "{full_hash}") {{ ... on Commit {{ oid'
+            " authors(first: 20) { nodes { name email user { login } } }"
+            " associatedPullRequests(first: 10) { nodes { number title url merged author { login } } } } }"
+            for index, full_hash in enumerate(batch)
+        )
+        query: str = (
+            f"query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
+        )
+        response: dict = json.loads(run_command([
+            "gh", "api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"name={name}",
+        ]))
+        repository_data: dict = (response.get("data") or {}).get("repository") or {}
+        for commit in repository_data.values():
+            if commit:
+                details[commit["oid"]] = commit
+    return details
+
+
+def read_unique_contributors(contributors: list[Contributor]) -> tuple[Contributor, ...]:
+    """Keeps each person's first credit, in order."""
+    unique_contributors: dict[str, Contributor] = {}
+    for contributor in contributors:
+        unique_contributors.setdefault(contributor.identity, contributor)
+    return tuple(unique_contributors.values())
+
+
+def read_trailer_contributors(author_name: str, author_email: str, co_authors: str) -> tuple[Contributor, ...]:
+    """Credits a commit from git alone: its author and its Co-authored-by trailers, without their GitHub accounts."""
+    contributors: list[Contributor] = [Contributor(author_name, author_email, None)]
+    for co_author in co_authors.split(TRAILER_SEPARATOR):
+        match: re.Match[str] | None = CO_AUTHOR_PATTERN.fullmatch(co_author.strip())
+        if match is not None:
+            contributors.append(Contributor(match.group("name").strip(), match.group("email").strip(), None))
+    return read_unique_contributors(contributors)
+
+
+def read_detail_contributors(detail: dict) -> tuple[Contributor, ...]:
+    """Credits a commit from GitHub's authors, the author first, each with the account GitHub matched."""
+    contributors: list[Contributor] = []
+    for author in (detail.get("authors") or {}).get("nodes") or []:
+        if not author:
+            continue
+        user: dict = author.get("user") or {}
+        contributors.append(Contributor(
+            name=str(author.get("name") or ""),
+            email=str(author.get("email") or ""),
+            login=str(user["login"]) if user.get("login") else None,
+        ))
+    return read_unique_contributors(contributors)
+
+
+def read_detail_pull_requests(detail: dict) -> tuple[PullRequestEntry, ...]:
+    """Lists the merged pull requests GitHub associates with a commit, by number."""
+    pull_requests: list[PullRequestEntry] = []
+    for pull_request in (detail.get("associatedPullRequests") or {}).get("nodes") or []:
+        if not pull_request or not pull_request.get("merged"):
+            continue
+        number: int = int(pull_request["number"])
+        title: str = " ".join(str(pull_request.get("title") or "").split())
+        author: dict = pull_request.get("author") or {}
+        pull_requests.append(PullRequestEntry(
+            number=number,
+            title=title or f"Pull request #{number}",
+            author_login=str(author.get("login") or "ghost"),
+            url=str(pull_request["url"]),
+        ))
+    return tuple(sorted(pull_requests, key=lambda pull_request: pull_request.number))
+
+
+def read_commits(history: GitHistory, revision_range: str) -> list[CommitEntry]:
+    """Reads the commits of a revision range, newest first, without merges or release commits, with their credits.
+
+    git names each commit's author and co-authors; GitHub adds the account each belongs to and the merged pull requests
+    that carried the commit, and a commit GitHub does not have keeps git's names.
+    """
+    log_output: str = run_command(history.git("log", "--no-merges", f"--format={COMMIT_LOG_FORMAT}", revision_range))
+    records: list[list[str]] = []
     for log_line in log_output.splitlines():
         if not log_line:
             continue
-        full_hash, short_hash, author_email, subject = log_line.split(COMMIT_FIELD_SEPARATOR, 3)
-        if author_email == RELEASE_BOT_EMAIL:
+        fields: list[str] = log_line.split(COMMIT_FIELD_SEPARATOR, 6)
+        if fields[3] == RELEASE_BOT_EMAIL:
             continue
-        commits.append(CommitEntry(full_hash, short_hash, subject))
+        records.append(fields)
+    details: dict[str, dict] = query_commit_details(history.repository, [fields[0] for fields in records])
+    commits: list[CommitEntry] = []
+    for full_hash, short_hash, author_name, author_email, timestamp, co_authors, subject in records:
+        detail: dict = details.get(full_hash) or {}
+        commits.append(CommitEntry(
+            full_hash=full_hash,
+            short_hash=short_hash,
+            subject=subject,
+            timestamp=int(timestamp),
+            url=f"{GITHUB_URL}/{history.repository}/commit/{full_hash}",
+            contributors=(
+                read_detail_contributors(detail) or read_trailer_contributors(author_name, author_email, co_authors)
+            ),
+            pull_requests=read_detail_pull_requests(detail),
+        ))
     return commits
 
 
-def read_pull_requests(repository: str, commits: list[CommitEntry]) -> list[PullRequestEntry]:
-    """Looks up the merged pull requests that carried the commits, oldest first."""
-    pull_requests_by_number: dict[int, PullRequestEntry] = {}
-    for commit in commits:
-        response: str = run_command([
-            "gh", "api", "--header", f"X-GitHub-Api-Version: {GITHUB_API_VERSION}",
-            f"repos/{repository}/commits/{commit.full_hash}/pulls",
-        ])
-        for pull_request in json.loads(response):
-            if not pull_request.get("merged_at"):
+def read_submodule(name: str) -> tuple[str, str, str]:
+    """Returns a submodule's path, URL, and GitHub repository as owner/name, from .gitmodules."""
+    path: str = run_command(["git", "config", "--file", ".gitmodules", "--get", f"submodule.{name}.path"]).strip()
+    url: str = run_command(["git", "config", "--file", ".gitmodules", "--get", f"submodule.{name}.url"]).strip()
+    match: re.Match[str] | None = GITHUB_REPOSITORY_URL_PATTERN.search(url)
+    if match is None:
+        fail(f"The {name} submodule's URL {url} is not a GitHub repository")
+    return path, url, match.group("repository")
+
+
+def read_submodule_commit(revision: str, path: str) -> str | None:
+    """Returns the commit a revision pins the submodule at a path to, or None when the revision has none there."""
+    for tree_line in run_command(["git", "ls-tree", revision, "--", path]).splitlines():
+        _mode, object_type, object_hash = tree_line.split("\t", 1)[0].split(" ")
+        if object_type == "commit":
+            return object_hash
+    return None
+
+
+@contextmanager
+def open_engine_history(previous_tag: str | None, target: str) -> Iterator[EngineHistory | None]:
+    """Yields the engine's history from the commit the previous release carried to the target's, or None without one.
+
+    It holds the engine commits the release carries, and the earlier ones, which tell the release's new contributors
+    even when the engine is unchanged. The submodule's own checkout serves when it holds both commits; the release
+    workflows check the plugin out without its submodules, so there a blobless clone of the engine's repository does,
+    which holds every commit but no file.
+    """
+    if previous_tag is None:
+        yield None
+        return
+    path, url, repository = read_submodule(ENGINE_SUBMODULE)
+    previous_commit: str | None = read_submodule_commit(previous_tag, path)
+    commit: str | None = read_submodule_commit(target, path)
+    if previous_commit is None or commit is None:
+        yield None
+        return
+    checkout: Path = REPOSITORY_DIRECTORY / path
+    local_history: GitHistory = GitHistory(repository, ("-C", str(checkout)))
+    if (checkout / ".git").exists() and all(
+        command_succeeds(local_history.git("cat-file", "-e", f"{revision}^{{commit}}"))
+        for revision in (previous_commit, commit)
+    ):
+        yield EngineHistory(local_history, previous_commit, commit)
+        return
+    with tempfile.TemporaryDirectory(prefix="release-notes-engine-", ignore_cleanup_errors=True) as directory:
+        git_directory: Path = Path(directory) / "engine.git"
+        run_command(["git", "clone", "--quiet", "--bare", "--filter=blob:none", url, str(git_directory)])
+        yield EngineHistory(GitHistory(repository, ("--git-dir", str(git_directory))), previous_commit, commit)
+
+
+def read_credited_emails(history: GitHistory, revision: str | None) -> set[str]:
+    """Returns the lowercased email of every author and co-author of the commits a revision reaches."""
+    if revision is None:
+        return set()
+    emails: set[str] = set()
+    for log_line in run_command(history.git("log", f"--format={CREDIT_LOG_FORMAT}", revision)).splitlines():
+        author_email, _, co_authors = log_line.partition(COMMIT_FIELD_SEPARATOR)
+        emails.add(author_email.strip().lower())
+        for co_author in co_authors.split(TRAILER_SEPARATOR):
+            match: re.Match[str] | None = CO_AUTHOR_PATTERN.fullmatch(co_author.strip())
+            if match is not None:
+                emails.add(match.group("email").strip().lower())
+    emails.discard("")
+    return emails
+
+
+def has_earlier_commit(repository: str, login: str, revision: str) -> bool:
+    """Returns whether GitHub knows a commit of the account, under any of its emails, among those a revision reaches."""
+    response: str = run_command([
+        "gh", "api", "--header", f"X-GitHub-Api-Version: {GITHUB_API_VERSION}",
+        f"repos/{repository}/commits?author={urllib.parse.quote(login)}&sha={urllib.parse.quote(revision)}&per_page=1",
+    ])
+    return bool(json.loads(response))
+
+
+def find_new_contributors(
+    commits: list[CommitEntry], earlier_histories: list[tuple[GitHistory, str | None]],
+) -> list[NewContributor]:
+    """Returns the contributors whose first credited commit the release carries, oldest first.
+
+    A contributor is not new when a commit before the release credits them: under one of the emails the release
+    credits them by, as author or co-author, or as the author of a commit GitHub matches to their account.
+    """
+    earlier_emails: set[str] = set().union(
+        *(read_credited_emails(history, revision) for history, revision in earlier_histories)
+    )
+    emails_by_identity: dict[str, set[str]] = {}
+    first_contributions: dict[str, NewContributor] = {}
+    for commit in sorted(commits, key=lambda commit: commit.timestamp):
+        for contributor in commit.contributors:
+            emails_by_identity.setdefault(contributor.identity, set()).add(contributor.email.lower())
+            if contributor.identity in first_contributions or (contributor.login or "").endswith(BOT_LOGIN_SUFFIX):
                 continue
-            number: int = int(pull_request["number"])
-            title: str = " ".join(str(pull_request.get("title", "")).split())
-            author: dict = pull_request.get("user") or {}
-            pull_requests_by_number[number] = PullRequestEntry(
-                number=number,
-                title=title or f"Pull request #{number}",
-                author_login=str(author.get("login", "ghost")),
-                url=str(pull_request["html_url"]),
+            first_contributions[contributor.identity] = NewContributor(
+                contributor, commit.pull_requests[0].url if commit.pull_requests else commit.url,
             )
-    return [pull_requests_by_number[number] for number in sorted(pull_requests_by_number)]
+    new_contributors: list[NewContributor] = []
+    for identity, first_contribution in first_contributions.items():
+        if emails_by_identity[identity] & earlier_emails:
+            continue
+        login: str | None = first_contribution.contributor.login
+        if login and any(
+            revision is not None and has_earlier_commit(history.repository, login, revision)
+            for history, revision in earlier_histories
+        ):
+            continue
+        new_contributors.append(first_contribution)
+    return new_contributors
+
+
+def list_pull_requests(commits: list[CommitEntry]) -> list[PullRequestEntry]:
+    """Lists the merged pull requests that carried the commits once each, the plugin's then the engine's, by number."""
+    pull_requests_by_url: dict[str, PullRequestEntry] = {}
+    for commit in commits:
+        for pull_request in commit.pull_requests:
+            pull_requests_by_url.setdefault(pull_request.url, pull_request)
+    repositories: list[str] = list(dict.fromkeys(commit.url.rsplit("/commit/", 1)[0] for commit in commits))
+    return sorted(
+        pull_requests_by_url.values(),
+        key=lambda pull_request: (
+            next((index for index, prefix in enumerate(repositories) if pull_request.url.startswith(f"{prefix}/")),
+                 len(repositories)),
+            pull_request.number,
+        ),
+    )
+
+
+def format_credit(contributors: tuple[Contributor, ...]) -> str:
+    """Names a commit's contributors, the author first: @mentions, which GitHub links, else names."""
+    credits: list[str] = [contributor.credit for contributor in contributors]
+    if len(credits) <= 1:
+        return "".join(credits)
+    return f"{', '.join(credits[:-1])} and {credits[-1]}"
 
 
 def format_pull_request_lines(pull_requests: list[PullRequestEntry]) -> list[str]:
-    """Formats the pull requests as a Markdown list."""
+    """Formats the pull requests as a Markdown list, each credited to its author."""
     if not pull_requests:
         return ["- No pull requests found."]
     return [
-        f"- {pull_request.title} by {pull_request.author_login} in {pull_request.url}"
+        f"- {pull_request.title} by @{pull_request.author_login} in {pull_request.url}"
         for pull_request in pull_requests
     ]
 
 
-def format_commit_lines(repository: str, commits: list[CommitEntry]) -> list[str]:
-    """Formats the commits as an HTML list, each linked by its short hash."""
+def format_commit_lines(commits: list[CommitEntry]) -> list[str]:
+    """Formats the commits as an HTML list, each linked by its short hash and credited to its authors."""
     lines: list[str] = ["<ul>"]
     if not commits:
         lines.append("  <li>No commits.</li>")
-    escaped_repository: str = html.escape(repository, quote=True)
     for commit in commits:
-        commit_url: str = f"{GITHUB_URL}/{escaped_repository}/commit/{html.escape(commit.full_hash, quote=True)}"
+        credit: str = format_credit(commit.contributors)
         lines.append(
-            f'  <li><a href="{commit_url}"><code>{html.escape(commit.short_hash)}</code></a>'
-            f" {html.escape(commit.subject)}</li>"
+            f'  <li><a href="{html.escape(commit.url, quote=True)}"><code>{html.escape(commit.short_hash)}</code></a>'
+            f" {html.escape(commit.subject)}{f' by {html.escape(credit)}' if credit else ''}</li>"
         )
     lines.append("</ul>")
     return lines
 
 
-def truncate_release_notes(release_notes: str) -> str:
-    """Cuts the notes at a line boundary under GitHub's limit, closing the commit list and appending a notice."""
-    if len(release_notes) <= MAXIMUM_RELEASE_NOTES_LENGTH:
-        return release_notes
-    suffix: str = f"\n\n{RELEASE_NOTES_TRUNCATION_NOTICE}"
-    prefix: str = release_notes[:MAXIMUM_RELEASE_NOTES_LENGTH - len(suffix)]
-    # Leave room to close the list, then drop the partial last line
-    prefix = prefix[:prefix.rfind("\n", 0, len(prefix) - len("\n</ul>"))].rstrip()
-    if prefix.count("<ul>") > prefix.count("</ul>"):
-        prefix += "\n</ul>"
-    return prefix + suffix
+def format_new_contributor_lines(new_contributors: list[NewContributor]) -> list[str]:
+    """Formats the new contributors as a Markdown list, as GitHub's generated release notes do."""
+    return [
+        f"- {new_contributor.contributor.credit} made their first contribution in {new_contributor.url}"
+        for new_contributor in new_contributors
+    ]
+
+
+def fit_release_notes(head: list[str], commit_lines: list[str], tail: list[str]) -> str:
+    """Joins the notes under GitHub's limit, cutting the commit lists at a line boundary when needed.
+
+    The pull requests above the lists and the new contributors and changelog links below them always stay; a cut
+    closes the list it falls in and says the notes were truncated.
+    """
+    notes: str = "\n".join([*head, *commit_lines, *tail])
+    if len(notes) <= MAXIMUM_RELEASE_NOTES_LENGTH:
+        return notes
+    closing: str = "\n</ul>"
+    notice: str = f"\n\n{RELEASE_NOTES_TRUNCATION_NOTICE}"
+    budget: int = MAXIMUM_RELEASE_NOTES_LENGTH - len("\n".join([*head, *tail])) - len(closing) - len(notice) - 2
+    kept_lines: list[str] = []
+    kept_length: int = 0
+    for line in commit_lines:
+        if kept_length + len(line) + 1 > budget:
+            break
+        kept_lines.append(line)
+        kept_length += len(line) + 1
+    kept: str = "\n".join(kept_lines).rstrip()
+    if kept.count("<ul>") > kept.count("</ul>"):
+        kept += closing
+    return "\n".join([*head, kept + notice, *tail])
 
 
 def release_notes(tag: str, repository: str, changelog: str | None, target: str, output_file: Path | None) -> None:
-    """Writes the release body for the tag: the install steps, then the pull requests and commits since the last release."""
+    """Writes the release body for the tag: the install steps, then the pull requests and the plugin's and the engine's
+    commits since the last release, each credited to its authors, and the contributors the release welcomes."""
     configuration: dict = read_build_configuration()
     release_tag: ReleaseTag = parse_release_tag(tag)
     previous_tag: str | None = find_previous_release_tag(tag)
-    commits: list[CommitEntry] = read_commits(previous_tag, target)
-    pull_requests: list[PullRequestEntry] = read_pull_requests(repository, commits)
+    plugin_history: GitHistory = GitHistory(repository)
+    commits: list[CommitEntry] = read_commits(plugin_history, f"{previous_tag}..{target}" if previous_tag else target)
+    with open_engine_history(previous_tag, target) as engine:
+        engine_changed: bool = engine is not None and engine.changed
+        engine_commits: list[CommitEntry] = read_commits(
+            engine.history, f"{engine.previous_commit}..{engine.commit}",
+        ) if engine is not None and engine_changed else []
+        # A contributor whom only the engine credited before the release is not new, even when the engine is unchanged
+        earlier_histories: list[tuple[GitHistory, str | None]] = [(plugin_history, previous_tag)]
+        if engine is not None:
+            earlier_histories.append((engine.history, engine.previous_commit))
+        new_contributors: list[NewContributor] = find_new_contributors([*commits, *engine_commits], earlier_histories)
+    pull_requests: list[PullRequestEntry] = list_pull_requests([*commits, *engine_commits])
     manifest_url: str = f"{GITHUB_RAW_URL}/{repository}/main/{MANIFEST_FILE_NAME}"
     install_steps: str = (
         f"To install, add {manifest_url} as a plugin repository (Dashboard > Plugins),"
@@ -508,26 +835,49 @@ def release_notes(tag: str, repository: str, changelog: str | None, target: str,
             " the server then updates it to each unstable build and to each stable release."
         )
 
-    lines: list[str] = []
+    head: list[str] = []
     if changelog and changelog.strip():
-        lines.extend([changelog.strip(), ""])
-    lines.extend([
+        head.extend([changelog.strip(), ""])
+    head.extend([
         install_steps,
         "",
         "## Pull Requests",
         "",
         *format_pull_request_lines(pull_requests),
+    ])
+    commit_lines: list[str] = [
         "",
         f"## Commits since {previous_tag or 'the first commit'}",
         "",
-        *format_commit_lines(repository, commits),
-    ])
-    notes: str = truncate_release_notes("\n".join(lines)) + "\n"
+        *format_commit_lines(commits),
+    ]
+    tail: list[str] = []
+    if engine is not None and engine_changed:
+        commit_lines.extend([
+            "",
+            f"## Engine commits since {engine.previous_commit[:7]}",
+            "",
+            *format_commit_lines(engine_commits),
+        ])
+    if new_contributors:
+        tail.extend(["", "## New Contributors", "", *format_new_contributor_lines(new_contributors)])
+    if previous_tag:
+        tail.extend(["", f"**Full Changelog**: {GITHUB_URL}/{repository}/compare/{previous_tag}...{tag}"])
+    if engine is not None and engine_changed:
+        tail.extend([
+            "",
+            f"**Engine Changelog**: {GITHUB_URL}/{engine.history.repository}/compare/"
+            f"{engine.previous_commit[:7]}...{engine.commit[:7]}",
+        ])
+    notes: str = fit_release_notes(head, commit_lines, tail) + "\n"
     if output_file is None:
         sys.stdout.write(notes)
         return
     output_file.write_text(notes, encoding="utf-8")
-    print(f"Wrote the {tag} release notes to {output_file}: {len(commits)} commits and {len(pull_requests)} pull requests")
+    print(
+        f"Wrote the {tag} release notes to {output_file}: {len(commits)} commits, {len(engine_commits)} engine commits,"
+        f" {len(pull_requests)} pull requests, and {len(new_contributors)} new contributors"
+    )
 
 
 def main() -> None:
@@ -590,7 +940,9 @@ def main() -> None:
     )
 
     release_notes_parser: argparse.ArgumentParser = commands.add_parser(
-        "release-notes", help="Write the GitHub release body with the pull requests and commits since the last release.",
+        "release-notes",
+        help="Write the GitHub release body: the pull requests and the plugin's and engine's commits since the last"
+        " release, credited to their authors, and the new contributors.",
     )
     release_notes_parser.add_argument(
         "tag", help=f"The release tag, such as {RELEASE_TAG_PREFIX}1.1.0.0 or {RELEASE_TAG_PREFIX}1.1.0.1{UNSTABLE_TAG_SUFFIX}.",

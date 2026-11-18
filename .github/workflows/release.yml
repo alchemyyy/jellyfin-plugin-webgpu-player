@@ -1,6 +1,6 @@
 # Drafts a release of the plugin when run by hand on main (Actions > Release > Run workflow), with the version to release and an optional changelog.
 # Validate checks the branch, the version, which ends in .0 because unstable builds (release-unstable.yml) number the fourth part, the changelog, and that the release tag is free, before anything builds.
-# Build (build-plugin.yml) sets the version, builds and packages the plugin, and records the zip in manifest.json, while Release notes lists the merged pull requests and the commits since the previous release tag.
+# Build (build-plugin.yml) sets the version, builds and packages the plugin, and records the zip in manifest.json, while Release notes lists the merged pull requests and the plugin's and the engine's commits since the previous release tag, each credited to its authors and co-authors, and welcomes the release's new contributors.
 # Draft release, the only job that can write to the repository, commits the version and manifest.json, tags that commit, and drafts the GitHub release with the zip.
 # Nothing goes out until the draft is published (Releases > Edit the draft > Publish release), which runs publish-manifest.yml to put the release commit, and with it manifest.json, on main.
 name: Release
@@ -88,12 +88,12 @@ jobs:
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # The notes look up the pull requests that carried the commits
+    # The notes look up the pull requests that carried the commits, and the GitHub accounts of the commits' authors
     permissions:
       contents: read
       pull-requests: read
     steps:
-      # The full history and tags give the notes the commits since the previous release; HEAD is the commit Build builds
+      # The full history and tags give the notes the commits since the previous release; HEAD is the commit Build builds. The notes clone the engine's history themselves, without its files, for the engine's commits and earlier contributors
       - name: Check out the plugin
         uses: actions/checkout@v7
         with:

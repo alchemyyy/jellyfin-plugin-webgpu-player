@@ -1,6 +1,6 @@
 # Drafts an unstable build when run by hand on main (Actions > Release Unstable > Run workflow), with an optional changelog.
 # Validate numbers the build from the release tags, the latest stable release's version with the next build number in its fourth part, and checks the changelog.
-# Build (build-plugin.yml) builds and packages it, while Release notes lists the merged pull requests and the commits since the previous release or unstable build.
+# Build (build-plugin.yml) builds and packages it, while Release notes lists the merged pull requests and the plugin's and the engine's commits since the previous release or unstable build, each credited to its authors and co-authors, and welcomes the build's new contributors.
 # Draft pre-release tags the commit Build built and drafts a GitHub pre-release with the zip.
 # Nothing goes out until the draft is published (Releases > Edit the draft > Publish release), which runs publish-manifest.yml to record the zip in manifest.json on the unstable branch, the plugin repository a server adds beside main's.
 # Nothing reaches main: the version is set in the build alone, and the unstable branch holds only its manifest.
@@ -101,14 +101,14 @@ jobs:
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # The notes look up the pull requests that carried the commits
+    # The notes look up the pull requests that carried the commits, and the GitHub accounts of the commits' authors
     permissions:
       contents: read
       pull-requests: read
     env:
       TAG: ${{ needs.validate.outputs.tag }}
     steps:
-      # The full history and tags give the notes the commits since the previous release or unstable build; HEAD is the commit Build builds
+      # The full history and tags give the notes the commits since the previous release or unstable build; HEAD is the commit Build builds. The notes clone the engine's history themselves, without its files, for the engine's commits and earlier contributors
       - name: Check out the plugin
         uses: actions/checkout@v7
         with:

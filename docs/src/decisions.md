@@ -206,3 +206,7 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   The tag goes up with the draft, so a waiting draft already counts as released: the next unstable build numbers after it, the next release notes start from it, and a stable release built while another stable draft waits carries a `manifest.json` without that one, which conflicts on `main` once both are published.
   Publish or delete each draft before the next run.
   Deleting a draft on the Releases page keeps its tag, which still counts and blocks drafting that version again; `gh release delete <tag> --cleanup-tag` deletes both.
+- Release notes credit every contribution (11-17), as Jellyfin's and GitHub's generated release notes do.
+  Each pull request names its author, and each commit, the plugin's and the engine's, its author and co-authors, as @mentions of the GitHub accounts their emails belong to, which GitHub links and lists among the release's contributors; a person without one keeps their name.
+  The engine's commits are those between the engine commits the previous release and this one pin, from the submodule's checkout or, in the release workflows, a blobless clone of the engine's repository, so an engine contribution reaches the plugin's release under its own author rather than the commit that updates the engine.
+  New Contributors lists everyone the release credits whom no commit before it credits in either repository, by email or by account, with the pull request or commit that carried their first credited commit.
