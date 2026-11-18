@@ -201,6 +201,7 @@ import WebGPUPresenter, {
     type PresentationFallbackReason,
     type PresentationPresetFile,
     type PresentationSurface,
+    type PresentedPictureGeometry,
     type PresentationTelemetry
 } from 'webgpu-player/presentation/WebGPUPresenter';
 import type { PlanReport, PresentationPlan } from 'webgpu-player/presentation/passes/PassTypes';
@@ -290,6 +291,7 @@ type HTMLCustomPlaybackContract = {
     notifyCustomPlaybackPlaying: (emitUnpause?: boolean) => boolean
     notifyCustomPlaybackTimeUpdate: (timeMilliseconds: number) => boolean
     notifyCustomPlaybackWaiting: () => boolean
+    notifyPresentedPictureGeometry: (geometry: PresentedPictureGeometry | null) => boolean
     prepareCustomPlayback: (options: unknown) => Promise<
         PresentationSurface | typeof PLAYBACK_SUPERSEDED | null
     >
@@ -1017,6 +1019,10 @@ export default class WebGPUPlayer {
             (reason: GPUDeviceLostReason, message: string): void => {
                 reportPlaybackFallback('device-lost', reason, message);
                 noteWebGPUFailure({ kind: 'device-lost', message, reason });
+            },
+            (geometry: PresentedPictureGeometry | null): void => {
+                // Overlays the backend draws over the picture, such as subtitles, follow where it lands
+                this.getHTMLCustomPlaybackBackend().notifyPresentedPictureGeometry(geometry);
             }
         );
         this.applyPresentationSettings(loadWebGPUUserSettings());

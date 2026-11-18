@@ -20,6 +20,7 @@ import { playbackManager } from 'components/playback/playbackmanager';
 import { appRouter } from 'components/router/appRouter';
 import { PLAYBACK_SUPERSEDED } from '../../constants/playbackResult';
 import { isCustomPlaybackMediaEvent } from '../../CustomPlaybackMediaElement';
+import { getAssFrameCuts, getClippedAssStyleMargins, readAssPlayResolution } from './assClipMargins';
 import {
     bindEventsToHlsPlayer,
     destroyHlsPlayer,
@@ -63,6 +64,7 @@ const MILLISECONDS_PER_SECOND = 1000;
 const TICKS_PER_SECOND = 10000000;
 const MINIMUM_SUBTITLE_CANVAS_DIMENSION = 1;
 const CUSTOM_SUBTITLE_CANVAS_CLASS = 'htmlVideoPlayerCustomSubtitleCanvas';
+const CUSTOM_SUBTITLE_FRAME_CLASS = 'htmlVideoPlayerCustomSubtitleFrame';
 
 /**
  * Returns resolved URL.
@@ -256,8 +258,8 @@ function getBitmapSubtitleDisplaySettings() {
 }
 
 /**
- * Maps the player aspect ratio onto the libbitsub aspect mode for source-less custom playback.
- * The libbitsub overlay spans the whole video element when the video has no intrinsic size.
+ * Maps the player aspect ratio onto the libbitsub aspect mode for source-less custom playback before the presenter places its picture.
+ * Until then the libbitsub overlay spans the whole video element, since the video has no intrinsic size.
  * The subtitle mapping therefore follows the object-fit that the custom presenter applies to decoded frames.
  *
  * @param {string} aspectRatio - Player aspect ratio.
@@ -272,6 +274,72 @@ function getCustomBitmapSubtitleAspectMode(aspectRatio) {
         default:
             return 'contain';
     }
+}
+
+/**
+ * Places an element at a rectangle of its positioned parent.
+ *
+ * @param {HTMLElement} element - Absolutely positioned element.
+ * @param {{ height: number, width: number, x: number, y: number }} rectangle - Rectangle in CSS pixels.
+ */
+function setElementRectangle(element, rectangle) {
+    element.style.left = `${rectangle.x}px`;
+    element.style.top = `${rectangle.y}px`;
+    element.style.width = `${rectangle.width}px`;
+    element.style.height = `${rectangle.height}px`;
+}
+
+/**
+ * Creates the frame one source-less subtitle overlay draws in, in the video's container: it lies over the video's box and clips what reaches past it.
+ *
+ * @param {HTMLVideoElement} videoElement - Owned source-less video.
+ * @returns {HTMLDivElement} Clip frame.
+ */
+function createCustomSubtitleFrame(videoElement) {
+    const frameElement = document.createElement('div');
+    frameElement.classList.add(CUSTOM_SUBTITLE_FRAME_CLASS);
+    frameElement.setAttribute('aria-hidden', 'true');
+    videoElement.parentElement?.appendChild(frameElement);
+    return frameElement;
+}
+
+/**
+ * Creates a libbitsub renderer that draws a source-less video's bitmap subtitles in a clip frame, over the source frame's rectangle.
+ * libbitsub takes no target rectangle: it fits its canvas, in the video's parent, to the bounds its protected `getVideoContentBounds` measures from
+ * the video's intrinsic size, which the source-less video lacks, so the renderer moves its canvas into the frame and answers those bounds.
+ *
+ * @param {Function} BitmapSubtitleRenderer - The libbitsub `PgsRenderer` or `VobSubRenderer` class.
+ * @param {object} options - Renderer options.
+ * @param {HTMLDivElement} frameElement - Clip frame, which the renderer removes when disposed.
+ * @param {() => ({ box: object, frame: object } | null)} getLayout - Returns the video's box in its container and the source frame's rectangle in it.
+ * @returns {object} Renderer.
+ */
+function createFramedBitmapSubtitleRenderer(BitmapSubtitleRenderer, options, frameElement, getLayout) {
+    class FramedBitmapSubtitleRenderer extends BitmapSubtitleRenderer {
+        createCanvas() {
+            super.createCanvas();
+            frameElement.appendChild(this.canvas);
+        }
+
+        getVideoContentBounds() {
+            return getLayout()?.frame ?? super.getVideoContentBounds();
+        }
+
+        updateCanvasSize() {
+            const layout = getLayout();
+            if (layout) {
+                setElementRectangle(frameElement, layout.box);
+            }
+            super.updateCanvasSize();
+        }
+
+        dispose() {
+            super.dispose();
+            frameElement.remove();
+        }
+    }
+
+    return new FramedBitmapSubtitleRenderer(options);
 }
 
 function getSubtitleTimeOffset(playOptions, subtitleOffset = 0) {
@@ -350,6 +418,17 @@ export class HtmlVideoPlayer {
      * @type {HTMLCanvasElement | null | undefined}
      */
     #currentAssCanvas;
+    /**
+     * The current ASS script's resolution and its styles' own alignment and margins, which keep its unpositioned lines on screen while the presentation
+     * cuts the source frame, with the cuts last applied as a key
+     * @type {{ appliedCuts: string, playResolution: { height: number, width: number }, renderer: any, styles: Array<object> } | null}
+     */
+    #customAssMargins = null;
+    /**
+     * Where the custom presenter's picture lands, which source-less subtitle overlays follow; null until it presents
+     * @type {{ box: object, frame: object, visible: object } | null}
+     */
+    #presentedPictureGeometry = null;
     /**
      * @type {any | null | undefined}
      */
@@ -795,7 +874,7 @@ export class HtmlVideoPlayer {
     createBitmapSubtitleRendererOptions(videoElement, track, item, targetTextTrackIndex) {
         const loadToken = Symbol(String(targetTextTrackIndex));
         const displaySettings = this.#customPlaybackActive ?
-            { aspectMode: getCustomBitmapSubtitleAspectMode(this.getAspectRatio()) } :
+            { aspectMode: this.#getCustomBitmapSubtitleAspectMode() } :
             getBitmapSubtitleDisplaySettings();
         this.endPendingSubtitleLoad(targetTextTrackIndex);
         this.#pendingSubtitleLoads.set(targetTextTrackIndex, {
@@ -1827,6 +1906,42 @@ export class HtmlVideoPlayer {
         return true;
     }
 
+    /**
+     * Takes where the custom presenter's picture lands, and fits the source-less subtitle overlays to it at once, at the custom clock, paused or not.
+     *
+     * @param {{ box: object, frame: object, visible: object } | null} geometry - The video's box in its container, and in it the whole source frame's
+     * rectangle and the visible picture's, in CSS pixels; null once nothing presents.
+     * @returns {boolean} Whether a custom playback's overlays follow it.
+     */
+    notifyPresentedPictureGeometry(geometry) {
+        const followedPicture = this.#presentedPictureGeometry !== null;
+        this.#presentedPictureGeometry = geometry;
+        if (!this.#customPlaybackActive) {
+            return false;
+        }
+
+        const bitmapRenderer = this.#currentBitmapSubRenderer;
+        if (bitmapRenderer) {
+            if (followedPicture !== (geometry !== null)) {
+                bitmapRenderer.setDisplaySettings?.({ aspectMode: this.#getCustomBitmapSubtitleAspectMode() });
+            }
+            bitmapRenderer.updateCanvasSize?.();
+        }
+        this.#renderCustomSpecializedSubtitles();
+        return true;
+    }
+
+    /**
+     * Returns the libbitsub aspect mode of source-less custom playback.
+     * Over the source frame's own rectangle it is the user's subtitle aspect setting, as native playback uses over the video's content rectangle;
+     * before the presenter places the frame, the overlay spans the video element and follows the player's aspect.
+     */
+    #getCustomBitmapSubtitleAspectMode(aspectRatio = this.getAspectRatio()) {
+        return this.#presentedPictureGeometry ?
+            getBitmapSubtitleDisplaySettings().aspectMode :
+            getCustomBitmapSubtitleAspectMode(aspectRatio);
+    }
+
     /** Returns the subtitle time in seconds for specialized renderers: the custom clock plus the transcoding and subtitle offsets. */
     #getCustomSubtitleTimeSeconds(timeMilliseconds = (this.#currentTime || 0) * MILLISECONDS_PER_SECOND) {
         const transcodingOffsetSeconds = (this._currentPlayOptions?.transcodingOffsetTicks || 0) / TICKS_PER_SECOND;
@@ -1849,18 +1964,27 @@ export class HtmlVideoPlayer {
         return this.#getCustomSubtitleTimeSeconds(customTimeMilliseconds) - videoTimeSeconds;
     }
 
-    /** Creates a canvas owned by one source-less subtitle renderer. */
+    /** Creates a canvas owned by one source-less ASS renderer, in its own clip frame over the video's box. */
     #createCustomSubtitleCanvas(videoElement) {
         const canvas = document.createElement('canvas');
         canvas.classList.add(CUSTOM_SUBTITLE_CANVAS_CLASS);
-        canvas.setAttribute('aria-hidden', 'true');
-        videoElement.parentElement?.appendChild(canvas);
-        this.#synchronizeCustomSubtitleCanvas(canvas, videoElement);
+        createCustomSubtitleFrame(videoElement).appendChild(canvas);
+        this.#placeCustomSubtitleCanvas(canvas, videoElement);
         return canvas;
     }
 
-    /** Aligns a source-less subtitle canvas with the owned video surface. */
-    #synchronizeCustomSubtitleCanvas(canvas, videoElement) {
+    /**
+     * Returns where source-less subtitle overlays go, in CSS pixels: the video's box in its container, which clips them, and the source frame's
+     * rectangle in that box, which they draw the subtitles' frame over.
+     * The presenter's geometry gives both, with the black bar crop, object-fit, and object-position applied; before it first arrives, the frame spans
+     * the measured box.
+     */
+    #getCustomSubtitleLayout(videoElement) {
+        const geometry = this.#presentedPictureGeometry;
+        if (geometry) {
+            return { box: geometry.box, frame: geometry.frame };
+        }
+
         const container = videoElement.parentElement;
         if (!container) {
             return null;
@@ -1882,35 +2006,89 @@ export class HtmlVideoPlayer {
             MINIMUM_SUBTITLE_CANVAS_DIMENSION,
             videoRectangle.height > 0 ? videoRectangle.height / normalizedScaleY : fallbackHeight
         );
-        const left = videoRectangle.width > 0 ?
-            (videoRectangle.left - containerRectangle.left) / normalizedScaleX :
-            videoElement.offsetLeft;
-        const top = videoRectangle.height > 0 ?
-            (videoRectangle.top - containerRectangle.top) / normalizedScaleY :
-            videoElement.offsetTop;
-
-        canvas.style.left = `${left}px`;
-        canvas.style.top = `${top}px`;
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
-        return { height, width };
+        const box = {
+            height,
+            width,
+            x: videoRectangle.width > 0 ? (videoRectangle.left - containerRectangle.left) / normalizedScaleX : videoElement.offsetLeft,
+            y: videoRectangle.height > 0 ? (videoRectangle.top - containerRectangle.top) / normalizedScaleY : videoElement.offsetTop
+        };
+        return { box, frame: { height, width, x: 0, y: 0 } };
     }
 
-    /** Keeps source-less subtitle canvases aligned after aspect or viewport changes. */
+    /** Places a source-less ASS canvas over the source frame's rectangle and its clip frame over the video's box, and returns the layout. */
+    #placeCustomSubtitleCanvas(canvas, videoElement) {
+        const layout = this.#getCustomSubtitleLayout(videoElement);
+        if (layout) {
+            setElementRectangle(canvas.parentElement, layout.box);
+            setElementRectangle(canvas, layout.frame);
+        }
+        return layout;
+    }
+
+    /** Keeps source-less subtitle canvases on the source frame after picture, aspect, or viewport changes. */
     #synchronizeCustomSubtitleCanvases() {
-        if (!this.#customPlaybackActive || !this.#mediaElement) {
+        if (!this.#customPlaybackActive || !this.#mediaElement || !this.#currentAssCanvas) {
             return;
         }
 
-        if (this.#currentAssCanvas) {
-            const geometry = this.#synchronizeCustomSubtitleCanvas(this.#currentAssCanvas, this.#mediaElement);
-            if (geometry && this.#currentAssRenderer?.resize) {
-                const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
-                const width = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.width * pixelRatio));
-                const height = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(geometry.height * pixelRatio));
-                this.#currentAssRenderer.resize(width, height, 0, 0);
+        const canvas = this.#currentAssCanvas;
+        const layout = this.#placeCustomSubtitleCanvas(canvas, this.#mediaElement);
+        const renderer = this.#currentAssRenderer;
+        if (!layout || !renderer) {
+            return;
+        }
+
+        let marginsChanged = false;
+        const margins = this.#customAssMargins;
+        if (margins?.renderer === renderer) {
+            const cuts = getAssFrameCuts(margins.playResolution, layout.box, layout.frame);
+            const appliedCuts = `${cuts.left},${cuts.top},${cuts.right},${cuts.bottom}`;
+            if (appliedCuts !== margins.appliedCuts) {
+                margins.appliedCuts = appliedCuts;
+                marginsChanged = true;
+                // libass orders styles as the script does, which get-styles reports
+                getClippedAssStyleMargins(margins.styles, cuts).forEach((styleMargins, index) => {
+                    renderer.setStyle(styleMargins, index);
+                });
             }
         }
+
+        if (renderer.resize) {
+            // Browser zoom below 100% gives a ratio below 1, which the backing follows down
+            const pixelRatio = window.devicePixelRatio || 1;
+            const width = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(layout.frame.width * pixelRatio));
+            const height = Math.max(MINIMUM_SUBTITLE_CANVAS_DIMENSION, Math.round(layout.frame.height * pixelRatio));
+            if (marginsChanged && canvas.width === width && canvas.height === height) {
+                // libass keeps a line it shows where it first placed it until its frame size changes, so new margins move shown lines only then
+                renderer.resize(width, height + 1, 0, 0);
+            }
+            renderer.resize(width, height, 0, 0);
+        }
+    }
+
+    /**
+     * Reads the current ASS script's resolution and its styles' own margins, which moving its unpositioned lines onto the screen takes, then redraws
+     * at the custom clock with them.
+     * The worker reports styles but not the script resolution, so the script's `[Script Info]` is read here.
+     */
+    #loadCustomAssMargins(renderer, subUrl) {
+        const styles = new Promise((resolve) => {
+            renderer.getStyles((scriptStyles) => resolve(scriptStyles), () => resolve(null));
+        });
+        Promise.all([readAssPlayResolution(subUrl), styles]).then(([playResolution, scriptStyles]) => {
+            if (renderer !== this.#currentAssRenderer || !playResolution || !scriptStyles?.length) {
+                return;
+            }
+
+            this.#customAssMargins = {
+                // The script's own margins are in place
+                appliedCuts: '0,0,0,0',
+                playResolution,
+                renderer,
+                styles: scriptStyles.map(({ Alignment, MarginL, MarginR, MarginV }) => ({ Alignment, MarginL, MarginR, MarginV }))
+            };
+            this.#renderCustomSpecializedSubtitles();
+        });
     }
 
     /** Advances ASS/SSA and bitmap renderers from the source-less custom clock. */
@@ -2196,9 +2374,13 @@ export class HtmlVideoPlayer {
         this.#currentAssRenderer = null;
         const assCanvas = this.#currentAssCanvas;
         this.#currentAssCanvas = null;
+        // The adjusted styles end with the renderer's worker, which holds the only copy of the script
+        this.#customAssMargins = null;
         if (octopus) {
             octopus.dispose();
         }
+        // The canvas's clip frame goes with it
+        assCanvas?.parentElement?.remove();
         assCanvas?.remove();
 
         const pgsOrVobSubRenderer = this.#currentBitmapSubRenderer;
@@ -2313,10 +2495,12 @@ export class HtmlVideoPlayer {
 
         this.#currentAssRenderer = renderer;
         this.#currentAssCanvas = customCanvas;
+        this.#customAssMargins = null;
         if (customCanvas) {
             this.#synchronizeCustomSubtitleCanvases();
             this.#renderCustomSpecializedSubtitles();
             this.#updateCustomAssPlaybackState();
+            this.#loadCustomAssMargins(renderer, options.subUrl);
         }
     }
 
@@ -2362,6 +2546,8 @@ export class HtmlVideoPlayer {
                     htmlVideoPlayer.#currentAssRenderer = null;
                     const assCanvas = htmlVideoPlayer.#currentAssCanvas;
                     htmlVideoPlayer.#currentAssCanvas = null;
+                    htmlVideoPlayer.#customAssMargins = null;
+                    assCanvas?.parentElement?.remove();
                     assCanvas?.remove();
 
                     // HACK: Give JavascriptSubtitlesOctopus time to dispose itself
@@ -2449,11 +2635,20 @@ export class HtmlVideoPlayer {
             endPendingLoad();
             renderer?.dispose();
         };
-        renderer = new BitmapSubtitleRenderer({
+        const rendererOptions = {
             ...options,
             onLoaded: settleLoad(options.onLoaded),
             onError: settleLoad(options.onError)
-        });
+        };
+        // Over the source-less video, the overlay follows the presented picture in a clip frame of its own
+        renderer = this.#customPlaybackActive ?
+            createFramedBitmapSubtitleRenderer(
+                BitmapSubtitleRenderer,
+                rendererOptions,
+                createCustomSubtitleFrame(videoElement),
+                () => this.#getCustomSubtitleLayout(videoElement)
+            ) :
+            new BitmapSubtitleRenderer(rendererOptions);
         this.#loadingBitmapSubRenderers.add(renderer);
         this.#currentBitmapSubRenderer = renderer;
         requestAnimationFrame(() => {
@@ -3311,7 +3506,7 @@ export class HtmlVideoPlayer {
         if (this.#currentBitmapSubRenderer) {
             if (this.#customPlaybackActive) {
                 this.#currentBitmapSubRenderer.setDisplaySettings?.({
-                    aspectMode: getCustomBitmapSubtitleAspectMode(val)
+                    aspectMode: this.#getCustomBitmapSubtitleAspectMode(val)
                 });
             }
             this.#currentBitmapSubRenderer.updateCanvasSize?.();

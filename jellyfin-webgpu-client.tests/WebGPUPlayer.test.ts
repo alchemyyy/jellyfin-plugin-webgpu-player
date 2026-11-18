@@ -737,13 +737,17 @@ vi.mock('webgpu-player/presentation/WebGPUPresenter', () => {
     class MockWebGPUPresenter {
         readonly fallbackHandler: (generation: number) => void;
         readonly decodedPresentationRefreshHandler: (generation: number) => void;
+        readonly presentedPictureGeometryHandler: (geometry: unknown) => void;
 
         constructor(
             fallbackHandler: (generation: number) => void,
-            decodedPresentationRefreshHandler: (generation: number) => void
+            decodedPresentationRefreshHandler: (generation: number) => void,
+            _deviceLossHandler: unknown,
+            presentedPictureGeometryHandler: (geometry: unknown) => void
         ) {
             this.fallbackHandler = fallbackHandler;
             this.decodedPresentationRefreshHandler = decodedPresentationRefreshHandler;
+            this.presentedPictureGeometryHandler = presentedPictureGeometryHandler;
             presenterMockState.instances.push(this);
         }
 
@@ -932,6 +936,7 @@ vi.mock('addons/webGPUPlayer/backend/htmlVideoPlayer/plugin', () => {
             Events.trigger(this, 'waiting');
             return true;
         });
+        notifyPresentedPictureGeometry = vi.fn(() => true);
         canPlayMediaType = vi.fn((mediaType: string | null | undefined) => mediaType?.toLowerCase() === 'video');
         supportsPlayMethod = vi.fn(() => true);
         getDeviceProfile = vi.fn(() => Promise.resolve(this.profile));
@@ -1042,6 +1047,7 @@ type MockHTMLPlayer = {
     notifyCustomPlaybackPlaying: MockFunction
     notifyCustomPlaybackTimeUpdate: MockFunction
     notifyCustomPlaybackWaiting: MockFunction
+    notifyPresentedPictureGeometry: MockFunction
     canPlayItem?: MockFunction
     canPlayMediaType: MockFunction
     supportsPlayMethod: MockFunction
@@ -1085,6 +1091,7 @@ type MockPresenter = {
     decodedPresentationRefreshHandler: (generation: number) => void
     endSession: MockFunction
     fallbackHandler: (generation: number) => void
+    presentedPictureGeometryHandler: (geometry: unknown) => void
     getDolbyVisionAuthorizationTelemetry: MockFunction
     getPresentationPlanReport: MockFunction
     getRenderSettings: MockFunction
@@ -6400,6 +6407,29 @@ describe('WebGPUPlayer HTML delegation', () => {
         } finally {
             restoreDocumentVisibility();
         }
+    });
+
+    it('forwards each presented picture geometry to the HTML backend', async () => {
+        const player = new WebGPUPlayer();
+        const backend = getBackend();
+        const presenter = getPresenter();
+        const container = document.createElement('div');
+        const video = document.createElement('video');
+        container.appendChild(video);
+        backend.presentationSurface = { container, video };
+        playbackPreferencesMockState.customDecodeEnabled = true;
+        customDecodeMockState.eligible = true;
+        const geometry = {
+            box: { height: 1_080, width: 2_560, x: 0, y: 0 },
+            frame: { height: 1_440, width: 2_560, x: 0, y: -180 },
+            visible: { height: 1_066, width: 2_560, x: 0, y: 7 }
+        };
+
+        await player.play(createKnownSDRPlayOptions({ playMethod: 'DirectPlay' }));
+        presenter.presentedPictureGeometryHandler(geometry);
+        presenter.presentedPictureGeometryHandler(null);
+
+        expect(backend.notifyPresentedPictureGeometry.mock.calls).toEqual([ [ geometry ], [ null ] ]);
     });
 
     it('re-decodes one paused frame after presentation invalidation without restarting HTML playback', async () => {

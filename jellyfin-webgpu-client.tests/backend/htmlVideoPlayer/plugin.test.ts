@@ -30,6 +30,8 @@ type AssSubtitleRendererOptions = Record<string, unknown> & {
 };
 
 type BitmapSubtitleRendererMock = {
+    canvas: HTMLCanvasElement | null
+    createCanvas: () => void
     dispose: Mock
     format: 'pgs' | 'vobsub'
     getSubtitleTime: () => number
@@ -40,6 +42,22 @@ type BitmapSubtitleRendererMock = {
     setDisplaySettings: Mock
     timeOffset: number
     updateCanvasSize: Mock
+};
+
+type AssStyle = {
+    Alignment: number
+    MarginL: number
+    MarginR: number
+    MarginV: number
+    Name: string
+};
+
+type PictureRectangle = { height: number, width: number, x: number, y: number };
+
+type PresentedPictureGeometry = {
+    box: PictureRectangle
+    frame: PictureRectangle
+    visible: PictureRectangle
 };
 
 type TestMediaStream = {
@@ -94,6 +112,7 @@ type HtmlVideoPlayerTestHarness = {
     notifyCustomPlaybackPlaying: () => boolean
     notifyCustomPlaybackTimeUpdate: (timeMilliseconds: number) => boolean
     notifyCustomPlaybackWaiting: () => boolean
+    notifyPresentedPictureGeometry: (geometry: PresentedPictureGeometry | null) => boolean
     onPlay: () => void
     pause: () => void
     play: (options: ReturnType<typeof createPlayOptions>) => Promise<unknown>
@@ -198,22 +217,30 @@ const serverConnectionsMock = vi.hoisted(() => {
 const specializedSubtitleRendererMock = vi.hoisted(() => {
     const assInstances: Array<{
         dispose: Mock
+        getStyles: Mock
         options: AssSubtitleRendererOptions
         resetRenderAheadCache: Mock
         resize: Mock
         setCurrentTime: Mock
         setIsPaused: Mock
+        setStyle: Mock
         timeOffset: number
     }> = [];
     const bitmapInstances: BitmapSubtitleRendererMock[] = [];
+    // The styles the next ASS renderers' worker reports
+    const assStyles: AssStyle[] = [];
 
     class MockAssRenderer {
         readonly dispose = vi.fn();
+        readonly getStyles = vi.fn((onSuccess: (styles: unknown[]) => void) => {
+            onSuccess(assStyles.map((style, index) => ({ ...style, _index: index })));
+        });
         readonly options: AssSubtitleRendererOptions;
         readonly resetRenderAheadCache = vi.fn();
         readonly resize = vi.fn();
         readonly setCurrentTime = vi.fn();
         readonly setIsPaused = vi.fn();
+        readonly setStyle = vi.fn();
         timeOffset: number;
 
         constructor(options: AssSubtitleRendererOptions) {
@@ -223,18 +250,57 @@ const specializedSubtitleRendererMock = vi.hoisted(() => {
         }
     }
 
-    /** Mirrors the public surface of the libbitsub video renderers used by the player. */
+    /**
+     * Mirrors the public surface of the libbitsub video renderers used by the player, and the protected layout of their overlay canvas: a canvas in the
+     * video's parent, over the bounds `getVideoContentBounds` measures, which libbitsub creates once its WebAssembly loads.
+     */
     class MockBitmapSubtitleRenderer {
-        readonly dispose = vi.fn();
+        canvas: HTMLCanvasElement | null = null;
         readonly options: VideoVobSubOptions;
-        readonly setDisplaySettings = vi.fn();
         timeOffset: number;
-        readonly updateCanvasSize = vi.fn();
 
         constructor(options: VideoVobSubOptions) {
             this.options = options;
             this.timeOffset = options.timeOffset ?? 0;
+            // Spies wrap the methods a subclass overrides, which then still run
+            const spied = this as unknown as { dispose: () => void, setDisplaySettings: () => void, updateCanvasSize: () => void };
+            vi.spyOn(spied, 'dispose');
+            vi.spyOn(spied, 'setDisplaySettings');
+            vi.spyOn(spied, 'updateCanvasSize');
             bitmapInstances.push(this as unknown as BitmapSubtitleRendererMock);
+        }
+
+        createCanvas(): void {
+            this.canvas = document.createElement('canvas');
+            this.options.video.parentElement?.appendChild(this.canvas);
+            this.updateCanvasSize();
+        }
+
+        dispose(): void {
+            this.canvas?.parentElement?.removeChild(this.canvas);
+            this.canvas = null;
+        }
+
+        getVideoContentBounds(): { height: number, width: number, x: number, y: number } {
+            const rectangle = this.options.video.getBoundingClientRect();
+            return { height: rectangle.height, width: rectangle.width, x: 0, y: 0 };
+        }
+
+        setDisplaySettings(): void {
+            // Display settings only reach the renderer's layout
+        }
+
+        updateCanvasSize(): void {
+            if (!this.canvas) {
+                return;
+            }
+            const bounds = this.getVideoContentBounds();
+            this.canvas.width = Math.max(1, bounds.width * window.devicePixelRatio);
+            this.canvas.height = Math.max(1, bounds.height * window.devicePixelRatio);
+            this.canvas.style.left = `${bounds.x}px`;
+            this.canvas.style.top = `${bounds.y}px`;
+            this.canvas.style.width = `${bounds.width}px`;
+            this.canvas.style.height = `${bounds.height}px`;
         }
 
         /** Returns the subtitle time that libbitsub samples on each animation frame. */
@@ -256,6 +322,7 @@ const specializedSubtitleRendererMock = vi.hoisted(() => {
 
     return {
         assInstances,
+        assStyles,
         bitmapInstances,
         MockAssRenderer,
         MockPgsRenderer,
@@ -511,6 +578,7 @@ beforeEach(() => {
     hlsModuleMock.instances.length = 0;
     specializedSubtitleRendererMock.assInstances.length = 0;
     specializedSubtitleRendererMock.bitmapInstances.length = 0;
+    specializedSubtitleRendererMock.assStyles.length = 0;
     vi.mocked(appSettings.aspectRatio).mockReturnValue('auto');
     vi.mocked(appSettings.get).mockReturnValue(null);
     serverConnectionsMock.apiClient.getNamedConfiguration.mockResolvedValue({ EnableFallbackFont: false });
@@ -755,6 +823,8 @@ describe('HtmlVideoPlayer playback controls', () => {
 describe('HtmlVideoPlayer specialized subtitle renderers', () => {
     beforeEach(() => {
         vi.stubGlobal('XMLHttpRequest', ImmediateXMLHttpRequest);
+        // No script header reads unless a test serves one
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(null, { status: 404 }))));
     });
 
     afterEach(() => {
@@ -793,10 +863,12 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         expect(renderer.options.timeOffset).toBe(0);
         expect(renderer.options.renderAhead).toBe(0);
         expect(canvas).toBeInstanceOf(HTMLCanvasElement);
-        expect(canvas?.style.left).toBe('100px');
-        expect(canvas?.style.top).toBe('50px');
-        expect(canvas?.style.width).toBe('600px');
-        expect(canvas?.style.height).toBe('300px');
+        // Before the presenter places the picture, the canvas spans the video's box, in a clip frame over it
+        const frameElement = canvas?.parentElement;
+        expect(frameElement?.classList.contains('htmlVideoPlayerCustomSubtitleFrame')).toBe(true);
+        expect(frameElement?.parentElement).toBe(surface.container);
+        expect(frameElement?.style).toMatchObject({ height: '300px', left: '100px', top: '50px', width: '600px' });
+        expect(canvas?.style).toMatchObject({ height: '300px', left: '0px', top: '0px', width: '600px' });
         expect(renderer.resize).toHaveBeenLastCalledWith(600, 300, 0, 0);
         expect(renderer.setCurrentTime).toHaveBeenLastCalledWith(0.5);
         expect(renderer.setIsPaused).toHaveBeenLastCalledWith(true, 0.5);
@@ -818,6 +890,313 @@ describe('HtmlVideoPlayer specialized subtitle renderers', () => {
         expect(renderer.dispose).toHaveBeenCalledOnce();
         expect(canvas?.isConnected).toBe(false);
         expect(document.querySelectorAll('.htmlVideoPlayerCustomSubtitleCanvas')).toHaveLength(0);
+        expect(frameElement?.isConnected).toBe(false);
+    });
+
+    it.each([
+        {
+            // A 4:3 picture pillarboxed in a 16:9 box: the whole frame is the picture, inside the box
+            name: 'pillarboxed',
+            geometry: {
+                box: { height: 1_080, width: 1_920, x: 0, y: 0 },
+                frame: { height: 1_080, width: 1_440, x: 240, y: 0 },
+                visible: { height: 1_080, width: 1_440, x: 240, y: 0 }
+            },
+            pixelRatio: 1.5,
+            backing: [ 2_160, 1_620 ]
+        },
+        {
+            // A cropped 2.40:1 film on an ultrawide box: its 16:9 frame reaches past the box's top and bottom by the bars
+            name: 'black bar crop on an ultrawide box',
+            geometry: {
+                box: { height: 1_080, width: 2_560, x: 0, y: 0 },
+                frame: { height: 1_440, width: 2_560, x: 0, y: -180 },
+                visible: { height: 3_200 / 3, width: 2_560, x: 0, y: 20 / 3 }
+            },
+            pixelRatio: 1,
+            backing: [ 2_560, 1_440 ]
+        },
+        {
+            // Browser zoom below 100% keeps the backing below the CSS size
+            name: 'zoomed out',
+            geometry: {
+                box: { height: 800, width: 1_000, x: 30, y: 40 },
+                frame: { height: 562.5, width: 1_000, x: 0, y: 118.75 },
+                visible: { height: 562.5, width: 1_000, x: 0, y: 118.75 }
+            },
+            pixelRatio: 0.75,
+            backing: [ 750, 422 ]
+        }
+    ])('places ASS over the presented source frame, $name', async ({ geometry, pixelRatio, backing }) => {
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            createSpecializedTrack(0, 'ass', 'https://example.test/subtitles.ass')
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+        Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: pixelRatio });
+        expect(player.notifyPresentedPictureGeometry(geometry)).toBe(true);
+
+        player.setSubtitleStreamIndex(0);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.assInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.assInstances[0];
+        const canvas = renderer.options.canvas;
+
+        expect(canvas?.parentElement?.style).toMatchObject({
+            height: `${geometry.box.height}px`,
+            left: `${geometry.box.x}px`,
+            top: `${geometry.box.y}px`,
+            width: `${geometry.box.width}px`
+        });
+        expect(canvas?.style).toMatchObject({
+            height: `${geometry.frame.height}px`,
+            left: `${geometry.frame.x}px`,
+            top: `${geometry.frame.y}px`,
+            width: `${geometry.frame.width}px`
+        });
+        expect(renderer.resize).toHaveBeenLastCalledWith(backing[0], backing[1], 0, 0);
+        player.destroy();
+    });
+
+    it('refits ASS at the custom clock on each presented geometry while paused, and keeps it until playback ends', async () => {
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            createSpecializedTrack(0, 'ass', 'https://example.test/subtitles.ass')
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+        player.setSubtitleStreamIndex(0);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.assInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.assInstances[0];
+        const canvas = renderer.options.canvas;
+        player.notifyCustomPlaybackTimeUpdate(2_500);
+        expect(player.notifyCustomPlaybackPaused()).toBe(true);
+        renderer.setCurrentTime.mockClear();
+
+        // The paused window turns into a 4:3 box, where cover cuts the 16:9 frame's sides
+        player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_440, x: 240, y: 0 },
+            frame: { height: 1_080, width: 1_920, x: -240, y: 0 },
+            visible: { height: 1_080, width: 1_440, x: 0, y: 0 }
+        });
+        expect(canvas?.parentElement?.style).toMatchObject({ height: '1080px', left: '240px', top: '0px', width: '1440px' });
+        expect(canvas?.style).toMatchObject({ height: '1080px', left: '-240px', top: '0px', width: '1920px' });
+        expect(renderer.resize).toHaveBeenLastCalledWith(1_920, 1_080, 0, 0);
+        expect(renderer.setCurrentTime).toHaveBeenLastCalledWith(2.5);
+
+        // Nothing presents between sessions of the same playback, and the overlay spans the box again until the picture returns
+        vi.spyOn(surface.video, 'getBoundingClientRect').mockReturnValue(createRectangle(0, 0, 640, 360));
+        Object.defineProperty(surface.container, 'clientWidth', { configurable: true, value: 640 });
+        Object.defineProperty(surface.container, 'clientHeight', { configurable: true, value: 360 });
+        vi.spyOn(surface.container, 'getBoundingClientRect').mockReturnValue(createRectangle(0, 0, 640, 360));
+        player.notifyPresentedPictureGeometry(null);
+        expect(canvas?.style).toMatchObject({ height: '360px', left: '0px', top: '0px', width: '640px' });
+        expect(renderer.resize).toHaveBeenLastCalledWith(640, 360, 0, 0);
+
+        await player.stop(false);
+        renderer.resize.mockClear();
+        expect(player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            frame: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            visible: { height: 1_080, width: 1_920, x: 0, y: 0 }
+        })).toBe(false);
+        expect(renderer.resize).not.toHaveBeenCalled();
+    });
+
+    it('moves unpositioned ASS lines onto the screen while the frame is cut, and restores the script\'s margins after', async () => {
+        const fetchMock = vi.fn(() => Promise.resolve(new Response(
+            '[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 480\n\n[V4+ Styles]\nFormat: Name, Alignment, MarginL, MarginR, MarginV\n'
+        )));
+        vi.stubGlobal('fetch', fetchMock);
+        // libass's alignments: 2 is bottom center, 4 | 2 top center, 8 | 1 middle left
+        specializedSubtitleRendererMock.assStyles.push(
+            { Alignment: 2, MarginL: 10, MarginR: 10, MarginV: 20, Name: 'Default' },
+            { Alignment: 4 | 2, MarginL: 10, MarginR: 10, MarginV: 15, Name: 'Top' },
+            { Alignment: 8 | 1, MarginL: 30, MarginR: 0, MarginV: 5, Name: 'Sign' }
+        );
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            createSpecializedTrack(0, 'ass', 'https://example.test/subtitles.ass')
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+        player.notifyCustomPlaybackTimeUpdate(4_000);
+        expect(player.notifyCustomPlaybackPaused()).toBe(true);
+        // Cover in the 16:9 box cuts 180px of the 1440px-high 4:3 frame at the top and the bottom: 60 of 480 script lines
+        player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            frame: { height: 1_440, width: 1_920, x: 0, y: -180 },
+            visible: { height: 1_080, width: 1_920, x: 0, y: 0 }
+        });
+        player.setSubtitleStreamIndex(0);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.assInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.assInstances[0];
+        await vi.waitFor(() => expect(renderer.setStyle).toHaveBeenCalledTimes(3));
+        expect(fetchMock).toHaveBeenCalledWith('https://example.test/subtitles.ass', expect.anything());
+        expect(renderer.setStyle.mock.calls).toEqual([
+            [ { MarginL: 10, MarginR: 10, MarginV: 80 }, 0 ],
+            [ { MarginL: 10, MarginR: 10, MarginV: 75 }, 1 ],
+            [ { MarginL: 30, MarginR: 0, MarginV: 5 }, 2 ]
+        ]);
+        // The paused frame redraws with them, at the custom clock
+        expect(renderer.setCurrentTime).toHaveBeenLastCalledWith(4);
+
+        // A time update with the same cut changes no style
+        player.notifyCustomPlaybackTimeUpdate(4_000);
+        expect(renderer.setStyle).toHaveBeenCalledTimes(3);
+
+        // A side cut moves the side margins: 120 of 1920px is 40 of 640 script columns
+        renderer.setStyle.mockClear();
+        renderer.resize.mockClear();
+        // The renderer sized its canvas to the frame already, which the cut leaves as it is
+        const canvas = renderer.options.canvas as HTMLCanvasElement;
+        canvas.width = 1_920;
+        canvas.height = 1_080;
+        player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_680, x: 120, y: 0 },
+            frame: { height: 1_080, width: 1_920, x: -120, y: 0 },
+            visible: { height: 1_080, width: 1_680, x: 0, y: 0 }
+        });
+        expect(renderer.setStyle.mock.calls).toEqual([
+            [ { MarginL: 50, MarginR: 50, MarginV: 20 }, 0 ],
+            [ { MarginL: 50, MarginR: 50, MarginV: 15 }, 1 ],
+            [ { MarginL: 70, MarginR: 40, MarginV: 5 }, 2 ]
+        ]);
+        // libass keeps a shown line where it placed it until its frame size changes, so a size a line taller and back lays the lines out again
+        expect(renderer.resize.mock.calls).toEqual([ [ 1_920, 1_081, 0, 0 ], [ 1_920, 1_080, 0, 0 ] ]);
+        expect(renderer.setStyle.mock.invocationCallOrder[2]).toBeLessThan(renderer.resize.mock.invocationCallOrder[0]);
+
+        // Once nothing is cut, the script's own margins return exactly
+        renderer.setStyle.mockClear();
+        player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            frame: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            visible: { height: 1_080, width: 1_920, x: 0, y: 0 }
+        });
+        expect(renderer.setStyle.mock.calls).toEqual([
+            [ { MarginL: 10, MarginR: 10, MarginV: 20 }, 0 ],
+            [ { MarginL: 10, MarginR: 10, MarginV: 15 }, 1 ],
+            [ { MarginL: 30, MarginR: 0, MarginV: 5 }, 2 ]
+        ]);
+
+        // A pillarboxed frame stays inside the box, so the script keeps its own margins
+        renderer.setStyle.mockClear();
+        player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            frame: { height: 1_080, width: 1_440, x: 240, y: 0 },
+            visible: { height: 1_080, width: 1_440, x: 240, y: 0 }
+        });
+        expect(renderer.setStyle).not.toHaveBeenCalled();
+
+        // The ended renderer's adjusted styles go with its worker, which held the only copy of the script
+        await player.stop(false);
+        expect(renderer.dispose).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the script\'s margins when its resolution cannot be read', async () => {
+        specializedSubtitleRendererMock.assStyles.push({ Alignment: 2, MarginL: 10, MarginR: 10, MarginV: 20, Name: 'Default' });
+        const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            createSpecializedTrack(0, 'ass', 'https://example.test/subtitles.ass')
+        ];
+        await player.prepareCustomPlayback(options);
+        player.setSubtitleStreamIndex(0);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.assInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.assInstances[0];
+        await vi.waitFor(() => expect(consoleWarning).toHaveBeenCalledOnce());
+
+        player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 1_920, x: 0, y: 0 },
+            frame: { height: 1_440, width: 1_920, x: 0, y: -180 },
+            visible: { height: 1_080, width: 1_920, x: 0, y: 0 }
+        });
+        expect(renderer.setStyle).not.toHaveBeenCalled();
+        player.destroy();
+    });
+
+    it('places libbitsub over the presented source frame in a clip frame, and removes it with the renderer', async () => {
+        const player = new HtmlVideoPlayer(undefined, true) as unknown as HtmlVideoPlayerTestHarness;
+        const options = createPlayOptions('https://example.test/custom.mkv', 'MKV');
+        options.mediaSource.MediaStreams = [
+            createSpecializedTrack(0, 'pgssub', 'https://example.test/first.sup')
+        ];
+        await player.prepareCustomPlayback(options);
+        const surface = player.getPresentationSurface();
+        if (!surface) {
+            throw new Error('Custom presentation surface was not created');
+        }
+        vi.spyOn(surface.video, 'pause').mockImplementation(() => undefined);
+        vi.spyOn(surface.video, 'getBoundingClientRect').mockReturnValue(createRectangle(0, 0, 1_920, 1_080));
+        Object.defineProperty(surface.container, 'clientWidth', { configurable: true, value: 1_920 });
+        Object.defineProperty(surface.container, 'clientHeight', { configurable: true, value: 1_080 });
+        vi.spyOn(surface.container, 'getBoundingClientRect').mockReturnValue(createRectangle(0, 0, 1_920, 1_080));
+        player.setSubtitleStreamIndex(0);
+        await vi.waitFor(() => {
+            expect(specializedSubtitleRendererMock.bitmapInstances).toHaveLength(1);
+        });
+        const renderer = specializedSubtitleRendererMock.bitmapInstances[0];
+        expect(renderer.options.displaySettings).toEqual({ aspectMode: 'contain' });
+
+        // libbitsub creates its canvas in the video's parent once its WebAssembly loads, and the renderer moves it into its clip frame
+        renderer.createCanvas();
+        const canvas = renderer.canvas;
+        const frameElement = canvas?.parentElement;
+        expect(frameElement?.classList.contains('htmlVideoPlayerCustomSubtitleFrame')).toBe(true);
+        expect(frameElement?.parentElement).toBe(surface.container);
+        expect(canvas?.style).toMatchObject({ height: '1080px', left: '0px', top: '0px', width: '1920px' });
+
+        // The cropped picture's frame reaches past the ultrawide box, and the subtitles fit it by the user's subtitle aspect setting, 'stretch' by default
+        expect(player.notifyPresentedPictureGeometry({
+            box: { height: 1_080, width: 2_560, x: 0, y: 0 },
+            frame: { height: 1_440, width: 2_560, x: 0, y: -180 },
+            visible: { height: 3_200 / 3, width: 2_560, x: 0, y: 20 / 3 }
+        })).toBe(true);
+        expect(renderer.setDisplaySettings).toHaveBeenLastCalledWith({ aspectMode: 'stretch' });
+        expect(frameElement?.style).toMatchObject({ height: '1080px', left: '0px', top: '0px', width: '2560px' });
+        expect(canvas?.style).toMatchObject({ height: '1440px', left: '0px', top: '-180px', width: '2560px' });
+
+        // Over the frame the user's setting holds whatever the player's aspect, as on native playback
+        vi.mocked(userSettings.getSubtitleAppearanceSettings).mockReturnValue({ aspectMode: 'Contain', verticalPosition: '0' });
+        player.setAspectRatio('cover');
+        expect(renderer.setDisplaySettings).toHaveBeenLastCalledWith({ aspectMode: 'contain' });
+        vi.mocked(userSettings.getSubtitleAppearanceSettings).mockReturnValue({ verticalPosition: '0' });
+
+        // Without a picture the overlay spans the box and follows the player's aspect again
+        player.notifyPresentedPictureGeometry(null);
+        expect(renderer.setDisplaySettings).toHaveBeenLastCalledWith({ aspectMode: 'contain' });
+        expect(canvas?.style).toMatchObject({ height: '1080px', left: '0px', top: '0px', width: '1920px' });
+
+        renderer.options.onLoaded?.();
+        await player.stop(false);
+        expect(renderer.dispose).toHaveBeenCalledOnce();
+        expect(canvas?.isConnected).toBe(false);
+        expect(frameElement?.isConnected).toBe(false);
     });
 
     it('drives libbitsub PGS from the custom clock, offsets, seeks, aspect changes, track switching, and cleanup', async () => {

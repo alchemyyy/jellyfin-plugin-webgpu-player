@@ -18,6 +18,12 @@ Commit hashes refer to the Jellyfin Web fork's `webgpu-player` branch, where the
   This follows upstream and adds VobSub support.
   The custom path drives it through `timeOffset`, measured against the time the source-less video reports, which is the custom clock since 11-06 (see [Playback in Jellyfin Web](playback.md#the-video-element)).
   VobSub reaches it as the Matroska subtitle file the server extracts, requested as `Stream.mks`, the one name every server from 12.1 serves unchanged (10-27); [Direct play support](direct-play-support.md#vobsub-delivery) has the server's rules.
+- Custom playback's subtitle overlays follow the picture geometry the engine's presenter publishes, not one the add-on derives (11-17).
+  Only the presenter knows where the picture lands: the computed object-fit and object-position, the source's display size, and the black bar crop, which changes during playback.
+  Deriving the rectangle from Jellyfin's stream metadata instead, as PR #15 proposed, rounds through `AspectRatio` and misses object-position and the crop.
+  The overlays take the whole source frame's rectangle, which subtitles are authored against, bars included, so Cover and the crop scale and cut them with the picture; a clip frame over the video's box keeps them from scrolling the page or covering the OSD.
+  libass-wasm 4.2.4 does not expose libass's margins to its worker, so unpositioned lines stay on screen through the script's style margins, moved in by the cut and restored after, which positioned typesetting ignores (see [Subtitle overlays](playback.md#subtitle-overlays)).
+  libbitsub takes no target rectangle, so its renderer answers libbitsub's protected `getVideoContentBounds` hook instead of a fork.
 - The server offers the engine's decoder packages and passes, and a client fetches each when it needs it (10-16).
   The add-on build carries every package `bin/wgpud/` (engine) holds and every pass file of `bin/wgpup/` (engine), and an administrator uploads, deletes, enables, and disables them on the plugin's settings page.
   Since 11-02 those are the engine's pinned releases of its decoder and pass repositories, which `./build.sh` installs, rather than packages the build compiles, so a plugin build needs no decoder toolchain.

@@ -53,9 +53,29 @@ The engine's [Architecture](https://alchemyyy.github.io/WebGPU-Player/architectu
   While it is on, the presenter finds the black bars encoded into the video from the frames as they play and presents only the picture, which fits the video box by its own shape, so a letterboxed film fills an ultrawide screen and the Cover aspect mode zooms the picture, not the bars; on a screen of the frame's own shape a letterboxed film looks the same.
   A picture a few lines from a standard film or television aspect ratio, such as 2.39:1 or 1.85:1, from the table the Detect Aspect Ratio plugin snaps to, presents at exactly that ratio, as long as that shows no more than half a line of each bar.
   The crop holds through dark scenes and fades; a picture that grows into the bars, such as a film's IMAX scenes, shows whole at once, and the bars crop again only after the picture keeps to them across shots for about half a minute.
-  Subtitle layers keep their placement over the video box.
+  Subtitle overlays follow the picture the crop presents; see Subtitle overlays below.
 - `WebGPUPlayer.isFetching` mirrors actual backend file-loading state, not custom decoder startup or seeking.
   This keeps "Fetching additional data" paired with `beginFetch`/`endFetch`; normal playback waiting does not leave a phantom subtitle-loading message.
+
+## Subtitle overlays
+
+The source-less `<video>` has no intrinsic size, so neither libass nor libbitsub can find the picture in its box.
+The engine's presenter publishes where the picture lands instead (see the engine's [Picture geometry](https://alchemyyy.github.io/WebGPU-Player/architecture.html#picture-geometry)): the video's box in its container, and in it the rectangle of the whole source frame, encoded bars included, after object-fit, object-position, and the black bar crop, and the visible picture's.
+`WebGPUPlayer` forwards each change to `HtmlVideoPlayer.notifyPresentedPictureGeometry`, and the overlays follow it at once, paused or not.
+
+- Each overlay draws in a clip frame of its own (`htmlVideoPlayerCustomSubtitleFrame`) over the video's box, which clips what reaches past the box, so the source frame can extend past it under Cover or the black bar crop without scrollbars, and the OSD stays above it.
+- ASS and SSA draw on a manually clocked libass canvas placed over the source frame's rectangle, which libass lays the script out on as the frame it was authored for.
+  Its backing is that rectangle times the device pixel ratio, below 1 too when the browser zooms out, applied with `resize(width, height, 0, 0)`, and it redraws at the custom clock, so a paused player refits.
+- Where the box cuts the frame, unpositioned lines would leave the screen, and libass-wasm 4.2.4 does not expose libass's `ass_set_margins` or `use_margins` to its worker.
+  So the add-on moves the script's style margins in by the cut, in script units: a bottom-aligned style's MarginV by the bottom's cut, a top-aligned one's by the top's, MarginL and MarginR by the sides', and a middle-aligned style's MarginV not at all.
+  The script resolution comes from `PlayResX` and `PlayResY` in the script's `[Script Info]`, which the add-on reads with a fetch it abandons after that section, completed as libass completes a missing one; the worker reports the styles.
+  Positioned lines (`\pos`, `\move`) ignore margins and stay on the picture, and the script's own margins return exactly once nothing is cut.
+  A line's own non-zero margins replace its style's, so such a line, and a line whose `\an` overrides its style's alignment, does not follow the cut.
+  libass keeps a line it shows where it first placed it until its frame size changes, so a margin change without a size change resizes the canvas a line taller and back.
+- PGS and VobSub draw through libbitsub, which takes no target rectangle: a renderer moves its canvas into its clip frame and answers libbitsub's protected `getVideoContentBounds` with the source frame's rectangle.
+  Over it the subtitles follow the user's subtitle aspect setting, `stretch` by default, as native playback does over the video's content rectangle, so a Blu-ray's 1920x1080 PGS over a cropped encode fits as it would natively.
+  libbitsub keeps bitmap subtitles inside its canvas, not the visible part of it, so a bitmap subtitle in a cut part of the frame leaves the screen.
+- Before the presenter's first geometry, and after it reports none, the overlays span the video's box, and libbitsub follows the player's aspect setting.
 
 ## The `<video>` element
 
